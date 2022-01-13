@@ -8,6 +8,6 @@ learning. The learned features are used in downstram tasks (such as differential
 clone the repo, navigate to root folder, install
 > git clone https://github.com/broadinstitute/tissue_purifier.git \
 > cd tissue_purifier \
-> pip install -e .[tests] \
+> pip install -e .[tests] 
 
 
