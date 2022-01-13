@@ -1,0 +1,6 @@
+[tool.black]
+line-length = 99
+py37 = true
+safe = true
+include = '\.pyi?$'
+exclude = '\.git'
