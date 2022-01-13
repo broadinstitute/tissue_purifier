@@ -1,3 +1,7 @@
+COPY SETUPT FROM:
+https://github.com/PyTorchLightning/deep-learning-project-template/pulls
+
+
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 # Tissue Purifier 
 Tissue Purifier (TP) is a tool to perform tissue analysis in python.
