@@ -12,9 +12,10 @@
 #
 import os
 import sys
-dir_, _ = os.path.split(__file__)
-root_dir = os.path.abspath(os.path.join(dir_, '..', '..'))
+dir_, _ = os.path.split(__file__)  # current directory of this file
+root_dir = os.path.abspath(os.path.join(dir_, '../../src'))
 sys.path.insert(0, root_dir)
+print(root_dir)
 
 # -- Project information -----------------------------------------------------
 
@@ -44,6 +45,22 @@ extensions = [
 
 master_doc = 'index'
 
+# Napoleon settings (for google-style docstrings)
+napoleon_google_docstring = True
+napoleon_numpy_docstring = True
+napoleon_include_init_with_doc = False
+napoleon_include_private_with_doc = False
+napoleon_include_special_with_doc = True
+napoleon_use_admonition_for_examples = False
+napoleon_use_admonition_for_notes = False
+napoleon_use_admonition_for_references = False
+napoleon_use_ivar = False
+napoleon_use_param = True
+napoleon_use_rtype = True
+napoleon_preprocess_types = False
+napoleon_type_aliases = None
+napoleon_attr_annotations = True
+
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
 
@@ -64,9 +81,3 @@ html_theme = 'sphinx_rtd_theme'
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
-html_favicon = '_static/design/favicon.ico'
-html_context = {
-    'css_files': [
-        '_static/theme_overrides.css',  # override wide tables in RTD theme
-        ],
-     }

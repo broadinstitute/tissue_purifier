@@ -1,4 +1,4 @@
-.. remove background tutorial
+.. _remove background tutorial:
 
 remove-background
 =================
@@ -21,10 +21,6 @@ under your CellBender installation root directory and run the following command 
 
 After successful completion of the script, you should have a new directory named ``tiny_raw_gene_bc_matrices``
 containing ``GRCh38/matrix.mtx``, ``GRCh38/genes.tsv``, and ``GRCh38/barcodes.tsv``.
-
-GECO
-----
-Explain geco
 
 Run remove-background
 ---------------------

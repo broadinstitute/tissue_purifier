@@ -1,8 +1,3 @@
-.. TissuePurifier documentation master file, created by
-   sphinx-quickstart on Thu Jan 13 12:16:39 2022.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
-
 Welcome to TissuePurifier's documentation!
 ==========================================
 
@@ -15,6 +10,7 @@ see the :ref:`getting started` section.
 
 .. toctree::
    :maxdepth: 1
+
    introduction/index
    installation/index
    usage/index
@@ -25,9 +21,7 @@ see the :ref:`getting started` section.
 
 Model File
 ===========
-##### .. automodule:: src.Model_file
-#####   :members:
-
+.. autoclass:: tissue_purifier.model_utils.dino.DinoModel
 
 Indices and tables
 ==================
