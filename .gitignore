@@ -3,6 +3,10 @@
 **/*.log
 submit/main.py
 
+**/build
+**/notes_for_luca.txt
+
+
 **/.pytest_cache
 **/.neptune
 **/.ipynb_checkpoints/
