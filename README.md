@@ -3,3 +3,11 @@
 Tissue Purifier (TP) is a tool to perform tissue analysis in python.
 Tissue are cropped into overlapping patches, semantic features are associated to each patch via self-supervised (contrastive) 
 learning. The learned features are used in downstram tasks (such as differential gene expression analysis).
+
+## Installation
+clone the repo, navigate to root folder, install
+> git clone https://github.com/broadinstitute/tissue_purifier.git
+> cd tissue_purifier
+> pip install -e .[tests]
+
+
