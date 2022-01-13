@@ -1,7 +1,9 @@
 **/*.csv
 **/*.pt
 **/*.log
+submit/main.py
 
+**/.pytest_cache
 **/.neptune
 **/.ipynb_checkpoints/
 **/.idea
