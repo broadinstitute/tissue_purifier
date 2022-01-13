@@ -1,0 +1,12 @@
+**/*.csv
+**/*.pt
+**/*.log
+
+**/.neptune
+**/.ipynb_checkpoints/
+**/.idea
+**/.Trashes
+**/.tmp
+**/.DS_Store
+**/.egg
+**/__pycache__
