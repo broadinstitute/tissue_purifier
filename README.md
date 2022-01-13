@@ -5,7 +5,8 @@ Tissue are cropped into overlapping patches, semantic features are associated to
 learning. The learned features are used in downstram tasks (such as differential gene expression analysis).
 
 ## Installation
-clone the repo, navigate to root folder, install
+create a virtual environment and install pytorch then clone the repo, navigate to root folder, install with pip
+> pip install -r requirements.txt
 > git clone https://github.com/broadinstitute/tissue_purifier.git \
 > cd tissue_purifier \
 > pip install -e .[tests] 
