@@ -11,13 +11,8 @@ from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from tissue_purifier.misc_utils.misc import smart_bool
 from tissue_purifier.model_utils.dino import DinoModel
 from tissue_purifier.model_utils.vae import VaeModel
-from tissue_purifier.data_utils.datamodule import DinoDM, SlideSeqTestisDM, SlideSeqKidneyDM  #, CaltechDM, FashionDM
+from tissue_purifier.data_utils.datamodule import DinoDM, SlideSeqTestisDM, SlideSeqKidneyDM
 from tissue_purifier.model_utils.logger import NeptuneLoggerCkpt
-
-# import matplotlib.pyplot as plt
-# from tissue_purifier.plot_utils.plot_embeddings import plot_all_maps
-# from tissue_purifier.plot_utils.plot_knn import plot_knn_examples
-# from tissue_purifier.misc_utils.misc import concatenate_list_of_dict
 
 
 def initialization(
@@ -37,7 +32,8 @@ def initialization(
         pl_model: the pytorch_lightning model either a scratch or one loaded from a checkpoint
         pl_trainer:  the pytorch_lightning trainer
         new_args_dict: dict with the configurations. This is identical to :attr:'args_dict'
-            if :attr:'initialization_type' == 'scratch'. In other cases it can be different from :attr:'args_dict'.
+            if :attr:'initialization_type' == 'scratch'.
+            In other cases it can be different from :attr:'args_dict' because some entries are overwritten.
         ckpt_file_for_trainer: None or a str pointing to a ckpt_file to be used to resume the training.
     """
     assert initialization_type in {'resume', 'extend', 'scratch', 'pretraining', 'predict_only'}
@@ -120,7 +116,7 @@ def initialization(
     print("new_dict ->", new_dict)
 
     pl_neptune_logger = NeptuneLoggerCkpt(
-        project='cellarium/tissue-purifier',  # change this to your project
+        project=args_dict["neptune_project"],  # change this to your project
         run=neptune_run_id,  # pass something here to keep logging onto an existing run
         log_model_checkpoints=True,  # copy the checkpoints into Neptune
         # neptune kargs
@@ -233,7 +229,7 @@ def initialization(
 
 
 def run_simulation(config_dict: dict, datamodule: DinoDM):
-    pl.seed_everything(seed=1, workers=True)
+    pl.seed_everything(seed=config_dict['random_seed'], workers=True)
 
     # Initialization need to handle 4 situations: "resume", "extend", "pretraining", "scratch"
     try:
@@ -392,12 +388,6 @@ def cli_main():
     elif args.dataset == "slide_seq_kidney":
         parser = SlideSeqKidneyDM.add_specific_args(parser)
         datamodule_ch_in = SlideSeqKidneyDM.ch_in
-#    elif args.dataset == 'caltech':
-#        parser = CaltechDM.add_specific_args(parser)
-#        datamodule_ch_in = CaltechDM.ch_in
-#    elif args.dataset == 'fashion':
-#        parser = FashionDM.add_specific_args(parser)
-#        datamodule_ch_in = FashionDM.ch_in
     else:
         raise Exception("Invalid dataset {0}".format(args.dataset))
 
@@ -423,10 +413,6 @@ def cli_main():
             pl_datamodule = SlideSeqTestisDM(**config_dict)
         elif args.dataset == "slide_seq_kidney":
             pl_datamodule = SlideSeqKidneyDM(**config_dict)
-#        elif args.dataset == "caltech":
-#            pl_datamodule = CaltechDM(**config_dict)
-#        elif args.dataset == "fashion":
-#            pl_datamodule = FashionDM(**config_dict)
         else:
             raise Exception("Invalid dataset {0}".format(args.dataset))
 

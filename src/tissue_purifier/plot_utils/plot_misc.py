@@ -196,22 +196,36 @@ def plot_clusters_annotations(
     return fig
 
 
-def plot_multiple_barplots(data: "panda.DataFrame",
-                           x: str,
-                           ys: List[str],
-                           n_col: int = 4,
-                           figsize: Tuple[float, float] = None,
-                           y_labels: List[str] = None,
-                           x_labels_rotation: int = 90,
-                           x_labels: List[str] = None,
-                           titles: List[str] = None,
-                           y_lims: Tuple[float, float] = None,
-                           **kargs):
-    """ Takes a dataframe and make multiple bar plots
+def plot_multiple_barplots(
+        data: "pandas.DataFrame",
+        x: str,
+        ys: List[str],
+        n_col: int = 4,
+        figsize: Tuple[float, float] = None,
+        y_labels: List[str] = None,
+        x_labels_rotation: int = 90,
+        x_labels: List[str] = None,
+        titles: List[str] = None,
+        y_lims: Tuple[float, float] = None,
+        **kargs) -> "matplotlig.figure":
+    """ Takes a dataframe and make multiple bar plot leveraging
+        seaborn.barplot(y=y, x=x, data=data)
 
     Args:
+        data: a dataframe with the data to plot
+        x: names of variables in data
+        ys: names of variables in data
+        n_col: number of columns panels in the figure
+        figsize: size of the output figure
+        x_labels: labels
+        y_labels: labels
+        x_labels_rotation: rotation in degree of the x_labels (default 90)
+        titles: titles for each panel
+        y_lims: set y_limits for all the panels
         kargs: any argument passed to seaborn.barplot such as hue,
 
+    Returns:
+        figure
     """
 
     n_max = len(ys)
@@ -263,107 +277,3 @@ def plot_multiple_barplots(data: "panda.DataFrame",
     fig.tight_layout()
     plt.close(fig)
     return fig
-
-
-### OLD BUT GOOD STUFF
-##def plot_bars(
-##        y_values: Any,
-##        x_labels: List[str] = None,
-##        figsize: Tuple[int, int] = (9, 9),
-##        title: str = None,):
-##
-##    assert x_labels is None or (len(x_labels) == len(y_values))
-##
-##    X_axis = torch.arange(len(y_values)).numpy()
-##
-##    fig, ax = plt.subplots(1, 1, figsize=figsize)
-##    _ = ax.bar(X_axis, y_values, width=0.9)
-##
-##    if x_labels:
-##        ax.set_xticks(X_axis)
-##        ax.set_xticklabels(x_labels, rotation=90)
-##    else:
-##        ax.set_xticks(X_axis)
-##
-##    if title:
-##        fig.suptitle(title)
-##    fig.tight_layout()
-##    plt.close(fig)
-##    return fig
-##
-##
-##def plot_composition(
-##        composition: Union[torch.Tensor, List[torch.Tensor]],
-##        x_labels: List[str] = None,
-##        dataset_labels: List[str] = None,
-##        figsize: Tuple[int, int] = (9, 9),
-##        title: str = None,
-##):
-##
-##    if isinstance(composition, torch.Tensor):
-##        composition = [composition]
-##    else:
-##        for i in range(len(composition) - 1):
-##            if composition[i].shape != composition[i + 1].shape:
-##                raise Exception("counters have different shapes. Can not be plotted together")
-##
-##    assert dataset_labels is None or len(dataset_labels) == len(composition)
-##
-##    X_axis = torch.arange(composition[0].shape[0]).numpy()
-##
-##    n_datasets = len(composition)
-##    width = 0.9 / n_datasets
-##    fig, ax = plt.subplots(1, 1, figsize=figsize)
-##    for n, counter in enumerate(composition):
-##        label = dataset_labels[n] if dataset_labels else None
-##        _ = ax.bar(X_axis + n * width, counter.cpu().numpy(), width, label=label)
-##
-##    if dataset_labels:
-##        ax.legend()
-##
-##    if x_labels:
-##        ax.set_xticks(X_axis)
-##        ax.set_xticklabels(x_labels, rotation=90)
-##    else:
-##        ax.set_xticks(X_axis)
-##
-##    if title:
-##        fig.suptitle(title)
-##    fig.tight_layout()
-##    plt.close(fig)
-##    return fig
-##def plot_predictions_as_bars(input_dict, feature_keys, annotation_keys, y_lim: Tuple[float, float],
-##                             figsize: Tuple[int, int] = None, sup_title: str = None):
-##    n_annotations = len(annotation_keys)
-##    figsize = (4 * n_annotations, 4) if figsize is None else figsize
-##    fig, axes = plt.subplots(ncols=n_annotations, figsize=figsize)
-##
-##    for n, annotation_key in enumerate(annotation_keys):
-##        keys_tmp, y_means, y_stds = [], [], []
-##        for k in input_dict.keys():
-##            if annotation_key in k:
-##                keys_tmp.append(k)
-##                y_value_tmp = input_dict[k]
-##                if len(y_value_tmp) == 2:
-##                    y_means.append(y_value_tmp[0])
-##                    y_stds.append(y_value_tmp[1])
-##                else:
-##                    y_means.append(y_value_tmp)
-##                    y_stds.append(None)
-##
-##        labels_tmp = []
-##        for k in keys_tmp:
-##            for kf in feature_keys:
-##                if kf in k:
-##                    labels_tmp.append(kf)
-##
-##        _plot_bars(ax=axes[n], y_means=y_means, y_stds=y_stds, x_labels=labels_tmp, y_lim=y_lim, title=annotation_key)
-##
-##    if sup_title:
-##        fig.suptitle(sup_title)
-##
-##    fig.tight_layout()
-##    plt.close(fig)
-##    return fig
-##
-##
