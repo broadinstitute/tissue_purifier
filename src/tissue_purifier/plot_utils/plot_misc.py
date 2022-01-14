@@ -34,7 +34,7 @@ def plot_cdf_pdf(
     if sup_title:
         fig.suptitle(sup_title)
 
-    fig.tight_layout()
+    # fig.tight_layout()
     plt.close(fig)
     return fig
 

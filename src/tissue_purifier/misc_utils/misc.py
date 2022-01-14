@@ -56,24 +56,44 @@ def linear_warmup_and_cosine_protocol(
     return fn
 
 
-def get_percentile(data, dim: int = -1):
+def get_percentile(data: Union[torch.Tensor, numpy.ndarray], dim: int) -> Union[torch.Tensor, numpy.ndarray]:
     """
     Takes some data and convert it into a percentile (in [0.0, 1.0]) along a specified dimension.
-    Usefull to convert a tensor into the range [0.0, 1.0] for visualization.
+    Useful to convert a tensor into the range [0.0, 1.0] for visualization.
 
     Args:
-        data: torch.Tensor with the input data to convert to percentile in [0,1]
+        data: input data to convert to percentile in [0,1].
         dim: the dimension along which to compute the quantiles
 
     Returns:
-        A float tensor of the same shape as the input with the percentile values.
-        A percentile of 0.9 means that 90% of the input values were smaller.
+        percentile: torch.tensor or numpy.array (depending on the input type)
+            with the same shape as the input with the percentile values.
+            A percentile of 0.9 means that 90% of the input values were smaller.
     """
-    assert isinstance(data, torch.Tensor)
-    n = data.shape[dim]
-    indeces = torch.argsort(data, dim=dim, descending=False)  # values in 0,1,..,n-1
-    percentile = indeces.float() / (n-1) if n > 1 else indeces.float()
-    return percentile
+    assert isinstance(data, torch.Tensor) or isinstance(data, numpy.ndarray) or isinstance(data, list), \
+        "Error. Input must be either a numpy.array or torch.Tensor or list. Received {0}".format(type(data))
+
+    def _to_torch(x):
+        if isinstance(x, torch.Tensor):
+            return x
+        elif isinstance(x, numpy.ndarray):
+            return torch.from_numpy(x)
+
+    data_torch = _to_torch(data)
+
+    old_dims = list(data_torch.shape)
+    new_dims = [1] * len(old_dims)
+    new_dims[dim] = old_dims[dim]
+
+    indices = torch.argsort(data_torch, dim=dim, descending=False)
+    src = torch.linspace(0.0, 1.0, new_dims[dim]).view(new_dims).expand_as(indices).clone()
+    percentile = torch.zeros_like(data_torch)
+    percentile.scatter_(dim=dim, index=indices, src=src)
+
+    if isinstance(data, numpy.ndarray):
+        return percentile.cpu().numpy()
+    else:
+        return percentile
 
 
 def inverse_one_hot(_image, bg_label: int = -1, dim: int = -3, threshold: float = 0.1):

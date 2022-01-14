@@ -14,16 +14,20 @@ from torchvision.transforms import Compose as trsfm_compose
 
 def _get_color_tensor(_cmap, _ch):
     cm = plt.get_cmap(_cmap, _ch)
-    color = torch.Tensor(cm.colors)[:, :3]
-    index = torch.linspace(0, color.shape[0] - 1, _ch).long()
-    color = color[index]
+    x = numpy.linspace(0.0, 1.0, _ch)
+    colors_np = cm(x)
+    color = torch.Tensor(colors_np)[:, :3]
     assert color.shape[0] == _ch
     return color
 
 
-def _minmax_scale_tensor(tensor, in_range: Tuple[float, float]):
+def _minmax_scale_tensor(tensor, in_range: Tuple[float, float] = None):
     """ Clamp tensor in_range and transform to (0,1) range """
-    in_range_min, in_range_max = in_range
+    if in_range is None:
+        in_range_min, in_range_max = torch.min(tensor), torch.max(tensor)
+    else:
+        in_range_min, in_range_max = in_range
+
     dist = in_range_max - in_range_min
     scale = 1.0 if dist == 0.0 else 1.0 / dist
     return tensor.clamp(min=in_range_min,
