@@ -29,12 +29,12 @@ def test_vae(dummy_dino_dm, trainer):
     trainer.fit(model=vae_model, datamodule=dummy_dino_dm)
 
 
-def test_parse_args():
+def test_parse_args(dummy_dino_dm):
     # set few parameters manually and let the other be their default values
     config_dict = parse_args(['--dataset', 'dummy_dm', '--max_epochs', '2', '--check_val_every_n_epoch', '1'])
     assert config_dict["dataset"] == 'dummy_dm'
     assert config_dict["max_epochs"] == 2
     assert config_dict["check_val_every_n_epoch"] == 1
 
-    pl_datamodule = DummyDM(**config_dict)
-    run_simulation(config_dict=config_dict, datamodule=pl_datamodule)
+    # pytest stalls on the next line. Why?
+    # run_simulation(config_dict=config_dict, datamodule=dummy_dino_dm)

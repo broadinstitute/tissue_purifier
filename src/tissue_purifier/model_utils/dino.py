@@ -569,7 +569,7 @@ class DinoModel(LightningModule):
             loaders = [loaders]
 
         for idx_dataloader, loader in enumerate(loaders):
-            indeces = torch.randperm(n=loader.dataset_.__len__())[:n_examples]
+            indeces = torch.randperm(n=loader.dataset.__len__())[:n_examples]
             list_imgs, _, _ = loader.load(index=indeces)
             list_imgs = list_imgs[:n_examples]
 
