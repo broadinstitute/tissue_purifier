@@ -1,18 +1,66 @@
 import pytest
-import torch
-from tissue_purifier.data_utils.sparse_image import SparseImage
-from scanpy import AnnData
-from scipy import stats
 import pandas
 import random
 import numpy
+import torch
+from scanpy import AnnData
+from scipy import stats
 from scipy.sparse import random as random_sparse
+from tissue_purifier.data_utils.sparse_image import SparseImage
+from tissue_purifier.data_utils.datamodule import DummyDM
+from tissue_purifier.model_utils.logger import NeptuneLoggerCkpt
+from pytorch_lightning.trainer import Trainer
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.plugins import DDPPlugin
 
 
 def _random_string_generator(str_size, allowed_chars=None):
     if allowed_chars is None:
         allowed_chars = list('abcdefghijklmnopqrstuvxywz')
     return ''.join(random.choice(allowed_chars) for x in range(str_size))
+
+
+@pytest.fixture
+def dummy_dino_dm():
+    return DummyDM()
+
+
+@pytest.fixture
+def neptune_logger():
+    return NeptuneLoggerCkpt(
+        project="cellarium/tissue-purifier",
+        run=None,
+        log_model_checkpoints=True,
+        mode="async",
+        tags=["pytest"],
+        fail_on_exception=True,
+    )
+
+
+@pytest.fixture
+def trainer(neptune_logger):
+    ckpt_train_interval = ModelCheckpoint(
+        filename="pytest_ckpt-{epoch}",  # the extension .ckpt will be added automatically
+        save_weights_only=False,
+        save_on_train_epoch_end=True,
+        save_last=True,
+        every_n_epochs=1,
+    )
+
+    return Trainer(
+        weights_save_path="saved_ckpt",
+        num_nodes=1,  # uses a single machine possibly with many gpus,
+        gpus=torch.cuda.device_count(),  # number of gpu cards on a single machine to use
+        check_val_every_n_epoch=1,
+        callbacks=[ckpt_train_interval],
+        strategy=DDPPlugin(find_unused_parameters=True),
+        num_sanity_val_steps=0,
+        # debugging
+        max_epochs=2,
+        logger=neptune_logger,
+        log_every_n_steps=1,
+        detect_anomaly=True,
+    )
 
 
 @pytest.fixture

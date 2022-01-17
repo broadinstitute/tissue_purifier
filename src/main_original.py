@@ -326,6 +326,11 @@ def cli_main():
                         help="If given ALL the args will be read from the YAML file specified here. \
                         Command Line arguments will be ignored. Missing arguments will be set to default values")
 
+    # parameters for Neptune and random seed
+    parser.add_argument("--random_seed", type=int, default=1, help="Integer specifying the global random seed")
+    parser.add_argument("--neptune_project", type=str, default="cellarium/tissue-purifier",
+                        help="neptune project name. This is where the data will be logged")
+
     # parameters for the trainer
     parser.add_argument("--max_epochs", type=int, default=3000, help="maximum number of training epochs")
     parser.add_argument("--check_val_every_n_epoch", type=int, default=25, help="run validation every N epochs")
