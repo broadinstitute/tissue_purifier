@@ -1,4 +1,4 @@
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Iterable
 import torch
 import torch.nn.functional as F
 import torchvision
@@ -98,7 +98,7 @@ class RandomHFlip(torch.nn.Module):
 class DropoutSparseTensor(torch.nn.Module):
     """ Perform dropout on a sparse tensor. """
 
-    def __init__(self, p: float, dropout_rate: Union[float, Tuple[float, float]]):
+    def __init__(self, p: float, dropout_rate: Union[float, Iterable[float]]):
         """
         Args:
             p: the probability of applying dropout.
@@ -107,14 +107,22 @@ class DropoutSparseTensor(torch.nn.Module):
         """
         super().__init__()
         self.p = p
-        if len(dropout_rate) > 2:
-            raise Exception("Expected either a tuple or a float. Reveice {0}".format(type(dropout_rate)))
-        elif len(dropout_rate) == 2:
-            self.dropout_min = float(dropout_rate[0])
-            self.dropout_max = float(dropout_rate[1])
+        if isinstance(dropout_rate, float):
+            self.dropout_min = dropout_rate
+            self.dropout_max = dropout_rate
+        elif isinstance(dropout_rate, Iterable):
+            len_dropout_rate = sum(1 for e in dropout_rate)
+
+            if len_dropout_rate == 1:
+                self.dropout_min = float(dropout_rate[0])
+                self.dropout_max = float(dropout_rate[0])
+            elif len_dropout_rate == 2:
+                self.dropout_min = float(dropout_rate[0])
+                self.dropout_max = float(dropout_rate[1])
+            else:
+                raise Exception("Iterable must have size 1 or 2. Received {0}".format(len_dropout_rate))
         else:
-            self.dropout_min = float(dropout_rate)
-            self.dropout_max = float(dropout_rate)
+            raise Exception("Expected float or iterable. Received {0}".format(type(dropout_rate)))
 
         assert self.dropout_min >= 0
         assert 0 < self.dropout_max < 1
@@ -161,24 +169,28 @@ class SparseToDense(torch.nn.Module):
 class Rasterize(torch.nn.Module):
     """ Apply a gaussian blur to all channels of a dense tensor. """
 
-    def __init__(self, sigma: Union[float, List[float], Tuple[float, float]], normalize: bool):
+    def __init__(self, sigma: Union[float, Iterable[float]], normalize: bool):
         """
         Args:
             sigma: the sigma of the Gaussian kernel used for rasterization in unit of pixel_size.
                 If Tuple[float,float] a uniform random variable is drawn before applying the Gaussian Blur.
         """
         super().__init__()
-        if isinstance(sigma, List):
-            self.sigma_min = float(sigma[0])
-            self.sigma_max = float(sigma[1])
-        elif isinstance(sigma, Tuple):
-            self.sigma_min = float(sigma[0])
-            self.sigma_max = float(sigma[1])
-        elif isinstance(sigma, float):
+        if isinstance(sigma, float):
             self.sigma_min = sigma
             self.sigma_max = sigma
+        elif isinstance(sigma, Iterable):
+            len_sigma = sum(1 for e in sigma)
+            if len_sigma == 1:
+                self.sigma_min = float(sigma[0])
+                self.sigma_max = float(sigma[0])
+            elif len_sigma == 2:
+                self.sigma_min = float(sigma[0])
+                self.sigma_max = float(sigma[1])
+            else:
+                raise Exception("Sigma should have length 1 or 2. Received {0}".format(len_sigma))
         else:
-            raise Exception("Invalid sigma. Expected type float or tuple received type {0}".format(type(sigma)))
+            raise Exception("Invalid sigma. Expected type float or Iterable[float]. Received type {0}".format(type(sigma)))
 
         assert self.sigma_max >= self.sigma_min
         self.normalize = normalize
@@ -253,7 +265,7 @@ class RandomStraightCut(torch.nn.Module):
 
     def __init__(self,
                  p: float = 0.5,
-                 occlusion_fraction: Tuple[float, float] = (0.25, 0.45)):
+                 occlusion_fraction: Iterable[float] = (0.25, 0.45)):
         """
         Args:
             p: Probability of the transform being applied
@@ -261,7 +273,10 @@ class RandomStraightCut(torch.nn.Module):
         """
         super().__init__()
         self.p = p
-        self.occlusion_min, self.occlusion_max = occlusion_fraction
+        assert isinstance(occlusion_fraction, Iterable) and len(tuple(occlusion_fraction)) == 2, \
+            "Occlusion fraction must be a Iterable of length 2. Received {0}".format(len(tuple(occlusion_fraction)))
+        self.occlusion_min = float(occlusion_fraction[0])
+        self.occlusion_max = float(occlusion_fraction[1])
         assert 0.0 <= self.occlusion_min < self.occlusion_max <= 1.0
 
     def __repr__(self):

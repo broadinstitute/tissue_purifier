@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 import argparse
 import torch
+import sys
+from typing import List
 from datetime import timedelta
 import pytorch_lightning as pl
 from pytorch_lightning.plugins import DDPPlugin
@@ -11,7 +13,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from tissue_purifier.misc_utils.misc import smart_bool
 from tissue_purifier.model_utils.dino import DinoModel
 from tissue_purifier.model_utils.vae import VaeModel
-from tissue_purifier.data_utils.datamodule import DinoDM, SlideSeqTestisDM, SlideSeqKidneyDM
+from tissue_purifier.data_utils.datamodule import DinoDM, SlideSeqTestisDM, SlideSeqKidneyDM, DummyDM
 from tissue_purifier.model_utils.logger import NeptuneLoggerCkpt
 
 
@@ -116,15 +118,16 @@ def initialization(
     print("new_dict ->", new_dict)
 
     pl_neptune_logger = NeptuneLoggerCkpt(
-        project=args_dict["neptune_project"],  # change this to your project
+        project='cellarium/tissue-purifier',  # args_dict["neptune_project"],  # change this to your project
         run=neptune_run_id,  # pass something here to keep logging onto an existing run
         log_model_checkpoints=True,  # copy the checkpoints into Neptune
         # neptune kargs
-        mode="async" if args_dict["logging"] else "offline",
-        tags=[str(args_dict["model"])],
+        mode="async" if args_dict.get("logging", False) else "offline",
+        tags=[str(args_dict.get("model", "no model")), str(args_dict.get("dataset", "no_dataset"))],
         source_files=["main*.py", "*.yaml"],
         fail_on_exception=True,  # it does not good if you are not logging anything but simulation keeps going
     )
+    assert isinstance(pl_neptune_logger, NeptuneLoggerCkpt)
 
     if new_dict["profiler"] == 'advanced':
         profiler = AdvancedProfiler(dirpath="./", filename="advanced_profiler.out", line_count_restriction=1.0)
@@ -229,6 +232,15 @@ def initialization(
 
 
 def run_simulation(config_dict: dict, datamodule: DinoDM):
+    """
+    This is where most of the work ois done.
+    Log info, train the model, save the checkpoint.
+
+    Args:
+        config_dict: dictionary with all the config parameters
+        datamodule: a DinoDM datamodule (includes, train_dataloader and val_dataloaders)
+    """
+
     pl.seed_everything(seed=config_dict['random_seed'], workers=True)
 
     # Initialization need to handle 4 situations: "resume", "extend", "pretraining", "scratch"
@@ -251,16 +263,9 @@ def run_simulation(config_dict: dict, datamodule: DinoDM):
     print("initialization done. I have a model, trainer, hparam_dict")
 
     if model.global_rank == 0:
-###        # log the model summary
-###        try:
-###            trainer.logger.log_model_summary(model=model)
-###        except TypeError:
-###            # this is an internal problem with log_model_summary
-###            pass
-
+        # log model and hyperparameters
         trainer.logger.log_hyperparams(hparam_dict)
-        trainer.logger.log_model_summary(model=model)
-
+        trainer.logger.log_model_summary(model=model, log_name="training/model/summary")
         trainer.logger.log_long_text(
             text=model.__str__(),
             log_name="training/model/architecture",
@@ -299,8 +304,25 @@ def run_simulation(config_dict: dict, datamodule: DinoDM):
         trainer.logger.finalize(status='completed')
 
 
-def cli_main():
+def parse_args(argv: List[str]) -> dict:
+    """
+    Read argv from command-line and produce a configuration dictionary.
+    If the command-line arguments include
 
+    If the command-line arguments include '--to_yaml my_yaml_file.yaml' the configuration dictionary is written to file.
+
+    Args:
+        argv: the parameter passed from the command line. If argv includes '--from_yaml input.yaml' all
+            other CL parameters are neglected. The parameters will be read from file instead.
+            Parameters missing in input.yaml will be set to their default values.
+            If argv includes '--to_yaml output.yaml' the configuration dictionary is written to file.
+
+    Returns:
+        config_dict: a dictionary with all the configuration parameters.
+
+    Note:
+        Parameters which are missing from argv or input.yaml will be set to their default values.
+    """
     def write_to_yaml(_my_dict, _yaml_file):
         import yaml
         with open(_yaml_file, 'w') as file:
@@ -356,7 +378,7 @@ def cli_main():
     parser.add_argument("--model", default="dino", type=str, choices=["dino", "vae"],
                         help="methodology for representation learning")
     parser.add_argument("--dataset", default="slide_seq_testis", type=str,
-                        choices=["slide_seq_testis", "slide_seq_kidney", "caltech", "fashion"],
+                        choices=["slide_seq_testis", "slide_seq_kidney", "dummy_dm"],
                         help="datamodule to use for train and validation")
 
     # simulation parameters
@@ -370,13 +392,11 @@ def cli_main():
                         help="Logging to neptune? Set to false for quicker development")
 
     # parse the known args to decide if I am going to use the command_line or config_file
-    (args, _) = parser.parse_known_args()
+    (args, _) = parser.parse_known_args(argv)
 
     if args.from_yaml is not None:
-        all_args_from_file = read_args_from_yaml(args.from_yaml)
-        (args, _) = parser.parse_known_args(args=all_args_from_file)
-    else:
-        all_args_from_file = None
+        argv = read_args_from_yaml(args.from_yaml)
+        (args, _) = parser.parse_known_args(args=argv)
 
     # Decide which model to use
     if args.model == "dino":
@@ -393,6 +413,9 @@ def cli_main():
     elif args.dataset == "slide_seq_kidney":
         parser = SlideSeqKidneyDM.add_specific_args(parser)
         datamodule_ch_in = SlideSeqKidneyDM.ch_in
+    elif args.dataset == 'dummy_dm':
+        parser = DummyDM.add_specific_args(parser)
+        datamodule_ch_in = DummyDM.ch_in
     else:
         raise Exception("Invalid dataset {0}".format(args.dataset))
 
@@ -400,30 +423,38 @@ def cli_main():
     parser = argparse.ArgumentParser(parents=[parser], add_help=True)
 
     # read from command_line if args_from_file is None, missing_value will be set to defaults values
-    args = parser.parse_args(args=all_args_from_file)
+    args = parser.parse_args(args=argv)
 
     # overwrite so that ch_in is the one specified by the datamodule
     args.image_in_ch = datamodule_ch_in
 
     if args.to_yaml is not None:
         yaml_file = args.to_yaml
-        config_dict = args.__dict__
-        config_dict.pop('to_yaml', None)
-        config_dict.pop('from_yaml', None)
-        write_to_yaml(config_dict, yaml_file)
+        config_dict_tmp = args.__dict__
+        config_dict_tmp.pop('to_yaml', None)
+        config_dict_tmp.pop('from_yaml', None)
+        write_to_yaml(config_dict_tmp, yaml_file)
     else:
-        # Create the datamodule
-        config_dict = args.__dict__
-        if args.dataset == "slide_seq_testis":
-            pl_datamodule = SlideSeqTestisDM(**config_dict)
-        elif args.dataset == "slide_seq_kidney":
-            pl_datamodule = SlideSeqKidneyDM(**config_dict)
-        else:
-            raise Exception("Invalid dataset {0}".format(args.dataset))
+        config_dict_tmp = args.__dict__
 
-        # Run the simulation with all the command-line params passed as a dictionary
-        run_simulation(config_dict=config_dict, datamodule=pl_datamodule)
+    return config_dict_tmp
 
 
 if __name__ == '__main__':
-    cli_main()
+    """ This is executed when run from the command line """
+    config_dict_ = parse_args(sys.argv[1:])
+    to_yaml_ = config_dict_.get('to_yaml', None)
+    dataset_ = config_dict_.get('dataset', None)
+
+    if to_yaml_ is None:
+        if dataset_ == "slide_seq_testis":
+            datamodule_ = SlideSeqTestisDM(**config_dict_)
+        elif dataset_ == "slide_seq_kidney":
+            datamodule_ = SlideSeqKidneyDM(**config_dict_)
+        elif dataset_ == "dummy_dm":
+            datamodule_ = DummyDM(**config_dict_)
+        else:
+            raise Exception("Invalid dataset {0}".format(dataset_))
+
+        # Run the simulation with all the command-line params passed as a dictionary
+        run_simulation(config_dict=config_dict_, datamodule=datamodule_)

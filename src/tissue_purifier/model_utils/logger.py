@@ -3,6 +3,8 @@ import shutil
 import re
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import NeptuneLogger
+from pytorch_lightning.utilities.model_summary import ModelSummary
+from neptune.new.types import File
 
 
 def copy_to_location_if_dir_exists(src_path, destination_path):
@@ -62,6 +64,10 @@ class NeptuneLoggerCkpt(NeptuneLogger):
             n = len(x) - len(x.lstrip(' '))
             token = '-' * n + x
             self.run[log_name].log(token)
+
+    def log_model_summary(self, model, log_name: str = 'training/model/summary', max_depth=-1):
+        model_str = str(ModelSummary(model=model, max_depth=max_depth))
+        self.run[log_name] = File.from_content(content=model_str, extension="txt")
 
     def after_save_checkpoint(self, checkpoint_callback: "ReferenceType[ModelCheckpoint]") -> None:
         """

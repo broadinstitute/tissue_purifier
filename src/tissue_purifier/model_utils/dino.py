@@ -6,7 +6,6 @@ from torch.nn import functional as F
 import torchvision
 import numpy
 import math
-from os.path import join as os_join
 
 from neptune.new.types import File
 from pytorch_lightning import LightningModule
@@ -19,7 +18,6 @@ from tissue_purifier.model_utils.classify_regress import classify_and_regress
 
 from tissue_purifier.misc_utils.dict_util import (
     concatenate_list_of_dict,
-    flatten_dict,
     subset_dict_non_overlapping_patches)
 
 from tissue_purifier.misc_utils.misc import (
@@ -327,7 +325,7 @@ class DinoModel(LightningModule):
 
     DINO implementation, inspired by:
     https://sachinruk.github.io/blog/pytorch/pytorch%20lightning/loss%20function/2021/08/01/dino-self-supervised-vision-transformers.html
-    Adn original github repo
+    And original github repo
     """
     def __init__(
             self,
@@ -412,8 +410,8 @@ class DinoModel(LightningModule):
         # teacher parameters
         self.set_temperature_using_ipr_init = set_temperature_using_ipr_init
         if self.set_temperature_using_ipr_init:
-            self.ipr_teacher_init = ipr_teacher_init
-            self.ipr_student_init = ipr_student_init
+            self.ipr_teacher_init = float(ipr_teacher_init)
+            self.ipr_student_init = float(ipr_student_init)
             self.register_buffer("student_temperature",
                                  float(1.0) * torch.ones(1, requires_grad=False).float())
             self.register_buffer("teacher_temperature",
@@ -524,10 +522,10 @@ class DinoModel(LightningModule):
                             Ignored if set_temperature_using_ipr_init = True")
         parser.add_argument("--temperature_student_init", type=float, default=0.1,
                             help="Initial value of the temperature in the softmax of the student.")
-        parser.add_argument("--ipr_teacher_init", type=float, default=40,
+        parser.add_argument("--ipr_teacher_init", type=float, default=40.0,
                             help="The desired value of the initial IPR for the teacher. \
                             Ignored if set_temperature_using_ipr_init = True")
-        parser.add_argument("--ipr_student_init", type=float, default=80,
+        parser.add_argument("--ipr_student_init", type=float, default=80.0,
                             help="The desired value of the initial IPR for the student. \
                             Ignored if set_temperature_using_ipr_init = True")
 
@@ -571,7 +569,7 @@ class DinoModel(LightningModule):
             loaders = [loaders]
 
         for idx_dataloader, loader in enumerate(loaders):
-            indeces = torch.randperm(n=loader.dataset.__len__())[:n_examples]
+            indeces = torch.randperm(n=loader.dataset_.__len__())[:n_examples]
             list_imgs, _, _ = loader.load(index=indeces)
             list_imgs = list_imgs[:n_examples]
 

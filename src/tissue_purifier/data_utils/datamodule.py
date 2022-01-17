@@ -28,17 +28,18 @@ from tissue_purifier.data_utils.transforms import (
     # ToRgb,
 )
 from tissue_purifier.data_utils.dataset import (
-    AddFakeMetadata,
+    # AddFakeMetadata,
     CropperDataset,
     DataLoaderWithLoad,
     CollateFnListTuple,
     MetadataCropperDataset,
-    CropperDenseTensor,
+    # CropperDenseTensor,
     CropperSparseTensor,
     CropperTensor,
 )
 
-# SparseTensor can not be used in dataloader using num_workers > 0. See https://github.com/pytorch/pytorch/issues/20248
+# SparseTensor can not be used in dataloader using num_workers > 0.
+# See https://github.com/pytorch/pytorch/issues/20248
 # Therefore I put the dataset in GPU and use num_workers = 0.
 
 
@@ -126,7 +127,8 @@ class DinoDM_from_anndata_folder(DinoDM):
 
 
 class DummyDM(DinoDM):
-    def __init__(self):
+    def __init__(self, **kargs):
+        """ All inputs are neglected and the default values are applied. """
         super().__init__()
         print("-----> running datamodule init")
 
@@ -148,13 +150,13 @@ class DummyDM(DinoDM):
         # specify the transform
         self.global_scale = (0.8, 1.0)
         self.local_scale = (0.5, 0.8)
-        self.dropout_range = 0.5
-        self.rasterize_sigma = (0.5, 0.2)
+        self.dropout_range = (0.2, 0.5)
+        self.rasterize_sigma = (0.2, 0.5)
         self.occlusion_fraction = (0.1, 0.3)
 
         # params for all datasets
         self.pixel_size = 1
-        self.n_element_min_for_crop = 10
+        self.n_element_min_for_crop = 20
 
         # Callable on dataset
         self.compute_moran = SpatialAutocorrelation(
@@ -170,6 +172,11 @@ class DummyDM(DinoDM):
         self.dataset_train = None
         self.dataset_test = None
 
+    @classmethod
+    def add_specific_args(cls, parent_parser):
+        parser = ArgumentParser(parents=[parent_parser], add_help=False, conflict_handler='resolve')
+        return parser
+
     def get_metadata_to_regress(self, metadata: MetadataCropperDataset) -> Dict[str, float]:
         """ Extract one or more quantities to regress from the metadata """
         return {
@@ -178,14 +185,16 @@ class DummyDM(DinoDM):
         }
 
     def get_metadata_to_classify(self, metadata: MetadataCropperDataset) -> Dict[str, int]:
-        """ Extract one or more quantities to classify from the metadata """
-        conversion1 = {
-            'id0': 0,
-            'id1': 1,
-        }
+        """
+        Extract one or more quantities to classify from the metadata.
+        One should be at "tissue_label" b/c it is used to select non-overlapping patches.
+        """
+
+        def _remove_prefix(x):
+            return int(x.lstrip("id_"))
 
         return {
-            "condition": conversion1[metadata.f_name],
+            "tissue_label": _remove_prefix(metadata.f_name)
         }
 
     @classproperty
@@ -309,7 +318,7 @@ class DummyDM(DinoDM):
         import numpy
         from anndata import AnnData
 
-        n_tissues, n_beads = 2, 1000
+        n_tissues, n_beads = 5, 1000
         all_anndata, all_names_sparse_images, all_labels_sparse_images = [], [], []
         for n_tissue in range(n_tissues):
             tmp_dict = {
@@ -402,7 +411,7 @@ class DummyDM(DinoDM):
             collate_fn=CollateFnListTuple(),
             num_workers=0,  # problem if this is larger than 0, see https://github.com/pytorch/pytorch/issues/20248
             shuffle=True,
-            drop_last=True,
+            drop_last=False,
         )
         return dataloader_train
 
@@ -422,6 +431,12 @@ class DummyDM(DinoDM):
             drop_last=False,
         )
         return [test_dataloader]
+
+    def test_dataloader(self) -> List[DataLoaderWithLoad]:
+        return self.val_dataloader()
+
+    def predict_dataloader(self) -> List[DataLoaderWithLoad]:
+        return self.val_dataloader()
 
 
 class SlideSeqTestisDM(DinoDM):
@@ -856,6 +871,12 @@ class SlideSeqTestisDM(DinoDM):
             drop_last=False,
         )
         return [test_dataloader]
+
+    def test_dataloader(self) -> List[DataLoaderWithLoad]:
+        return self.val_dataloader()
+
+    def predict_dataloader(self) -> List[DataLoaderWithLoad]:
+        return self.val_dataloader()
 
 
 class SlideSeqKidneyDM(DinoDM):
@@ -1344,6 +1365,12 @@ class SlideSeqKidneyDM(DinoDM):
             drop_last=False,
         )
         return [test_dataloader]
+
+    def test_dataloader(self) -> List[DataLoaderWithLoad]:
+        return self.val_dataloader()
+
+    def predict_dataloader(self) -> List[DataLoaderWithLoad]:
+        return self.val_dataloader()
 
 
 #####class CaltechDM(DinoDM):

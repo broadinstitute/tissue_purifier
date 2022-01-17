@@ -1,13 +1,13 @@
 from typing import Sequence, List, Any, Dict, Tuple, Callable
 
 import torch
+import numpy
 from argparse import ArgumentParser
 import torchvision
 
 from torch.nn import functional as F
 from neptune.new.types import File
 from pytorch_lightning import LightningModule
-from os.path import join as os_join
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 
 from tissue_purifier.plot_utils.plot_embeddings import plot_embeddings
@@ -16,7 +16,6 @@ from tissue_purifier.model_utils.classify_regress import classify_and_regress
 
 from tissue_purifier.misc_utils.dict_util import (
     concatenate_list_of_dict,
-    flatten_dict,
     subset_dict_non_overlapping_patches)
 
 from tissue_purifier.misc_utils.misc import (
@@ -453,7 +452,7 @@ class VaeModel(LightningModule):
             loaders = [loaders]
 
         for idx_dataloader, loader in enumerate(loaders):
-            indeces = torch.randperm(n=loader.dataset.__len__())[:n_examples]
+            indeces = torch.randperm(n=loader.dataset_.__len__())[:n_examples]
             list_imgs, _, _ = loader.load(index=indeces)
             list_imgs = list_imgs[:n_examples]
 
@@ -696,6 +695,9 @@ class VaeModel(LightningModule):
         """ You can receive a list_of_valdict or, if you have multiple val_datasets, a list_of_list_of_valdict """
         print("--- inside validation epoch end")
 
+        """ You can receive a list_of_valdict or, if you have multiple val_datasets, a list_of_list_of_valdict """
+        print("inside validation epoch end")
+
         if isinstance(list_of_val_dict[0], dict):
             list_dict = [concatenate_list_of_dict(list_of_val_dict)]
         elif isinstance(list_of_val_dict[0], list):
@@ -706,17 +708,18 @@ class VaeModel(LightningModule):
         for loader_idx, total_dict in enumerate(list_dict):
             print("rank {0} dataloader_idx {1}".format(self.global_rank, loader_idx))
 
-            # gather dictionaries from the other processes.
+            # gather dictionaries from the other processes and flatten the extra dimension.
             world_dict = self.all_gather(total_dict)
             all_keys = list(world_dict.keys())
             for key in all_keys:
-                if len(world_dict[key].shape) == 1 + len(list_dict[0][key].shape):
+                if len(world_dict[key].shape) == 1 + len(total_dict[key].shape):
                     # In interactive mode the all_gather does not add an extra leading dimension
                     # This check makes sure that I am not flattening when leading dim has not been added
                     world_dict[key] = world_dict[key].flatten(end_dim=1)
-                # I also add the z_score
+                # Add the z_score
                 if key.startswith("feature") and key.endswith("bbone"):
-                    world_dict[key+'_zscore'] = get_z_score(world_dict[key], dim=-2)
+                    tmp_key = key + '_zscore'
+                    world_dict[tmp_key] = get_z_score(world_dict[key], dim=-2)
             print("done dictionary. rank {0}".format(self.global_rank))
 
             # DO operations ONLY on rank 0.
@@ -728,32 +731,52 @@ class VaeModel(LightningModule):
                 smart_umap = SmartUmap(n_neighbors=25, preprocess_strategy='raw',
                                        n_components=2, min_dist=0.5, metric='euclidean')
 
-                for feature_key in ["features_mu"]:
-                    input_features = world_dict[feature_key]
+                # plot the UMAP colored by all available annotations
+                smart_pca = SmartPca(preprocess_strategy='z_score')
+                smart_umap = SmartUmap(n_neighbors=25, preprocess_strategy='raw',
+                                       n_components=2, min_dist=0.5, metric='euclidean')
+
+                embedding_keys = []
+                for k in ["features_mu"]:
+                    input_features = world_dict[k]
                     embeddings_pca = smart_pca.fit_transform(input_features, n_components=0.9)
                     embeddings_umap = smart_umap.fit_transform(embeddings_pca)
+                    embedding_key = "umap_" + k
+                    world_dict[embedding_key] = embeddings_umap
+                    embedding_keys.append(embedding_key)
 
-                    annotations, titles = [], []
-                    for k in world_dict.keys():
-                        if k.startswith("regress") or k.startswith("classify"):
-                            annotations.append(world_dict[k])
-                            # titles.append("{0}_{1}. --> Epoch={2}".format(feature_key, k, self.current_epoch))
-                            titles.append("{0} -> Epoch={1}".format(k, self.current_epoch))
+                annotation_keys, titles = [], []
+                for k in world_dict.keys():
+                    if k.startswith("regress") or k.startswith("classify"):
+                        annotation_keys.append(k)
+                        titles.append("{0} -> Epoch={1}".format(k, self.current_epoch))
 
-                    tmp_fig = plot_embeddings(
-                        embeddings=embeddings_umap,
-                        annotations=annotations,
+                # Now I have both annotation_keys and feature_keys
+                all_figs = []
+                for embedding_key in embedding_keys:
+                    fig_tmp = plot_embeddings(
+                        world_dict,
+                        embedding_key=embedding_key,
+                        annotation_keys=annotation_keys,
                         x_label="UMAP1",
                         y_label="UMAP2",
                         titles=titles,
                         n_col=2,
                     )
+                    all_figs.append(fig_tmp)
 
-                    self.logger.run["maps/" + feature_key].log(File.as_image(tmp_fig))
+                for fig_tmp, key_tmp in zip(all_figs, embedding_keys):
+                    self.logger.run["maps/" + key_tmp].log(File.as_image(fig_tmp))
 
                 # Do KNN classification
+                def exclude_self(d):
+                    w = numpy.ones_like(d)
+                    w[d == 0.0] = 0.0
+                    return w
+
                 kn_kargs = {
                     "n_neighbors": 5,
+                    "weights": exclude_self,
                 }
 
                 feature_keys, regress_keys, classify_keys = [], [], []
@@ -765,13 +788,12 @@ class VaeModel(LightningModule):
                     elif key.startswith("feature"):
                         feature_keys.append(key)
 
-                dict_summary = dict()
                 regressor = KNeighborsRegressor(**kn_kargs)
                 classifier = KNeighborsClassifier(**kn_kargs)
 
                 # loop over subset made of not-overlapping patches
+                df_tot = None
                 for n in range(100):
-
                     # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
                     world_dict_subset = subset_dict_non_overlapping_patches(
                         input_dict=world_dict,
@@ -779,33 +801,34 @@ class VaeModel(LightningModule):
                         key_patch_xywh="patches_xywh",
                         iom_threshold=self.val_iomin_threshold)
 
-                    dict_result_kn_tmp = classify_and_regress(
+                    df_tmp = classify_and_regress(
                         input_dict=world_dict_subset,
                         feature_keys=feature_keys,
                         regress_keys=regress_keys,
                         classify_keys=classify_keys,
                         regressor=regressor,
                         classifier=classifier,
-                        use_train_test_split=False,
-                        add_prediction=False,
+                        n_repeats=1,
+                        n_splits=1,
                         verbose=False,
                     )
+                    df_tot = df_tmp if df_tot is None else df_tot.merge(df_tmp, how='outer')
 
-                    # flatten and aappend to the summary dictionary
-                    dict_result_kn_tmp_flatten = flatten_dict(dict_result_kn_tmp)
-                    for k, v in dict_result_kn_tmp_flatten.items():
-                        if k in dict_summary.keys():
-                            dict_summary[k].append(v)
-                        else:
-                            dict_summary[k] = [v]
+                df_tot["combined_key"] = df_tot["x_key"] + "_" + df_tot["y_key"]
+                df_mean = df_tot.groupby("combined_key").mean()
+                df_std = df_tot.groupby("combined_key").std()
 
-                # log the mean and std of these metrics
-                for k, v in dict_summary.items():
-                    std, mean = torch.std_mean(torch.tensor(v), dim=-1, keepdim=False)
-                    self.log(name="regress_classify_loader" + "/kn/" + k + "/mean",
-                             value=mean, batch_size=1, rank_zero_only=True)
-                    self.log(name="regress_classify_loader" + "/kn/" + k + "/std",
-                             value=std, batch_size=1, rank_zero_only=True)
+                for row in df_mean.itertuples():
+                    for k, v in row._asdict().items():
+                        if isinstance(v, float) and numpy.isfinite(v):
+                            name = "kn/" + row.Index + "/" + k + "/mean"
+                            self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
+
+                for row in df_std.itertuples():
+                    for k, v in row._asdict().items():
+                        if isinstance(v, float) and numpy.isfinite(v):
+                            name = "kn/" + row.Index + "/" + k + "/std"
+                            self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
 
     def configure_optimizers(self):
         # the learning_rate and weight_decay are very large. They are just placeholder.
