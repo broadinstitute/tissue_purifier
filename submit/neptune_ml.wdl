@@ -37,11 +37,11 @@ task train {
         git checkout ~{git_branch_or_commit}
         echo "AFTER GIT --> Content of checkout dir"
         echo $(ls)
-           
-        # 4. Navigate to the directory where you will run your python code (in this case src)
+        
+        # 4. Install the package
         #    and create links from delocalized files and give them the name you expects
-        cd ./src
-        mv  ~{MAIN_PY} ./main.py  # move this one (instead on linking it) so that it can find the packages
+        pip install .  # this means that you package must have a setup.py file
+        ln -s ~{MAIN_PY} ./main.py  
         ln -s ~{ML_CONFIG} ./config.yaml
         ln -s $exec_dir/my_checkpoint.ckpt ./preemption_ckpt.pt  # this is to resume a pre-empted run     (it has precedence)
         ln -s ~{ckpt_previous_run} ./old_run_ckpt.pt             # this is to resume from a previous run  (secondary)
@@ -52,7 +52,8 @@ task train {
         # Install missing packages not already included in the docker image (if any)
         # pip install xxxx
         pip install google-cloud-storage
-         
+        pip install colorcet        
+ 
         # 5. run python code only if NEPTUNE credentials are found
         neptune_token=$(cat ~{credentials_json} | grep -o '"NEPTUNE_API_TOKEN"\s*:\s*"[^"]*"' | grep -o '"[^"]*"$')
         if [ ! -z $neptune_token ]; then
