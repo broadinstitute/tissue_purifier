@@ -138,20 +138,24 @@ def initialization(
 
     if torch.cuda.device_count() == 0:
         # cpu emulating ddp process
-        strategy = DDPPlugin(find_unused_parameters=True)
+        # TODO: This hangs. Lightining removed the ddp_cpu 
+        strategy = 'ddp'
+        accelerator = 'cpu'
         num_processes = 2
         sync_batchnorm = False
         precision = 32
     elif torch.cuda.device_count() == 1:
         # single gpu
+        accelerator = None
         strategy = None
         num_processes = 1
         sync_batchnorm = False
         precision = new_dict["precision"]
     else:
         # more that 1 gpu
+        accelerator = None
         if args_dict["model"] == "dino":
-            # vae uses automatic optimization. I can set this flag to False for speed.
+            # dino uses automatic optimization. I can set this flag to False for speed.
             strategy = DDPPlugin(find_unused_parameters=False)
         elif args_dict["model"] == "vae":
             # vae uses manual optimization. I need to set this flag to true
@@ -200,7 +204,8 @@ def initialization(
     pl_trainer = Trainer(
         weights_save_path="saved_ckpt",
         profiler=profiler,
-        num_nodes=1,  # uses a single machine possibly with many gpus,
+        num_nodes=num_processes,  # uses a single machine possibly with many gpus,
+        accelerator=accelerator,
         gpus=torch.cuda.device_count(),  # number of gpu cards on a single machine to use
         check_val_every_n_epoch=new_dict["check_val_every_n_epoch"],
         callbacks=[ckpt_train_end, ckpt_train_interval, ckpt_save_best, lr_monitor],
@@ -428,14 +433,13 @@ def parse_args(argv: List[str]) -> dict:
     # overwrite so that ch_in is the one specified by the datamodule
     args.image_in_ch = datamodule_ch_in
 
+    config_dict_tmp = args.__dict__
     if args.to_yaml is not None:
         yaml_file = args.to_yaml
-        config_dict_tmp = args.__dict__
-        config_dict_tmp.pop('to_yaml', None)
-        config_dict_tmp.pop('from_yaml', None)
-        write_to_yaml(config_dict_tmp, yaml_file)
-    else:
-        config_dict_tmp = args.__dict__
+        config_to_file = config_dict_tmp.copy()
+        config_to_file.pop('to_yaml', None)
+        config_to_file.pop('from_yaml', None)
+        write_to_yaml(config_to_file, yaml_file)
 
     return config_dict_tmp
 
