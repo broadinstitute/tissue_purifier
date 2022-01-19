@@ -39,7 +39,7 @@ class SparseImage:
             spot_properties_dict: the dictionary with the spot properties (at the minimum x,y,category)
             x_key: str, the key where the x_coordinates are stored in the spot_properties_dict
             y_key: str, the key where the y_coordinates are stored in the spot_properties_dict
-            category_key: str, the key the the category are stored in the spot_properties_dict
+            category_key: str, the key where the category are stored in the spot_properties_dict
             categories_to_codes: dictionary with the mapping from categories (keys) to codes (values).
                 The codes must be integers starting from zero. For example {"macrophage" : 0, "t-cell": 1}.
             pixel_size: float, size of the pixel. It used in the conversion
@@ -510,7 +510,7 @@ class SparseImage:
             y_torch = torch.tensor(patches_y, dtype=torch.int).cpu()
             w_torch = torch.tensor(patches_w, dtype=torch.int).cpu()
             h_torch = torch.tensor(patches_h, dtype=torch.int).cpu()
-            patches_xywh = torch.stack((x_torch, y_torch, w_torch, h_torch), dim=-1)
+            patches_xywh = torch.stack((x_torch, y_torch, w_torch, h_torch), dim=-1).long()
             self._patch_properties_dict["patch_xywh"] = patches_xywh
 
     def patch_property_to_image_property(
