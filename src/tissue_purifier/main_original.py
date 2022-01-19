@@ -138,7 +138,7 @@ def initialization(
 
     if torch.cuda.device_count() == 0:
         # cpu emulating ddp process
-        # TODO: This hangs. Lightining removed the ddp_cpu 
+        # TODO: This hangs. Lightining removed the ddp_cpu. Investigate
         strategy = 'ddp'
         accelerator = 'cpu'
         num_processes = 2
