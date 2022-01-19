@@ -50,13 +50,14 @@ def trainer(neptune_logger):
     return Trainer(
         weights_save_path="saved_ckpt",
         num_nodes=1,  # uses a single machine possibly with many gpus,
-        gpus=torch.cuda.device_count(),  # number of gpu cards on a single machine to use
+        gpus=0,
         check_val_every_n_epoch=1,
         callbacks=[ckpt_train_interval],
-        strategy=DDPPlugin(find_unused_parameters=True),
+        strategy='ddp',
+        accelerator='cpu',  # DDPPlugin(find_unused_parameters=True),
         num_sanity_val_steps=0,
         # debugging
-        max_epochs=2,
+        max_epochs=3,
         logger=neptune_logger,
         log_every_n_steps=1,
         detect_anomaly=True,
