@@ -266,7 +266,8 @@ class CropperSparseTensor(CropperTensor):
 
     @staticmethod
     def reapply_crops(sparse_tensor, patches_xywh) -> (List[torch.sparse.Tensor], List[int], List[int]):
-        assert isinstance(patches_xywh, torch.LongTensor)
+        assert isinstance(patches_xywh, torch.LongTensor), \
+            "Expected torch.LongTensor. Received {0}".format(type(patches_xywh))
         assert len(patches_xywh.shape) == 2 and patches_xywh.shape[-1] == 4
         assert isinstance(sparse_tensor, torch.sparse.Tensor)
         codes: torch.Tensor
