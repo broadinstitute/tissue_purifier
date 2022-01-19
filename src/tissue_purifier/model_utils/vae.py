@@ -724,7 +724,7 @@ class VaeModel(LightningModule):
 
             # DO operations ONLY on rank 0.
             # ADD "rank_zero_only=True" to avoid deadlocks on synchronization.
-            if self.trainer.is_global_zero:
+            if self.global_rank == 0:
 
                 # plot the UMAP colored by all available annotations
                 smart_pca = SmartPca(preprocess_strategy='z_score')
