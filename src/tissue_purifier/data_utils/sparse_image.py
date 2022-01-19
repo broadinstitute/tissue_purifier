@@ -5,6 +5,7 @@ import torch
 from tissue_purifier.model_utils.analyzer import SpatialAutocorrelation
 from tissue_purifier.data_utils.dataset import CropperSparseTensor
 from scanpy import AnnData
+import matplotlib.colors
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 import colorcet as cc
@@ -271,7 +272,7 @@ class SparseImage:
 
     def to_rgb(self,
                spot_size: float = 1.0,
-               cmap: "matplotlib.colors.ListedColormap" = cc.cm.glasbey_bw_minc_20_maxl_70):
+               cmap: matplotlib.colors.ListedColormap = cc.cm.glasbey_bw_minc_20_maxl_70) -> torch.Tensor:
         """
         Make a 3 channel RGB image
 
@@ -280,7 +281,7 @@ class SparseImage:
             cmap: the colormap to use
 
         Returns:
-            rgb: torch.Tensor of size (3, width, height) with the rgb rendering of the image
+            rgb: Tensor of size (3, width, height) with the rgb rendering of the image
         """
 
         def _make_kernel(_sigma: float):
@@ -423,10 +424,9 @@ class SparseImage:
 
         destination_keys = self._patch_properties_dict.keys()
 
+        all_keys_to_store = feature_names.copy()
         if store_crops:
-            all_keys_to_store = feature_names.copy() + store_crops_key
-        else:
-            all_keys_to_store = feature_names.copy()
+            all_keys_to_store.append(store_crops_key)
 
         for k in all_keys_to_store:
             if k in destination_keys and not overwrite:
