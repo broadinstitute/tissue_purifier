@@ -71,8 +71,7 @@ n_global_crops: 2
 n_local_crops: 6
 global_size: 96
 local_size: 64
-dropouts: 
-- 0.0
+dropout_rates:
 - 0.1
 - 0.2
 - 0.3
@@ -87,4 +86,6 @@ occlusion_fraction:
 - 0.5
 rasterize_sigma:
 - 0.5
+- 1.0
+- 1.5
 - 2.0

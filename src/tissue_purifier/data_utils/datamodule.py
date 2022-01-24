@@ -221,7 +221,7 @@ class DinoSparseDM(DinoDM):
                             between these values")
         parser.add_argument("--n_element_min_for_crop", type=int, default=200,
                             help="minimum number of beads/cell in a crop")
-        parser.add_argument("--dropout_ranges", type=float, nargs='*', default=[0.1, 0.2, 0.3],
+        parser.add_argument("--dropout_rates", type=float, nargs='*', default=[0.1, 0.2, 0.3],
                             help="Possible values of the dropout. Should be > 0.0")
         parser.add_argument("--rasterize_sigma", type=float, nargs='*', default=[0.5, 1.0, 1.5, 2.0],
                             help="Possible values of the sigma of the gaussian kernel used for rasterization")
