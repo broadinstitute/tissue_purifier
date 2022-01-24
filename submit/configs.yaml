@@ -1,7 +1,7 @@
 # general
 random_seed: 11
 neptune_project: cellarium/tissue-purifier
-batch_size_per_gpu: 64
+batch_size_per_gpu: 96
 check_val_every_n_epoch: 10
 checkpoint_interval_minutes: 5
 model: dino
@@ -35,12 +35,12 @@ head_type: dino  # mlp or dino
 head_use_bn: true
 
 # optimizers
-optimizer_type: 'lars'
-min_learning_rate: 0.001 
+optimizer_type: lars
+min_learning_rate: 0.01 
 max_learning_rate: 0.3
 max_weight_decay: 1.0E-6
 min_weight_decay: 1.0E-6
-warm_up_epochs: 100
+warm_up_epochs: 10
 warm_down_epochs: 200
 max_epochs: 400
 
