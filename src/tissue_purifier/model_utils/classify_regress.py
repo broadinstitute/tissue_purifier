@@ -13,6 +13,8 @@ from tissue_purifier.misc_utils.misc import linear_warmup_and_cosine_protocol
 from tissue_purifier.model_utils.beta_mixture_1d import BetaMixture1D
 import pandas
 
+import scanpy as sc
+sc.pp.regress_out
 
 def make_mlp_torch(
         input_dim: int,
@@ -177,6 +179,19 @@ class PlNoisyBase(LightningModule):
 
     pytorch Lightning implementation of 'Unsupervised Label Noise Modeling and Loss Correction'
     see: https://github.com/PaulAlbert31/LabelNoiseCorrection
+
+    New labels are computed as:
+    soft_labels = (1.0-w) * labels_one_hot + w * prob_one_hot  # if hard bootstrapping
+    soft_labels = (1.0-w) * labels_one_hot + w * prob          # if soft bootstrapping
+    where prob is what the NN predicts, and w is the probability of label being incorrect.
+    It is computed by computing the assignment probability of a 2-component Mixture Model.
+    It is based on the idea that correct/incorrect labels will lead to small/large losses.
+
+    These is an additional regularization term so that corrected labels do not collapse to a single class
+    empirical_class_distribution = torch.mean(prob, dim=-2)  # mean over batch. Shape (classes)
+    loss_reg = self.kl_between_class_distributions(empirical_class_distribution)
+
+    # Loss function is sum of CE w.r.t. the corrected labels plus: lambda_reg * loss_reg
     """
     def __init__(
             self,
@@ -203,6 +218,28 @@ class PlNoisyBase(LightningModule):
             max_weight_decay: float,
             # loss
     ):
+        """
+        Args:
+            input_dim: input channels
+            output_dim: output channels, i.e. number of classes
+            hidden_dims: size of hidden layers
+            hidden_activation: activation to apply to the hidden layers
+            solver: one among 'adam' or 'sgd' or 'rmsprop'
+            betas: parameters for the adam optimizer (used only if :attr:'solver' is 'adam')
+            momentum: parameter for sgd optimizer (used only if :attr:'solver' is 'sgd')
+            alpha: parameters for the rmsprop optimizer (used only if :attr:'solver' is 'rmsprop')
+            bootstrap_epoch_start: bootstrapping, i.e. correcting the labels will start after this many epochs.
+                The idea is that the model learns a bit before the loss are meaningful to identify incorrect labels.
+            lambda_reg: strength of regularization to avoid that the corrected labels collapse to a single class.
+            hard_bootstrapping: if True the correct labels are a weighted sum of two delta-functions. If False
+                the corrected labels are a weighted sum of a delta-function and the network probability.
+            warm_up_epochs: epochs during which to linearly increase learning rate (at the beginning of training)
+            warm_down_epochs: epochs during which to anneal learning rate with cosine protocoll (at the end of training)
+            min_learning_rate: minimum learning rate (at the very beginning and end of training)
+            max_learning_rate: maximum learning rate (after linear ramp)
+            min_weight_decay: minimum weight decay (during the entirety of the linear ramp)
+            max_weight_decay: maximum weight decay (reached at the end of training)
+        """
         super().__init__()
         # loss
         self.input_dim_ = input_dim
@@ -241,10 +278,18 @@ class PlNoisyBase(LightningModule):
         self.bmm_model_maxLoss = None
         self.bmm_model_minLoss = None
         self.track_loss_hard_ce = None
-        self.bmm_fitted_mean_0 = []
-        self.bmm_fitted_mean_1 = []
 
         # hidden quantities
+        self.bmm_fitted_alpha0_curve_ = []
+        self.bmm_fitted_alpha1_curve_ = []
+        self.bmm_fitted_beta0_curve_ = []
+        self.bmm_fitted_beta1_curve_ = []
+        self.bmm_fitted_mean0_curve_ = []
+        self.bmm_fitted_mean1_curve_ = []
+        self.learning_rate_curve_ = []
+        self.weight_decay_curve_ = []
+
+        # for compatibility with Scikit-learn, keep track of loss and loss_curve
         self.loss_ = None
         self.loss_curve_ = []
         self.loss_accumulation_value_ = None
@@ -263,33 +308,39 @@ class PlNoisyBase(LightningModule):
         return self.net(x)
 
     def compute_assignment_prob_bmm_model(self, log_prob, soft_targets):
-        assert log_prob.shape == soft_targets.shape
-        batch_losses = - (soft_targets * log_prob).sum(dim=-1)
+        assert log_prob.shape == soft_targets.shape  # shape (N, C)
+        batch_losses = - (soft_targets * log_prob).sum(dim=-1)  # shape N
         batch_losses = (batch_losses - self.bmm_model_minLoss) / (self.bmm_model_maxLoss - self.bmm_model_minLoss)
         batch_losses.clamp_(min=1E-4, max=1.0-1E-4)
-        assignment_prob = self.bmm_model.look_lookup(batch_losses)
-        return torch.Tensor(assignment_prob, device=log_prob.device).float()
+        assignment_prob = self.bmm_model.look_lookup(batch_losses)  # shape N with values in (0, 1)
+        return torch.Tensor(assignment_prob, device=log_prob.device).float()  # shape N
 
     @staticmethod
     def kl_between_class_distributions(empirical_hist):
+        assert len(empirical_hist.shape) == 1  # shape (Classes)
         prior_hist = torch.ones_like(empirical_hist)
         prior = prior_hist / prior_hist.sum()
         post = empirical_hist
         tmp = prior * (prior.log() - post.log())
         kl = torch.where(torch.isfinite(tmp), tmp, torch.zeros_like(tmp))
-        return kl.sum(dim=-1)
+        return kl.sum(dim=-1)  # shape -> scalar
 
     @staticmethod
     def soft_ce_loss(logits, soft_targets):
-        assert logits.shape == soft_targets.shape
-        loss = - (soft_targets * torch.nn.functional.log_softmax(logits, dim=-1)).sum(dim=-1)
-        return loss
+        assert len(logits.shape) == 2
+        assert logits.shape == soft_targets.shape  # shape (N, C)
+        loss = - (soft_targets * torch.nn.functional.log_softmax(logits, dim=-1)).sum(dim=-1)  # shape N
+        assert loss.shape == torch.Size([logits.shape[0]])
+        return loss  # shape (N)
 
     @staticmethod
     def hard_ce_loss(logits, targets):
-        assert len(targets.shape) == 1
-        loss_ce = torch.nn.functional.cross_entropy(logits, targets, reduction='none')
-        return loss_ce
+        assert len(logits.shape) == 2  # shape (N,C)
+        assert len(targets.shape) == 1  # shape (N)
+        assert logits.shape[0] == targets.shape[0]
+        loss_ce = torch.nn.functional.cross_entropy(logits, targets, reduction='none')  # shape (N)
+        assert loss_ce.shape[0] == targets.shape[0]
+        return loss_ce  # shape (N)
 
     def train_bootstrapping_beta(self, logits, targets, lambda_reg: float = 1.0, hard_bootstrapping: bool = False):
         log_prob = torch.nn.functional.log_softmax(logits, dim=-1)
@@ -389,11 +440,28 @@ class PlNoisyBase(LightningModule):
         self.bmm_model.fit(all_losses)
         self.bmm_model.create_lookup(1)
 
-        # keep track of the fitted means
-        delta = (max_perc - min_perc).cpu().numpy()
-        means = self.bmm_model.fitted_means * delta + min_perc.cpu().numpy()
-        self.bmm_fitted_mean_0.append(means[0])
-        self.bmm_fitted_mean_1.append(means[1])
+        # keep track of the values fitted by the BetaMixtureModel
+        alphas = self.bmm_model.alphas
+        betas = self.bmm_model.betas
+        self.bmm_fitted_alpha0_curve_.append(alphas[0])
+        self.bmm_fitted_alpha1_curve_.append(alphas[1])
+        self.bmm_fitted_beta0_curve_.append(betas[0])
+        self.bmm_fitted_beta1_curve_.append(betas[1])
+
+        # rescale those values from dimensionless to dimensionfull
+        delta_loss = (max_perc - min_perc).cpu().numpy()
+        min_loss =  min_perc.cpu().numpy()
+        fitted_means = min_loss + delta_loss * alphas / (alphas + betas)
+        self.bmm_fitted_mean0_curve_.append(fitted_means[0])
+        self.bmm_fitted_mean1_curve_.append(fitted_means[1])
+
+        # keep track of learning rate and weight decay
+        opt = self.optimizers()
+        param_group = opt.param_groups[0]
+        lr = param_group["lr"]
+        wd = param_group["weight_decay"]
+        self.learning_rate_curve_.append(lr)
+        self.weight_decay_curve_.append(wd)
 
     def configure_optimizers(self):
         if self.solver == 'adam':
@@ -674,6 +742,16 @@ class PlClassifier(BaseEstimator):
             lambda_reg: float = 1.0,
             hard_bootstrapping: bool = False,
             **kargs):
+        """
+        Args:
+            noisy_labels: whether to use classification with noisy labels algorithm
+            bootstrap_epoch_start: when to start correcting the noisy labels
+            lambda_reg: strength of the regularization which prevents the corrected labels from collapsing
+                to a single class
+            hard_bootstrapping: If true the corrected labels are weighted sum of two delta-functions.
+                If false are weighted sum of one-delta and the predicted probability.
+            kargs: any parameter passed to :class:'BaseEstimator' such as max_iter, solver, ...
+        """
 
         # spacial parameters which will be used only if noisy_labels == True
         self.noisy_labels = noisy_labels
@@ -682,7 +760,7 @@ class PlClassifier(BaseEstimator):
         self.hard_bootstrapping = hard_bootstrapping
 
         # standard parameters
-        self.classes_np = None
+        self._classes_np = None
         self.output_activation = torch.nn.Identity()  # return the raw logit
         super().__init__(**kargs)
 
@@ -740,16 +818,16 @@ class PlClassifier(BaseEstimator):
 
     def fit(self, X, y):
         X = self._to_torch_tensor(X)
-        labels, self.classes_np = self._make_integer_labels(y)
-        self._pl_net = self.create_mlp(input_dim=X.shape[-1], output_dim=self.classes_np.shape[0])
-        index = torch.arange(labels.shape[0], dtype=torch.long, device=labels.device)
+        labels_torch, self._classes_np = self._make_integer_labels(y)
+        self._pl_net = self.create_mlp(input_dim=X.shape[-1], output_dim=self._classes_np.shape[0])
+        index = torch.arange(labels_torch.shape[0], dtype=torch.long, device=labels_torch.device)
 
         if torch.cuda.device_count():
             X = X.cuda()
-            labels = labels.cuda()
+            labels_torch = labels_torch.cuda()
             index = index.cuda()
 
-        train_dataset = torch.utils.data.TensorDataset(X.float(), labels.long(), index)
+        train_dataset = torch.utils.data.TensorDataset(X.float(), labels_torch.long(), index)
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True)
         trainer = self.create_trainer()
 
@@ -783,7 +861,7 @@ class PlClassifier(BaseEstimator):
         assert X.shape[-1] == self.pl_net.input_dim, "Dimension mistmatch"
         raw_logit_all_torch = self.get_all_logits(X)
         labels = torch.argmax(raw_logit_all_torch, dim=-1).cpu().numpy()
-        return self.classes_np[labels]
+        return self._classes_np[labels]
 
     @torch.no_grad()
     def score(self, X, y) -> float:

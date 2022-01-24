@@ -98,50 +98,43 @@ class RandomHFlip(torch.nn.Module):
 class DropoutSparseTensor(torch.nn.Module):
     """ Perform dropout on a sparse tensor. """
 
-    def __init__(self, p: float, dropout_rate: Union[float, Iterable[float]]):
+    def __init__(self, p: float, dropout_rates: Union[float, Iterable[float]]):
         """
         Args:
             p: the probability of applying dropout.
-            dropout_rate: dropout rate in (0.0, 1.0).
-                If Tuple[float,float] a uniform random variable is drawn before applying dropout
+            dropout_rates: the dropout rate will be chosen uniformly from one of this values
         """
         super().__init__()
         self.p = p
-        if isinstance(dropout_rate, float):
-            self.dropout_min = dropout_rate
-            self.dropout_max = dropout_rate
-        elif isinstance(dropout_rate, Iterable):
-            len_dropout_rate = sum(1 for e in dropout_rate)
-
-            if len_dropout_rate == 1:
-                self.dropout_min = float(dropout_rate[0])
-                self.dropout_max = float(dropout_rate[0])
-            elif len_dropout_rate == 2:
-                self.dropout_min = float(dropout_rate[0])
-                self.dropout_max = float(dropout_rate[1])
-            else:
-                raise Exception("Iterable must have size 1 or 2. Received {0}".format(len_dropout_rate))
+        if isinstance(dropout_rates, float):
+            self.dropouts = tuple(dropout_rates)
+        elif isinstance(dropout_rates, Iterable):
+            self.dropouts = tuple(dropout_rates)
         else:
-            raise Exception("Expected float or iterable. Received {0}".format(type(dropout_rate)))
+            raise Exception("Expected float or iterable. Received {0}".format(type(dropout_rates)))
 
-        assert self.dropout_min >= 0
-        assert 0 < self.dropout_max < 1
-        self.dropout_range = self.dropout_max - self.dropout_min
+        assert min(dropout_rates) > 0.0, \
+            "The minimum value of dropout rates should be > 0.0. If you want dropout = 0 set p=0.0"
+        assert max(dropout_rates) < 1.0, \
+            "The maximum value of dropout rates should be < 1.0"
+
+        self.dropouts_len = len(self.dropouts)
 
     def __repr__(self):
-        return self.__class__.__name__ + '(p={0}, dropout_rate=({1},{2}))'.format(
-            self.p, self.dropout_min, self.dropout_max)
+        return self.__class__.__name__ + '(p={0}, dropouts=({1})'.format(self.p, self.dropouts)
 
     def forward(self, sp_tensor: torch.sparse.Tensor):
         assert isinstance(sp_tensor, torch.sparse.Tensor)
 
-        tmp = torch.rand(size=[2], device=sp_tensor.device)
-        is_active = (tmp[0].item() < self.p)
-        dropout_rate = self.dropout_min + self.dropout_range * tmp[1].item()
+        rand_tmp = torch.rand(size=[1], device=sp_tensor.device)[0].item()
+        is_active = (rand_tmp < self.p)
 
         if not is_active:
             return sp_tensor
         else:
+            index = torch.randint(low=0, high=self.dropouts_len, size=[1]).item()
+            dropout_rate = self.dropouts[index]
+
             values = sp_tensor.values()
             values_new = torch.distributions.binomial.Binomial(total_count=values.float(),
                                                                probs=1.0-dropout_rate,  # prob of surviving dropout
@@ -169,57 +162,50 @@ class SparseToDense(torch.nn.Module):
 class Rasterize(torch.nn.Module):
     """ Apply a gaussian blur to all channels of a dense tensor. """
 
-    def __init__(self, sigma: Union[float, Iterable[float]], normalize: bool):
+    def __init__(self, sigmas: Union[float, Iterable[float]], normalize: bool):
         """
         Args:
-            sigma: the sigma of the Gaussian kernel used for rasterization in unit of pixel_size.
-                If Tuple[float,float] a uniform random variable is drawn before applying the Gaussian Blur.
+            sigmas: the sigma of the Gaussian kernel used for rasterization in unit of pixel_size will be chosen
+                uniformly from these values.
         """
         super().__init__()
-        if isinstance(sigma, float):
-            self.sigma_min = sigma
-            self.sigma_max = sigma
-        elif isinstance(sigma, Iterable):
-            len_sigma = sum(1 for e in sigma)
-            if len_sigma == 1:
-                self.sigma_min = float(sigma[0])
-                self.sigma_max = float(sigma[0])
-            elif len_sigma == 2:
-                self.sigma_min = float(sigma[0])
-                self.sigma_max = float(sigma[1])
-            else:
-                raise Exception("Sigma should have length 1 or 2. Received {0}".format(len_sigma))
+        if isinstance(sigmas, float):
+            self.sigmas = tuple(sigmas)
+        elif isinstance(sigmas, Iterable):
+            self.sigmas = tuple(sigmas)
         else:
-            raise Exception("Invalid sigma. Expected type float or Iterable[float]. Received type {0}".format(type(sigma)))
+            raise Exception("Invalid sigma. Expected type float or Iterable[float]. \
+            Received type {0}".format(type(sigmas)))
 
-        assert self.sigma_max >= self.sigma_min
+        assert min(self.sigmas) > 0.0, "The minimum value of sigmas should be > 0.0."
         self.normalize = normalize
+        self.kernels: Tuple[torch.tensor] = self.make_kernels()
+        self.kernels_len = len(self.kernels)
 
-    @lru_cache(maxsize=15)
-    def kernel(self, sigma: float):
-        n = int(1 + 2 * math.ceil(4.0 * sigma))
-        dx_over_sigma = torch.linspace(-4.0, 4.0, 2 * n + 1).view(-1, 1)
-        dy_over_sigma = dx_over_sigma.clone().permute(1, 0)
-        d2_over_sigma2 = (dx_over_sigma.pow(2) + dy_over_sigma.pow(2)).float()
-        kernel = torch.exp(-0.5 * d2_over_sigma2)
-        if self.normalize:
-            return kernel / kernel.sum()
-        else:
-            return kernel
+    def make_kernels(self) -> Tuple[torch.Tensor]:
+        kernels = []
+        for sigma in self.sigmas:
+            n = int(1 + 2 * math.ceil(4.0 * sigma))
+            dx_over_sigma = torch.linspace(-4.0, 4.0, 2 * n + 1).view(-1, 1)
+            dy_over_sigma = dx_over_sigma.clone().permute(1, 0)
+            d2_over_sigma2 = (dx_over_sigma.pow(2) + dy_over_sigma.pow(2)).float()
+            kernel = torch.exp(-0.5 * d2_over_sigma2)
+            if self.normalize:
+                kernels.append(kernel / kernel.sum())
+            else:
+                kernels.append(kernel)
+        return tuple(kernels)
 
     def __repr__(self):
-        return self.__class__.__name__ + '(sigma=({0},{1}), normalize={2})'.format(self.sigma_min,
-                                                                                   self.sigma_max,
-                                                                                   self.normalize)
-
-    def _random_sigma(self) -> float:
-        return self.sigma_min + (self.sigma_max - self.sigma_min) * torch.rand(size=[1]).item()
+        return self.__class__.__name__ + '(normalize={0}, sigmas=({1}))'.format(self.normalize,
+                                                                                self.sigmas)
 
     def forward(self, tensor: torch.Tensor):
         assert isinstance(tensor, torch.Tensor)
 
         channels = tensor.shape[-3]
-        weight = self.kernel(sigma=self._random_sigma()).to(tensor.device).expand(channels, 1, -1, -1)
+        index = torch.randint(low=0, high=self.kernels_len, size=[1]).item()
+        weight = self.kernels[index].to(tensor.device).expand(channels, 1, -1, -1)
 
         if len(tensor.shape) == 3:
             rasterized_tensor = F.conv2d(

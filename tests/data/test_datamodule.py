@@ -1,15 +1,27 @@
 import pytest
 import torch
 import torchvision
+from torch.utils.data import DataLoader
 from tissue_purifier.data_utils.sparse_image import SparseImage
 from tissue_purifier.data_utils.dataset import CropperDataset
-from tissue_purifier.data_utils.datamodule import DummyDM
-from torch.utils.data import DataLoader
+from tissue_purifier.data_utils.datamodule import (
+    DummyDM,
+    SlideSeqKidneyDM,
+    SlideSeqTestisDM)
 
 
-# TODO: make it run in a different folder 
-def test_dummy_dm(capsys):
-    dm = DummyDM()
+# @pytest.mark.parametrize("dm_type", ["dummy", "testis", "kidney"])
+@pytest.mark.parametrize("dm_type", ["dummy"])
+def test_dm(dm_type, capsys):
+    if dm_type == 'dummy':
+        dm = DummyDM()
+    elif dm_type == 'testis':
+        dm = SlideSeqTestisDM()
+    elif dm_type == 'kidney':
+        dm = SlideSeqKidneyDM(cohort='small')
+    else:
+        raise Exception("wrong DM type")
+
     dm.prepare_data()
     dm.setup(stage=None)
 
@@ -30,6 +42,7 @@ def test_dummy_dm(capsys):
     assert isinstance(sp_images[0], SparseImage) or \
            isinstance(sp_images[0], torch.sparse.Tensor) or \
            isinstance(sp_images[0], torch.Tensor)
+    assert sp_images[0].shape[-3] == dm.ch_in
 
     # test the val_loader
     test_loaders = dm.val_dataloader()
@@ -49,6 +62,7 @@ def test_dummy_dm(capsys):
     assert isinstance(sp_images[0], SparseImage) or \
            isinstance(sp_images[0], torch.sparse.Tensor) or \
            isinstance(sp_images[0], torch.Tensor)
+    assert sp_images[0].shape[-3] == dm.ch_in
 
     # with capsys.disabled():
     #     print(dm.trsfm_train_global)

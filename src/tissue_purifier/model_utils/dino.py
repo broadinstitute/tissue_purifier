@@ -15,6 +15,7 @@ from tissue_purifier.data_utils.dataset import MetadataCropperDataset
 from tissue_purifier.plot_utils.plot_images import show_raw_all_channels
 from tissue_purifier.plot_utils.plot_embeddings import plot_embeddings
 from tissue_purifier.model_utils.classify_regress import classify_and_regress
+from tissue_purifier.misc_utils.misc import LARS
 
 from tissue_purifier.misc_utils.dict_util import (
     concatenate_list_of_dict,
@@ -58,7 +59,9 @@ def dino_loss(output_t: torch.Tensor,
             if ip == iq:
                 # we skip cases where student and teacher operate on the same view
                 continue
-            loss = -0.5 * (p * log_q + q * log_p).sum(dim=-1)  # shape: BATCH_SIZE
+            # TODO: There is inconsistency in paper vs code. SYmmetric or non-symmetric version of KL
+            # loss = -0.5 * (p * log_q + q * log_p).sum(dim=-1)  # shape: BATCH_SIZE
+            loss = -(q * log_p).sum(dim=-1)  # shape: BATCH_SIZE
             total_loss += loss.mean()
             n_loss_terms += 1
     total_loss /= n_loss_terms
@@ -1089,16 +1092,19 @@ class DinoModel(LightningModule):
                 regularized.append(param)
         arg_for_optimizer = [{'params': regularized}, {'params': not_regularized, 'weight_decay': 0.0}]
 
-        # this very large lr is just a placeholder. The real lr will be set by the optimizer.
-        # the weight_decay for the regularized group will be set by the scheduler
+        # The real lr will be set in the training step
+        # The weight_decay for the regularized group will be set in the training step
         if self.optimizer_type == 'adam':
             return torch.optim.Adam(arg_for_optimizer, betas=(0.9, 0.999), lr=0.0)
         elif self.optimizer_type == 'sgd':
             return torch.optim.SGD(arg_for_optimizer, momentum=0.9, lr=0.0)
         elif self.optimizer_type == 'rmsprop':
             return torch.optim.RMSprop(arg_for_optimizer, alpha=0.99, lr=0.0)
+        elif self.optimizer_type == 'lars':
+            # for convnet with large batch_size
+            return LARS(arg_for_optimizer, momentum=0.9, lr=0.0)
         else:
-            # do adamw and lars
+            # do adamw
             raise Exception("optimizer is misspecified")
 
     def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:

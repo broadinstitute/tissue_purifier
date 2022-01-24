@@ -120,62 +120,307 @@ class DinoDM(pl.LightningDataModule):
         """ Global Transformation to be applied at train time """
         raise NotImplementedError
 
+    def prepare_data(self):
+        # these are things to be done only once in distributed settings
+        # good for writing stuff to disk and avoid corruption
+        raise NotImplementedError
 
-class DinoDM_from_anndata_folder(DinoDM):
-    # TODO: Implement a general dataset that takes a folder with anndata objects.
-    pass
+    def setup(self, stage: Optional[str] = None) -> None:
+        # these are things that run on each gpus.
+        # Surprisingly, here self.trainer.model.device == cpu
+        # while later in dataloader self.trainer.model.device == cuda:0
+        # stage: either 'fit', 'validate', 'test', or 'predict'
+        raise NotImplementedError
+
+    def train_dataloader(self) -> DataLoaderWithLoad:
+        raise NotImplementedError
+
+    def val_dataloader(self) -> List[DataLoaderWithLoad]:
+        raise NotImplementedError
+
+    def test_dataloader(self) -> List[DataLoaderWithLoad]:
+        return NotImplementedError
+
+    def predict_dataloader(self) -> List[DataLoaderWithLoad]:
+        return NotImplementedError
 
 
-class DummyDM(DinoDM):
+class DinoSparseDM(DinoDM):
+    """
+    DinoDM for sparse Images with the parameter for the transform specified.
+    If you are inheriting from this class then you have to overwrite:
+    'prepara_data', 'setup', 'get_metadata_to_classify' and 'get_metadata_to_regress'.
+    """
+    def __init__(self,
+                 global_size: int = 96,
+                 local_size: int = 64,
+                 n_local_crops: int = 2,
+                 n_global_crops: int = 2,
+                 global_scale: Tuple[float] = (0.8, 1.0),
+                 local_scale: Tuple[float] = (0.5, 0.8),
+                 n_element_min_for_crop: int = 200,
+                 dropouts: Tuple[float] = (0.1, 0.2, 0.3),
+                 rasterize_sigmas: Tuple[float] = (0.5, 1.0, 1.5, 2.0),
+                 occlusion_fraction: Tuple[float, float] = (0.1, 0.3),
+                 n_crops_for_tissue_test: int = 50,
+                 n_crops_for_tissue_train: int = 50,
+                 # batch_size
+                 batch_size_per_gpu: int = 64,
+                 **kargs):
+        """
+        Args:
+            global_size: size in pixel of the global crops
+            local_size: size in pixel of the local crops
+            n_local_crops: number of global crops
+            n_global_crops: number of local crops
+            global_scale: in RandomResizedCrop the scale of global crops will be drawn uniformly between these values
+            local_scale: in RandomResizedCrop the scale of global crops will be drawn uniformly between these values
+            n_element_min_for_crop: minimum number of beads/cell in a crop
+            dropouts: Possible values of the dropout. Should be > 0.0
+            rasterize_sigmas: Possible values of the sigma of the gaussian kernel used for rasterization.
+            occlusion_fraction: Fraction of the sample which is occluded is drawn uniformly between these values
+            n_crops_for_tissue_test: The number of crops in each validation epoch will be: n_tissue * n_crops
+            n_crops_for_tissue_train: The number of crops in each training epoch will be: n_tissue * n_crops
+            batch_size_per_gpu: batch size FOR EACH GPUs.
+        """
+        # params for overwriting the abstract property
+        self._global_size = global_size
+        self._local_size = local_size
+        self._n_global_crops = n_global_crops
+        self._n_local_crops = n_local_crops
+
+        # specify the transform
+        self._global_scale = global_scale
+        self._local_scale = local_scale
+        self._dropouts = dropouts
+        self._rasterize_sigmas = rasterize_sigmas
+        self._occlusion_fraction = occlusion_fraction
+        self._n_element_min_for_crop = n_element_min_for_crop
+        self._n_crops_for_tissue_test = n_crops_for_tissue_test
+        self._n_crops_for_tissue_train = n_crops_for_tissue_train
+
+        # batch_size
+        self._batch_size_per_gpu = batch_size_per_gpu
+        self.dataset_train = None
+        self.dataset_test = None
+
+
+    @classmethod
+    def add_specific_args(cls, parent_parser) -> ArgumentParser:
+        parser = ArgumentParser(parents=[parent_parser], add_help=False, conflict_handler='resolve')
+
+        parser.add_argument("--global_size", type=int, default=96, help="size in pixel of the global crops")
+        parser.add_argument("--local_size", type=int, default=64, help="size in pixel of the local crops")
+        parser.add_argument("--n_global_crops", type=int, default=2, help="number of global crops")
+        parser.add_argument("--n_local_crops", type=int, default=2, help="number of local crops")
+        parser.add_argument("--global_scale", type=float, nargs=2, default=[0.8, 1.0],
+                            help="in RandomResizedCrop the scale of global crops will be drawn uniformly \
+                            between these values")
+        parser.add_argument("--local_scale", type=float, nargs=2, default=[0.5, 0.8],
+                            help="in RandomResizedCrop the scale of local crops will be drawn uniformly \
+                            between these values")
+        parser.add_argument("--n_element_min_for_crop", type=int, default=200,
+                            help="minimum number of beads/cell in a crop")
+        parser.add_argument("--dropout_ranges", type=float, nargs='*', default=[0.1, 0.2, 0.3],
+                            help="Possible values of the dropout. Should be > 0.0")
+        parser.add_argument("--rasterize_sigma", type=float, nargs='*', default=[0.5, 1.0, 1.5, 2.0],
+                            help="Possible values of the sigma of the gaussian kernel used for rasterization")
+        parser.add_argument("--occlusion_fraction", type=float, nargs=2, default=[0.1, 0.3],
+                            help="Fraction of the sample which is occluded is drawn uniformly between these values.")
+        parser.add_argument("--n_crops_for_tissue_train", type=int, default=50,
+                            help="The number of crops in each training epoch will be: n_tissue * n_crops. \
+                               Set small for rapid prototyping")
+        parser.add_argument("--n_crops_for_tissue_test", type=int, default=50,
+                            help="The number of crops in each test epoch will be: n_tissue * n_crops. \
+                               Set small for rapid prototyping")
+        parser.add_argument("--batch_size_per_gpu", type=int, default=64,
+                            help="Batch size FOR EACH GPUs. Set small for rapid prototyping. \
+                            The total batch_size will increase linearly with the number of GPUs.")
+        return parser
+
+    @property
+    def global_size(self) -> int:
+        return self._global_size
+
+    @property
+    def local_size(self) -> int:
+        return self._local_size
+
+    @property
+    def n_global_crops(self) -> int:
+        return self._n_global_crops
+
+    @property
+    def n_local_crops(self) -> int:
+        return self._n_local_crops
+
+    @property
+    def cropper_test(self):
+        return CropperSparseTensor(
+            strategy='random',
+            crop_size=self._global_size,
+            n_element_min=self._n_element_min_for_crop,
+            n_crops=self._n_crops_for_tissue_test,
+            random_order=True,
+        )
+
+    @property
+    def cropper_train(self):
+        return CropperSparseTensor(
+            strategy='random',
+            crop_size=int(self._global_size * 1.5),
+            n_element_min=int(self._n_element_min_for_crop * 1.5 * 1.5),
+            n_crops=self._n_crops_for_tissue_train,
+            random_order=True,
+        )
+
+    @property
+    def trsfm_test(self) -> Callable:
+        return TransformForList(
+            transform_before_stack=torchvision.transforms.Compose([
+                DropoutSparseTensor(p=0.5, dropout_rates=self._dropouts),
+                SparseToDense(),
+                Rasterize(sigmas=self._rasterize_sigmas, normalize=False),
+                RandomVFlip(p=0.5),
+                RandomHFlip(p=0.5),
+                RandomGlobalIntensity(f_min=0.8, f_max=1.2)
+            ]),
+            transform_after_stack=torchvision.transforms.CenterCrop(size=self.global_size),
+        )
+
+    @property
+    def trsfm_train_global(self) -> Callable:
+        return TransformForList(
+            transform_before_stack=torchvision.transforms.Compose([
+                DropoutSparseTensor(p=0.5, dropout_rates=self._dropouts),
+                SparseToDense(),
+                RandomGlobalIntensity(f_min=0.8, f_max=1.2)
+            ]),
+            transform_after_stack=torchvision.transforms.Compose([
+                Rasterize(sigmas=self._rasterize_sigmas, normalize=False),
+                torchvision.transforms.RandomRotation(
+                    degrees=(-180.0, 180.0),
+                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+                    expand=False,
+                    fill=0.0),
+                torchvision.transforms.CenterCrop(size=self._global_size),
+                RandomVFlip(p=0.5),
+                RandomHFlip(p=0.5),
+                torchvision.transforms.RandomResizedCrop(
+                    size=(self._global_size, self._global_size),
+                    scale=self._global_scale,
+                    ratio=(0.95, 1.05),
+                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
+                RandomStraightCut(p=0.5, occlusion_fraction=self._occlusion_fraction),
+            ])
+        )
+
+    @property
+    def trsfm_train_local(self) -> Callable:
+        return TransformForList(
+            transform_before_stack=torchvision.transforms.Compose([
+                DropoutSparseTensor(p=0.5, dropout_rates=self._dropouts),
+                SparseToDense(),
+                RandomGlobalIntensity(f_min=0.8, f_max=1.2)
+            ]),
+            transform_after_stack=torchvision.transforms.Compose([
+                Rasterize(sigmas=self._rasterize_sigmas, normalize=False),
+                torchvision.transforms.RandomRotation(
+                    degrees=(-180.0, 180.0),
+                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
+                    expand=False,
+                    fill=0.0),
+                torchvision.transforms.CenterCrop(size=self.global_size),
+                RandomVFlip(p=0.5),
+                RandomHFlip(p=0.5),
+                torchvision.transforms.RandomResizedCrop(
+                    size=(self._local_size, self._local_size),
+                    scale=self._local_scale,
+                    ratio=(0.95, 1.05),
+                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
+                RandomStraightCut(p=0.5, occlusion_fraction=self._occlusion_fraction),
+            ])
+        )
+
+    def train_dataloader(self) -> DataLoaderWithLoad:
+        try:
+            device = self.trainer.model.device
+        except AttributeError:
+            device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        # print("Inside train_dataloader", device)
+
+        dataloader_train = DataLoaderWithLoad(
+            dataset=self.dataset_train.to(device),
+            batch_size=self._batch_size_per_gpu,
+            collate_fn=CollateFnListTuple(),
+            num_workers=0,  # problem if this is larger than 0, see https://github.com/pytorch/pytorch/issues/20248
+            shuffle=True,
+            drop_last=True,
+        )
+        return dataloader_train
+
+    def val_dataloader(self) -> List[DataLoaderWithLoad]:  # the same as test
+        try:
+            device = self.trainer.model.device
+        except AttributeError:
+            device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        # print("Inside val_dataloader", device)
+
+        test_dataloader = DataLoaderWithLoad(
+            dataset=self.dataset_test.to(device),
+            batch_size=self._batch_size_per_gpu,
+            collate_fn=CollateFnListTuple(),
+            num_workers=0,  # problem if this is larger than 0, see https://github.com/pytorch/pytorch/issues/20248
+            shuffle=False,
+            drop_last=False,
+        )
+        return [test_dataloader]
+
+    def test_dataloader(self) -> List[DataLoaderWithLoad]:
+        return self.val_dataloader()
+
+    def predict_dataloader(self) -> List[DataLoaderWithLoad]:
+        return self.val_dataloader()
+
+    def prepare_data(self):
+        raise NotImplementedError
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        """ The train and test dataset should be specified here """
+        self.dataset_train = None
+        self.dataset_test = None
+        raise NotImplementedError
+
+    def get_metadata_to_regress(self, metadata) -> Dict[str, float]:
+        raise NotImplementedError
+
+    def get_metadata_to_classify(self, metadata) -> Dict[str, int]:
+        raise NotImplementedError
+
+
+class DummyDM(DinoSparseDM):
     def __init__(self, **kargs):
         """ All inputs are neglected and the default values are applied. """
         super().__init__()
         print("-----> running datamodule init")
 
-        # params for overwriting the abstract property
-        self._global_size = 64
-        self._local_size = 32
-        self._n_global_crops = 2
-        self._n_local_crops = 2
-
-        # global params
-        self.data_dir = "./"
-        self.batch_size_per_gpu = 10
-        self.num_workers = 1
-        self.gpus = torch.cuda.device_count()
-
-        # extras
-        self.load_count_matrix = False
-
-        # specify the transform
-        self.global_scale = (0.8, 1.0)
-        self.local_scale = (0.5, 0.8)
-        self.dropout_range = (0.2, 0.5)
-        self.rasterize_sigma = (0.2, 0.5)
-        self.occlusion_fraction = (0.1, 0.3)
-
-        # params for all datasets
-        self.pixel_size = 1
-        self.n_element_min_for_crop = 20
+        self._data_dir = "./dummy_data"
+        self._batch_size_per_gpu = 10
+        self._num_workers = 1
+        self._gpus = torch.cuda.device_count()
+        self._load_count_matrix = False
+        self._pixel_size = 1.0
+        self._n_neighbours_moran = 6
 
         # Callable on dataset
         self.compute_moran = SpatialAutocorrelation(
             modality='moran',
-            n_neighbours=6,
+            n_neighbours=self._n_neighbours_moran,
             neigh_correct=False)
-
-        # params for building the test_dataset
-        self.n_crops_for_tissue_test = 2
-        self.n_crops_for_tissue_train = 2
-
-        # things to save the dataset
         self.dataset_train = None
         self.dataset_test = None
 
-    @classmethod
-    def add_specific_args(cls, parent_parser):
-        parser = ArgumentParser(parents=[parent_parser], add_help=False, conflict_handler='resolve')
-        return parser
+        super().__init__(n_element_min_for_crop=20, **kargs)
 
     def get_metadata_to_regress(self, metadata: MetadataCropperDataset) -> Dict[str, float]:
         """ Extract one or more quantities to regress from the metadata """
@@ -201,115 +446,7 @@ class DummyDM(DinoDM):
     def ch_in(self) -> int:
         return 9
 
-    @property
-    def global_size(self) -> int:
-        return self._global_size
-
-    @property
-    def local_size(self) -> int:
-        return self._local_size
-
-    @property
-    def n_global_crops(self) -> int:
-        return self._n_global_crops
-
-    @property
-    def n_local_crops(self) -> int:
-        return self._n_local_crops
-
-    @property
-    def cropper_test(self):
-        return CropperSparseTensor(
-            strategy='random',
-            crop_size=self._global_size,
-            n_element_min=self.n_element_min_for_crop,
-            n_crops=self.n_crops_for_tissue_test,
-            random_order=True,
-        )
-
-    @property
-    def cropper_train(self):
-        return CropperSparseTensor(
-            strategy='random',
-            crop_size=int(self._global_size * 1.5),
-            n_element_min=int(self.n_element_min_for_crop * 1.5 * 1.5),
-            n_crops=self.n_crops_for_tissue_train,
-            random_order=True,
-        )
-
-    @property
-    def trsfm_test(self) -> Callable:
-        return TransformForList(
-            transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropout_rate=self.dropout_range),
-                SparseToDense(),
-                Rasterize(sigma=self.rasterize_sigma, normalize=False),
-                RandomVFlip(p=0.5),
-                RandomHFlip(p=0.5),
-                RandomGlobalIntensity(f_min=0.9, f_max=1.1)
-            ]),
-            transform_after_stack=torchvision.transforms.CenterCrop(size=self.global_size),
-        )
-
-    @property
-    def trsfm_train_global(self) -> Callable:
-        return TransformForList(
-            transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropout_rate=self.dropout_range),
-                SparseToDense(),
-                RandomGlobalIntensity(f_min=0.9, f_max=1.1)
-            ]),
-            transform_after_stack=torchvision.transforms.Compose([
-                Rasterize(sigma=self.rasterize_sigma, normalize=False),
-                torchvision.transforms.RandomRotation(
-                    degrees=(-180.0, 180.0),
-                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
-                    expand=False,
-                    fill=0.0),
-                torchvision.transforms.CenterCrop(size=self.global_size),
-                RandomVFlip(p=0.5),
-                RandomHFlip(p=0.5),
-                torchvision.transforms.RandomResizedCrop(
-                    size=(self.global_size, self.global_size),
-                    scale=self.global_scale,
-                    ratio=(0.95, 1.05),
-                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
-                RandomStraightCut(p=0.5, occlusion_fraction=self.occlusion_fraction),
-            ])
-        )
-
-    @property
-    def trsfm_train_local(self) -> Callable:
-        return TransformForList(
-            transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropout_rate=self.dropout_range),
-                SparseToDense(),
-                RandomGlobalIntensity(f_min=0.9, f_max=1.1)
-            ]),
-            transform_after_stack=torchvision.transforms.Compose([
-                Rasterize(sigma=self.rasterize_sigma, normalize=False),
-                torchvision.transforms.RandomRotation(
-                    degrees=(-180.0, 180.0),
-                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
-                    expand=False,
-                    fill=0.0),
-                torchvision.transforms.CenterCrop(size=self.global_size),
-                RandomVFlip(p=0.5),
-                RandomHFlip(p=0.5),
-                torchvision.transforms.RandomResizedCrop(
-                    size=(self.local_size, self.local_size),
-                    scale=self.local_scale,
-                    ratio=(0.95, 1.05),
-                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
-                RandomStraightCut(p=0.5, occlusion_fraction=self.occlusion_fraction),
-            ])
-        )
-
     def prepare_data(self):
-        # these are things to be done only once in distributed settings
-        # good for writing stuff to disk and avoid corruption
-        print("-----> running datamodule prepare_data")
-
         cell_list = ["ES", "Endothelial", "Leydig", "Macrophage", "Myoid", "RS", "SPC", "SPG", "Sertoli"]
         categories_to_codes = dict(zip(cell_list, range(len(cell_list))))
 
@@ -343,19 +480,20 @@ class DummyDM(DinoDM):
             x_key="x_raw",
             y_key="y_raw",
             category_key="cell_type",
-            pixel_size=self.pixel_size,
+            pixel_size=self._pixel_size,
             padding=10,
             categories_to_codes=categories_to_codes) for anndata in all_anndata]
 
         all_sparse_images_cpu = [sp_image.cpu() for sp_image in all_sparse_images]
+        os.makedirs(self._data_dir, exist_ok=True)
         torch.save((all_sparse_images_cpu, all_labels_sparse_images, all_metadata),
-                   os.path.join(self.data_dir, "train_dataset.pt"))
-        print("saved the file", os.path.join(self.data_dir, "train_dataset.pt"))
+                   os.path.join(self._data_dir, "train_dataset.pt"))
+        print("saved the file", os.path.join(self._data_dir, "train_dataset.pt"))
 
         # create test_dataset_random and write to file
         list_imgs, list_labels, list_fnames, list_loc_xs, list_loc_ys, list_morans = [], [], [], [], [], []
         for sp_img, label, fname in zip(all_sparse_images, all_labels_sparse_images, all_names_sparse_images):
-            sps_tmp, loc_x_tmp, loc_y_tmp = self.cropper_test(sp_img, n_crops=self.n_crops_for_tissue_test)
+            sps_tmp, loc_x_tmp, loc_y_tmp = self.cropper_test(sp_img, n_crops=self._n_crops_for_tissue_test)
             list_morans += [self.compute_moran(sparse_tensor).max().item() for sparse_tensor in sps_tmp]
             list_imgs += sps_tmp
             list_labels += [label] * len(sps_tmp)
@@ -366,17 +504,12 @@ class DummyDM(DinoDM):
         list_metadata = [MetadataCropperDataset(f_name=f_name, loc_x=loc_x, loc_y=loc_y, moran=moran) for
                          f_name, loc_x, loc_y, moran in zip(list_fnames, list_loc_xs, list_loc_ys, list_morans)]
         list_imgs_cpu = [img.cpu() for img in list_imgs]
-        torch.save((list_imgs_cpu, list_labels, list_metadata), os.path.join(self.data_dir, "test_dataset.pt"))
-        print("saved the file", os.path.join(self.data_dir, "test_dataset.pt"))
+        os.makedirs(self._data_dir, exist_ok=True)
+        torch.save((list_imgs_cpu, list_labels, list_metadata), os.path.join(self._data_dir, "test_dataset.pt"))
+        print("saved the file", os.path.join(self._data_dir, "test_dataset.pt"))
 
     def setup(self, stage: Optional[str] = None) -> None:
-        # these are things that run on each gpus.
-        # Surprisingly, here self.trainer.model.device == cpu
-        # while later in dataloader self.trainer.model.device == cuda:0
-        """ stage: either 'fit', 'validate', 'test', or 'predict' """
-        print("-----> running datamodule setup. stage -> {0}".format(stage))
-
-        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self.data_dir, "train_dataset.pt"))
+        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._data_dir, "train_dataset.pt"))
         list_imgs = [img.coalesce().cpu() for img in list_imgs]
         self.dataset_train = CropperDataset(
             imgs=list_imgs,
@@ -387,7 +520,7 @@ class DummyDM(DinoDM):
         print("created train_dataset device = {0}, length = {1}".format(self.dataset_train.imgs[0].device,
                                                                         self.dataset_train.__len__()))
 
-        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self.data_dir, "test_dataset.pt"))
+        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._data_dir, "test_dataset.pt"))
         list_imgs = [img.coalesce().cpu() for img in list_imgs]
         self.dataset_test = CropperDataset(
             imgs=list_imgs,
@@ -398,117 +531,52 @@ class DummyDM(DinoDM):
         print("created test_dataset device = {0}, length = {1}".format(self.dataset_test.imgs[0].device,
                                                                        self.dataset_test.__len__()))
 
-    def train_dataloader(self) -> DataLoaderWithLoad:
-        try:
-            device = self.trainer.model.device
-        except AttributeError:
-            device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        print("Inside train_dataloader", device)
 
-        dataloader_train = DataLoaderWithLoad(
-            dataset=self.dataset_train.to(device),
-            batch_size=self.batch_size_per_gpu,
-            collate_fn=CollateFnListTuple(),
-            num_workers=0,  # problem if this is larger than 0, see https://github.com/pytorch/pytorch/issues/20248
-            shuffle=True,
-            drop_last=False,
-        )
-        return dataloader_train
-
-    def val_dataloader(self) -> List[DataLoaderWithLoad]:  # the same as test
-        try:
-            device = self.trainer.model.device
-        except AttributeError:
-            device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        print("Inside val_dataloader", device)
-
-        test_dataloader = DataLoaderWithLoad(
-            dataset=self.dataset_test.to(device),
-            batch_size=self.batch_size_per_gpu,
-            collate_fn=CollateFnListTuple(),
-            num_workers=0,  # problem if this is larger than 0, see https://github.com/pytorch/pytorch/issues/20248
-            shuffle=False,
-            drop_last=False,
-        )
-        return [test_dataloader]
-
-    def test_dataloader(self) -> List[DataLoaderWithLoad]:
-        return self.val_dataloader()
-
-    def predict_dataloader(self) -> List[DataLoaderWithLoad]:
-        return self.val_dataloader()
-
-
-class SlideSeqTestisDM(DinoDM):
-    def __init__(
-            self,
-            # stuff to redefine abstract properties
-            global_size: int,
-            local_size: int,
-            n_local_crops: int,
-            n_global_crops: int,
-            # extrax
-            load_count_matrix: bool,
-
-            # additional arguments
-            num_workers: int,
-            data_dir: str,
-            batch_size_per_gpu: int,
-            n_neighbours_moran: int,
-            pixel_size: int,
-            # specify the transform
-            global_scale: Tuple[float, float],
-            local_scale: Tuple[float, float],
-            n_element_min_for_crop: int,
-            dropout_range: Tuple[float, float],
-            rasterize_sigma: Tuple[float, float],
-            occlusion_fraction: Tuple[float, float],
-            n_crops_for_tissue_test: int,
-            n_crops_for_tissue_train: int,
-            **kargs,
-    ):
-        super().__init__()
-        print("-----> running datamodule init")
-
-        # params for overwriting the abstract property
-        self._global_size = global_size
-        self._local_size = local_size
-        self._n_global_crops = n_global_crops
-        self._n_local_crops = n_local_crops
-
-        # global params
-        self.data_dir = data_dir
-        self.batch_size_per_gpu = batch_size_per_gpu
-        self.num_workers = cpu_count() if num_workers == -1 else num_workers
-        self.gpus = torch.cuda.device_count()
-
-        # extras
-        self.load_count_matrix = load_count_matrix
-
-        # specify the transform
-        self.global_scale = global_scale
-        self.local_scale = local_scale
-        self.dropout_range = dropout_range
-        self.rasterize_sigma = rasterize_sigma
-        self.occlusion_fraction = occlusion_fraction
-
-        # params for all datasets
-        self.pixel_size = pixel_size
-        self.n_element_min_for_crop = n_element_min_for_crop
+class SlideSeqTestisDM(DinoSparseDM):
+    def __init__(self,
+                 data_dir: str = './slide_seq_testis',
+                 num_workers: int = None,
+                 gpus: int = None,
+                 pixel_size: int = 4,
+                 load_count_matrix: bool = False,
+                 n_neighbours_moran: int = 6,
+                 **kargs):
+        # new_params
+        self._data_dir = data_dir
+        self._num_workers = cpu_count() if num_workers is None else num_workers
+        self._gpus = torch.cuda.device_count() if gpus is None else gpus
+        self._pixel_size = pixel_size
+        self._load_count_matrix = load_count_matrix
+        self._n_neighbours_moran = n_neighbours_moran
 
         # Callable on dataset
         self.compute_moran = SpatialAutocorrelation(
             modality='moran',
-            n_neighbours=n_neighbours_moran,
+            n_neighbours=self._n_neighbours_moran,
             neigh_correct=False)
 
-        # params for building the test_dataset
-        self.n_crops_for_tissue_test = n_crops_for_tissue_test
-        self.n_crops_for_tissue_train = n_crops_for_tissue_train
+        super().__init__(**kargs)
+        print("-----> running datamodule init")
 
-        # things to save the dataset
-        self.dataset_train = None
-        self.dataset_test = None
+    @classmethod
+    def add_specific_args(cls, parent_parser) -> ArgumentParser:
+        parser_from_super = super().add_specific_args(parent_parser)
+        parser = ArgumentParser(parents=[parser_from_super], add_help=False, conflict_handler='resolve')
+
+        parser.add_argument("--data_dir", type=str, default="./slide_seq_testis",
+                            help="directory where to download the data")
+        parser.add_argument("--num_workers", default=cpu_count(), type=int,
+                            help="number of worker to load data. Meaningful only if dataset is on disk. \
+                            Set to zero if data in memory")
+        parser.add_argument("--pixel_size", type=float, default=4.0,
+                            help="size of the pixel (used to convert raw_coordinates to pixel_coordinates)")
+        parser.add_argument("--load_count_matrix", type=smart_bool, default=False,
+                            help="If true load the count matrix in the anndata object. \
+                            Count matrix is memory intensive therefore it can be advantegeous not to load it.")
+        parser.add_argument("--n_neighbours_moran", type=int, default=6,
+                            help="number of neighbours used to compute moran")
+
+        return parser
 
     def get_metadata_to_regress(self, metadata: MetadataCropperDataset) -> Dict[str, float]:
         """ Extract one or more quantities to regress from the metadata """
@@ -546,222 +614,64 @@ class SlideSeqTestisDM(DinoDM):
     def ch_in(self) -> int:
         return 9
 
-    @property
-    def global_size(self) -> int:
-        return self._global_size
-
-    @property
-    def local_size(self) -> int:
-        return self._local_size
-
-    @property
-    def n_global_crops(self) -> int:
-        return self._n_global_crops
-
-    @property
-    def n_local_crops(self) -> int:
-        return self._n_local_crops
-
-    @property
-    def cropper_test(self):
-        return CropperSparseTensor(
-            strategy='random',
-            crop_size=self._global_size,
-            n_element_min=self.n_element_min_for_crop,
-            n_crops=self.n_crops_for_tissue_test,
-            random_order=True,
-        )
-
-    @property
-    def cropper_train(self):
-        return CropperSparseTensor(
-            strategy='random',
-            crop_size=int(self._global_size * 1.5),
-            n_element_min=int(self.n_element_min_for_crop * 1.5 * 1.5),
-            n_crops=self.n_crops_for_tissue_train,
-            random_order=True,
-        )
-
-    @property
-    def trsfm_test(self) -> Callable:
-        return TransformForList(
-            transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropout_rate=self.dropout_range),
-                SparseToDense(),
-                Rasterize(sigma=self.rasterize_sigma, normalize=False),
-                RandomVFlip(p=0.5),
-                RandomHFlip(p=0.5),
-                RandomGlobalIntensity(f_min=0.9, f_max=1.1)
-            ]),
-            transform_after_stack=torchvision.transforms.CenterCrop(size=self.global_size),
-        )
-
-    @property
-    def trsfm_train_global(self) -> Callable:
-        return TransformForList(
-            transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropout_rate=self.dropout_range),
-                SparseToDense(),
-                RandomGlobalIntensity(f_min=0.9, f_max=1.1)
-            ]),
-            transform_after_stack=torchvision.transforms.Compose([
-                Rasterize(sigma=self.rasterize_sigma, normalize=False),
-                torchvision.transforms.RandomRotation(
-                    degrees=(-180.0, 180.0),
-                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
-                    expand=False,
-                    fill=0.0),
-                torchvision.transforms.CenterCrop(size=self.global_size),
-                RandomVFlip(p=0.5),
-                RandomHFlip(p=0.5),
-                torchvision.transforms.RandomResizedCrop(
-                    size=(self.global_size, self.global_size),
-                    scale=self.global_scale,
-                    ratio=(0.95, 1.05),
-                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
-                RandomStraightCut(p=0.5, occlusion_fraction=self.occlusion_fraction),
-            ])
-        )
-
-    @property
-    def trsfm_train_local(self) -> Callable:
-        return TransformForList(
-            transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropout_rate=self.dropout_range),
-                SparseToDense(),
-                RandomGlobalIntensity(f_min=0.9, f_max=1.1)
-            ]),
-            transform_after_stack=torchvision.transforms.Compose([
-                Rasterize(sigma=self.rasterize_sigma, normalize=False),
-                torchvision.transforms.RandomRotation(
-                    degrees=(-180.0, 180.0),
-                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
-                    expand=False,
-                    fill=0.0),
-                torchvision.transforms.CenterCrop(size=self.global_size),
-                RandomVFlip(p=0.5),
-                RandomHFlip(p=0.5),
-                torchvision.transforms.RandomResizedCrop(
-                    size=(self.local_size, self.local_size),
-                    scale=self.local_scale,
-                    ratio=(0.95, 1.05),
-                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
-                RandomStraightCut(p=0.5, occlusion_fraction=self.occlusion_fraction),
-            ])
-        )
-
-    @classmethod
-    def add_specific_args(cls, parent_parser):
-
-        parser = ArgumentParser(parents=[parent_parser], add_help=False, conflict_handler='resolve')
-
-        # global parameters
-        parser.add_argument("--data_dir", type=str, default="./slide_seq_testis",
-                            help="directory where to download the data")
-        parser.add_argument("--num_workers", default=cpu_count(), type=int,
-                            help="number of worker to load data. Meaningful only if dataset is on disk. \
-                            Set to zero if data in memory")
-
-        parser.add_argument("--n_neighbours_moran", type=int, default=6,
-                            help="number of neighbours used to compute moran")
-        parser.add_argument("--pixel_size", type=float, default=4.0,
-                            help="size of the pixel to convert csv to sparse image")
-
-        # extras
-        parser.add_argument("--load_count_matrix", type=smart_bool, default=False,
-                            help="If true load the count matrix in the anndata object. \
-                                  Count matrix is memory intensive therefore it can be advantegeous not to load it.")
-
-        # specify the transform
-        parser.add_argument("--n_element_min_for_crop", type=int, default=200,
-                            help="minimum number of beads/cell in a crop")
-        parser.add_argument("--dropout_range", type=float, nargs=2, default=[0.1, 0.3],
-                            help="Dropout range should be in (0.0,1.0)")
-        parser.add_argument("--rasterize_sigma", type=float, nargs=2, default=[1.0, 2.0],
-                            help="Sigma of the gaussian kernel used for rasterization")
-        parser.add_argument("--occlusion_fraction", type=float, nargs=2, default=[0.1, 0.3],
-                            help="Fraction of the sample which might be occluded. Should be in (0.0, 1.0)")
-        parser.add_argument("--global_size", type=int, default=128, help="size in pixel of the global crops")
-        parser.add_argument("--local_size", type=int, default=64, help="size in pixel of the local crops")
-        parser.add_argument("--global_scale", type=float, nargs=2, default=[0.8, 1.0],
-                            help="scale used in RandomResizedCrop for the global crops")
-        parser.add_argument("--local_scale", type=float, nargs=2, default=[0.4, 0.5],
-                            help="scale used in RandomResizedCrop for the local crops")
-        parser.add_argument("--n_local_crops", type=int, default=6, help="number of local crops")
-        parser.add_argument("--n_global_crops", type=int, default=2, help="number of global crops")
-
-        # test dataset
-        parser.add_argument("--n_crops_for_tissue_train", type=int, default=600,
-                            help="The number of crops in each training epoch will be: n_tissue * n_crops. \
-                            Set small for rapid prototyping")
-        parser.add_argument("--n_crops_for_tissue_test", type=int, default=600,
-                            help="The number of crops in each test epoch will be: n_tissue * n_crops. \
-                            Set small for rapid prototyping")
-        parser.add_argument("--batch_size_per_gpu", type=int, default=64,
-                            help="Batch size FOR EACH GPUs. Set small for rapid prototyping. \
-                            The total batch_size will increase linearly with the number of GPUs. \
-                            If strategy == 'tiling' then the actual batch_size might be smaller than this one")
-
-        return parser
-
-    def __tar_exists__(self):
-        return os.path.exists(os.path.join(self.data_dir, "slideseq_testis_anndata_h5ad.tar.gz"))
-
-    def __download__tar__(self):
-        from google.cloud import storage
-
-        bucket_name = "ld-data-bucket"
-        source_blob_name = "tissue-purifier/slideseq_testis_anndata_h5ad.tar.gz"
-        destination_file_name = os.path.join(self.data_dir, "slideseq_testis_anndata_h5ad.tar.gz")
-
-        # create the directory where the file will be written
-        dirname_tmp = os.path.dirname(destination_file_name)
-        os.makedirs(dirname_tmp, exist_ok=True)
-
-        # connect ot the google bucket
-        storage_client = storage.Client()
-        bucket = storage_client.bucket(bucket_name)
-
-        # Construct a client side representation of a blob.
-        # Note `Bucket.blob` differs from `Bucket.get_blob` as it doesn't retrieve
-        # any content from Google Cloud Storage. As we don't need additional data,
-        # using `Bucket.blob` is preferred here.
-        blob = bucket.blob(source_blob_name)
-        blob.download_to_filename(destination_file_name)
-
-        print(
-            "Downloaded storage object {} from bucket {} to local file {}.".format(
-                source_blob_name, bucket_name, destination_file_name
-            )
-        )
-
-    def __untar__(self):
-        tar_file_name = os.path.join(self.data_dir, "slideseq_testis_anndata_h5ad.tar.gz")
-
-        # untar the tar.gz file
-        with tarfile.open(tar_file_name, "r:gz") as fp:
-            fp.extractall(path=self.data_dir)
-
     def prepare_data(self):
         # these are things to be done only once in distributed settings
         # good for writing stuff to disk and avoid corruption
         print("-----> running datamodule prepare_data")
 
+        def __tar_exists__():
+            return os.path.exists(os.path.join(self._data_dir, "slideseq_testis_anndata_h5ad.tar.gz"))
+
+        def __download__tar__():
+            from google.cloud import storage
+
+            bucket_name = "ld-data-bucket"
+            source_blob_name = "tissue-purifier/slideseq_testis_anndata_h5ad.tar.gz"
+            destination_file_name = os.path.join(self._data_dir, "slideseq_testis_anndata_h5ad.tar.gz")
+
+            # create the directory where the file will be written
+            dirname_tmp = os.path.dirname(destination_file_name)
+            os.makedirs(dirname_tmp, exist_ok=True)
+
+            # connect ot the google bucket
+            storage_client = storage.Client()
+            bucket = storage_client.bucket(bucket_name)
+
+            # Construct a client side representation of a blob.
+            # Note `Bucket.blob` differs from `Bucket.get_blob` as it doesn't retrieve
+            # any content from Google Cloud Storage. As we don't need additional data,
+            # using `Bucket.blob` is preferred here.
+            blob = bucket.blob(source_blob_name)
+            blob.download_to_filename(destination_file_name)
+
+            print(
+                "Downloaded storage object {} from bucket {} to local file {}.".format(
+                    source_blob_name, bucket_name, destination_file_name
+                )
+            )
+
+        def __untar__():
+            tar_file_name = os.path.join(self._data_dir, "slideseq_testis_anndata_h5ad.tar.gz")
+
+            # untar the tar.gz file
+            with tarfile.open(tar_file_name, "r:gz") as fp:
+                fp.extractall(path=self._data_dir)
+
         print("Will create the test and train file")
-        if self.__tar_exists__():
+        if __tar_exists__():
             print("untar data")
-            self.__untar__()
+            __untar__()
         else:
             print("download and untar data")
-            self.__download__tar__()
-            self.__untar__()
+            __download__tar__()
+            __untar__()
 
-        anndata_wt1 = read_h5ad(os.path.join(self.data_dir, "anndata_wt1.h5ad"))
-        anndata_wt2 = read_h5ad(os.path.join(self.data_dir, "anndata_wt2.h5ad"))
-        anndata_wt3 = read_h5ad(os.path.join(self.data_dir, "anndata_wt3.h5ad"))
-        anndata_sick1 = read_h5ad(os.path.join(self.data_dir, "anndata_sick1.h5ad"))
-        anndata_sick2 = read_h5ad(os.path.join(self.data_dir, "anndata_sick2.h5ad"))
-        anndata_sick3 = read_h5ad(os.path.join(self.data_dir, "anndata_sick3.h5ad"))
+        anndata_wt1 = read_h5ad(os.path.join(self._data_dir, "anndata_wt1.h5ad"))
+        anndata_wt2 = read_h5ad(os.path.join(self._data_dir, "anndata_wt2.h5ad"))
+        anndata_wt3 = read_h5ad(os.path.join(self._data_dir, "anndata_wt3.h5ad"))
+        anndata_sick1 = read_h5ad(os.path.join(self._data_dir, "anndata_sick1.h5ad"))
+        anndata_sick2 = read_h5ad(os.path.join(self._data_dir, "anndata_sick2.h5ad"))
+        anndata_sick3 = read_h5ad(os.path.join(self._data_dir, "anndata_sick3.h5ad"))
 
         # create train_dataset and write to file
         cell_list = ["ES", "Endothelial", "Leydig", "Macrophage", "Myoid", "RS", "SPC", "SPG", "Sertoli"]
@@ -773,7 +683,7 @@ class SlideSeqTestisDM(DinoDM):
                         f_name in all_names_sparse_images]
 
         # set the count matrix to None (if necessary)
-        if not self.load_count_matrix:
+        if not self._load_count_matrix:
             for anndata in all_anndata:
                 anndata.X = None
 
@@ -783,19 +693,19 @@ class SlideSeqTestisDM(DinoDM):
             x_key="x",
             y_key="y",
             category_key="cell_type",
-            pixel_size=self.pixel_size,
+            pixel_size=self._pixel_size,
             padding=10,
             categories_to_codes=categories_to_codes) for anndata in all_anndata]
 
         all_sparse_images_cpu = [sp_image.cpu() for sp_image in all_sparse_images]
         torch.save((all_sparse_images_cpu, all_labels_sparse_images, all_metadata),
-                   os.path.join(self.data_dir, "train_dataset.pt"))
-        print("saved the file", os.path.join(self.data_dir, "train_dataset.pt"))
+                   os.path.join(self._data_dir, "train_dataset.pt"))
+        print("saved the file", os.path.join(self._data_dir, "train_dataset.pt"))
 
         # create test_dataset_random and write to file
         list_imgs, list_labels, list_fnames, list_loc_xs, list_loc_ys, list_morans = [], [], [], [], [], []
         for sp_img, label, fname in zip(all_sparse_images, all_labels_sparse_images, all_names_sparse_images):
-            sps_tmp, loc_x_tmp, loc_y_tmp = self.cropper_test(sp_img, n_crops=self.n_crops_for_tissue_test)
+            sps_tmp, loc_x_tmp, loc_y_tmp = self.cropper_test(sp_img, n_crops=self._n_crops_for_tissue_test)
             list_morans += [self.compute_moran(sparse_tensor).max().item() for sparse_tensor in sps_tmp]
             list_imgs += sps_tmp
             list_labels += [label] * len(sps_tmp)
@@ -806,17 +716,11 @@ class SlideSeqTestisDM(DinoDM):
         list_metadata = [MetadataCropperDataset(f_name=f_name, loc_x=loc_x, loc_y=loc_y, moran=moran) for
                          f_name, loc_x, loc_y, moran in zip(list_fnames, list_loc_xs, list_loc_ys, list_morans)]
         list_imgs_cpu = [img.cpu() for img in list_imgs]
-        torch.save((list_imgs_cpu, list_labels, list_metadata), os.path.join(self.data_dir, "test_dataset.pt"))
-        print("saved the file", os.path.join(self.data_dir, "test_dataset.pt"))
+        torch.save((list_imgs_cpu, list_labels, list_metadata), os.path.join(self._data_dir, "test_dataset.pt"))
+        print("saved the file", os.path.join(self._data_dir, "test_dataset.pt"))
 
     def setup(self, stage: Optional[str] = None) -> None:
-        # these are things that run on each gpus.
-        # Surprisingly, here self.trainer.model.device == cpu
-        # while later in dataloader self.trainer.model.device == cuda:0
-        """ stage: either 'fit', 'validate', 'test', or 'predict' """
-        print("-----> running datamodule setup. stage -> {0}".format(stage))
-
-        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self.data_dir, "train_dataset.pt"))
+        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._data_dir, "train_dataset.pt"))
         list_imgs = [img.coalesce().cpu() for img in list_imgs]
         self.dataset_train = CropperDataset(
             imgs=list_imgs,
@@ -827,7 +731,7 @@ class SlideSeqTestisDM(DinoDM):
         print("created train_dataset device = {0}, length = {1}".format(self.dataset_train.imgs[0].device,
                                                                         self.dataset_train.__len__()))
 
-        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self.data_dir, "test_dataset.pt"))
+        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._data_dir, "test_dataset.pt"))
         list_imgs = [img.coalesce().cpu() for img in list_imgs]
         self.dataset_test = CropperDataset(
             imgs=list_imgs,
@@ -838,123 +742,60 @@ class SlideSeqTestisDM(DinoDM):
         print("created test_dataset device = {0}, length = {1}".format(self.dataset_test.imgs[0].device,
                                                                        self.dataset_test.__len__()))
 
-    def train_dataloader(self) -> DataLoaderWithLoad:
-        try:
-            device = self.trainer.model.device
-        except AttributeError:
-            device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        print("Inside train_dataloader", device)
-
-        dataloader_train = DataLoaderWithLoad(
-            dataset=self.dataset_train.to(device),
-            batch_size=self.batch_size_per_gpu,
-            collate_fn=CollateFnListTuple(),
-            num_workers=0,  # problem if this is larger than 0, see https://github.com/pytorch/pytorch/issues/20248
-            shuffle=True,
-            drop_last=True,
-        )
-        return dataloader_train
-
-    def val_dataloader(self) -> List[DataLoaderWithLoad]:  # the same as test
-        try:
-            device = self.trainer.model.device
-        except AttributeError:
-            device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        print("Inside val_dataloader", device)
-
-        test_dataloader = DataLoaderWithLoad(
-            dataset=self.dataset_test.to(device),
-            batch_size=self.batch_size_per_gpu,
-            collate_fn=CollateFnListTuple(),
-            num_workers=0,  # problem if this is larger than 0, see https://github.com/pytorch/pytorch/issues/20248
-            shuffle=False,
-            drop_last=False,
-        )
-        return [test_dataloader]
-
-    def test_dataloader(self) -> List[DataLoaderWithLoad]:
-        return self.val_dataloader()
-
-    def predict_dataloader(self) -> List[DataLoaderWithLoad]:
-        return self.val_dataloader()
-
 
 class SlideSeqKidneyDM(DinoDM):
-    # TODO: do the dataloaders as in Testis dataset
-
-    def __init__(
-            self,
-            cohort: str,
-            # stuff to redefine abstract properties
-            global_size: int,
-            local_size: int,
-            n_local_crops: int,
-            n_global_crops: int,
-            # extras
-            load_count_matrix: bool,
-
-            # additional arguments
-            num_workers: int,
-            data_dir: str,
-            batch_size_per_gpu: int,
-            n_neighbours_moran: int,
-            pixel_size: int,
-            # specify the transform
-            global_scale: Tuple[float, float],
-            local_scale: Tuple[float, float],
-            n_element_min_for_crop: int,
-            dropout_range: Tuple[float, float],
-            rasterize_sigma: Tuple[float, float],
-            occlusion_fraction: Tuple[float, float],
-            n_crops_for_tissue_test: int,
-            n_crops_for_tissue_train: int,
-            **kargs,
-    ):
-        super().__init__()
-        print("-----> running datamodule init")
-
-        self.cohort = cohort
-
-        # params for overwriting the abstract property
-        self._global_size = global_size
-        self._local_size = local_size
-        self._n_global_crops = n_global_crops
-        self._n_local_crops = n_local_crops
-
-        # global params
-        self.data_dir = data_dir
-        self.batch_size_per_gpu = batch_size_per_gpu
-        self.num_workers = cpu_count() if num_workers == -1 else num_workers
-        self.gpus = torch.cuda.device_count()
-
-        # extras
-        self.load_count_matrix = load_count_matrix
-
-        # specify the transform
-        self.global_scale = global_scale
-        self.local_scale = local_scale
-        self.dropout_range = dropout_range
-        self.rasterize_sigma = rasterize_sigma
-        self.occlusion_fraction = occlusion_fraction
-
-        # params for all datasets
-        self.pixel_size = pixel_size
-        self.n_element_min_for_crop = n_element_min_for_crop
+    def __init__(self,
+                 cohort: str = 'all',
+                 data_dir: str = './slide_seq_kidney',
+                 num_workers: int = None,
+                 gpus: int = None,
+                 pixel_size: int = 4,
+                 load_count_matrix: bool = False,
+                 n_neighbours_moran: int = 6,
+                 **kargs):
+        # new_params
+        self._cohort = cohort
+        self._data_dir = data_dir
+        self._num_workers = cpu_count() if num_workers is None else num_workers
+        self._gpus = torch.cuda.device_count() if gpus is None else gpus
+        self._pixel_size = pixel_size
+        self._load_count_matrix = load_count_matrix
+        self._n_neighbours_moran = n_neighbours_moran
 
         # Callable on dataset
         self.compute_moran = SpatialAutocorrelation(
             modality='moran',
-            n_neighbours=n_neighbours_moran,
+            n_neighbours=self._n_neighbours_moran,
             neigh_correct=False)
-
-        # params for building the test_dataset
-        self.n_crops_for_tissue_test = n_crops_for_tissue_test
-        self.n_crops_for_tissue_train = n_crops_for_tissue_train
 
         # dictionary which will be created during prepare_data
         self.array_to_code = None
         self.array_to_species = None
         self.array_to_condition = None
+        super().__init__(**kargs)
+        print("-----> running datamodule init")
+
+    @classmethod
+    def add_specific_args(cls, parent_parser) -> ArgumentParser:
+        parser_from_super = super().add_specific_args(parent_parser)
+        parser = ArgumentParser(parents=[parser_from_super], add_help=False, conflict_handler='resolve')
+        parser.add_argument("--cohort", default='test', type=str,
+                            choices=['small', 'all', 'mouse_only', 'human_only'],
+                            help="Specify grouping of samples to use during training and testing")
+        parser.add_argument("--data_dir", type=str, default="./slide_seq_testis",
+                            help="directory where to download the data")
+        parser.add_argument("--num_workers", default=cpu_count(), type=int,
+                            help="number of worker to load data. Meaningful only if dataset is on disk. \
+                            Set to zero if data in memory")
+        parser.add_argument("--pixel_size", type=float, default=4.0,
+                            help="size of the pixel (used to convert raw_coordinates to pixel_coordinates)")
+        parser.add_argument("--load_count_matrix", type=smart_bool, default=False,
+                            help="If true load the count matrix in the anndata object. \
+                            Count matrix is memory intensive therefore it can be advantegeous not to load it.")
+        parser.add_argument("--n_neighbours_moran", type=int, default=6,
+                            help="number of neighbours used to compute moran")
+
+        return parser
 
     def get_metadata_to_regress(self, metadata: MetadataCropperDataset) -> Dict[str, float]:
         """ Extract one or more quantities to regress from the metadata """
@@ -998,236 +839,75 @@ class SlideSeqKidneyDM(DinoDM):
     def ch_in(self) -> int:
         return 13
 
-    @property
-    def global_size(self) -> int:
-        return self._global_size
-
-    @property
-    def local_size(self) -> int:
-        return self._local_size
-
-    @property
-    def n_global_crops(self) -> int:
-        return self._n_global_crops
-
-    @property
-    def n_local_crops(self) -> int:
-        return self._n_local_crops
-
-    @property
-    def cropper_test(self):
-        return CropperSparseTensor(
-            strategy='random',
-            crop_size=self._global_size,
-            n_element_min=self.n_element_min_for_crop,
-            n_crops=self.n_crops_for_tissue_test,
-            random_order=True,
-        )
-
-    @property
-    def cropper_train(self):
-        return CropperSparseTensor(
-            strategy='random',
-            crop_size=int(self._global_size * 1.5),
-            n_element_min=int(self.n_element_min_for_crop * 1.5 * 1.5),
-            n_crops=self.n_crops_for_tissue_train,
-            random_order=True,
-        )
-
-    @property
-    def trsfm_test(self) -> Callable:
-        return TransformForList(
-            transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropout_rate=self.dropout_range),
-                SparseToDense(),
-                Rasterize(sigma=self.rasterize_sigma, normalize=False),
-                RandomVFlip(p=0.5),
-                RandomHFlip(p=0.5),
-                RandomGlobalIntensity(f_min=0.9, f_max=1.1),
-            ]),
-            transform_after_stack=torchvision.transforms.CenterCrop(size=self.global_size),
-        )
-
-    @property
-    def trsfm_train_global(self) -> Callable:
-        return TransformForList(
-            transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropout_rate=self.dropout_range),
-                SparseToDense(),
-                RandomGlobalIntensity(f_min=0.9, f_max=1.1)
-            ]),
-            transform_after_stack=torchvision.transforms.Compose([
-                Rasterize(sigma=self.rasterize_sigma, normalize=False),
-                torchvision.transforms.RandomRotation(
-                    degrees=(-180.0, 180.0),
-                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
-                    expand=False,
-                    fill=0.0),
-                torchvision.transforms.CenterCrop(size=self.global_size),
-                RandomVFlip(p=0.5),
-                RandomHFlip(p=0.5),
-                torchvision.transforms.RandomResizedCrop(
-                    size=(self.global_size, self.global_size),
-                    scale=self.global_scale,
-                    ratio=(0.95, 1.05),
-                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
-                RandomStraightCut(p=0.5, occlusion_fraction=self.occlusion_fraction),
-            ])
-        )
-
-    @property
-    def trsfm_train_local(self) -> Callable:
-        return TransformForList(
-            transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropout_rate=self.dropout_range),
-                SparseToDense(),
-                RandomGlobalIntensity(f_min=0.9, f_max=1.1)
-            ]),
-            transform_after_stack=torchvision.transforms.Compose([
-                Rasterize(sigma=self.rasterize_sigma, normalize=False),
-                torchvision.transforms.RandomRotation(
-                    degrees=(-180.0, 180.0),
-                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
-                    expand=False,
-                    fill=0.0),
-                torchvision.transforms.CenterCrop(size=self.global_size),
-                RandomVFlip(p=0.5),
-                RandomHFlip(p=0.5),
-                torchvision.transforms.RandomResizedCrop(
-                    size=(self.local_size, self.local_size),
-                    scale=self.local_scale,
-                    ratio=(0.95, 1.05),
-                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
-                RandomStraightCut(p=0.5, occlusion_fraction=self.occlusion_fraction),
-            ])
-        )
-
-    @classmethod
-    def add_specific_args(cls, parent_parser):
-
-        parser = ArgumentParser(parents=[parent_parser], add_help=False, conflict_handler='resolve')
-
-        # global parameters
-        parser.add_argument("--cohort", default='test', type=str,
-                            choices=['test', 'all', 'mouse_only', 'human_only'],
-                            help="Specify grouping of samples to use during training and testing")
-        parser.add_argument("--data_dir", type=str, default="./slide_seq_kidney",
-                            help="directory where to download the data")
-        parser.add_argument("--num_workers", default=cpu_count(), type=int,
-                            help="number of worker to load data. Meaningful only if dataset is on disk. \
-                            Set to zero if data in memory")
-
-        parser.add_argument("--n_neighbours_moran", type=int, default=6,
-                            help="number of neighbours used to compute moran")
-        parser.add_argument("--pixel_size", type=float, default=4.0,
-                            help="size of the pixel to convert csv to sparse image")
-
-        # extras
-        parser.add_argument("--load_count_matrix", type=smart_bool, default=False,
-                            help="If true load the count matrix in the anndata object. \
-                                  Count matrix is memory intensive therefore it can be advantegeous not to load it.")
-
-        # specify the transform
-        parser.add_argument("--n_element_min_for_crop", type=int, default=200,
-                            help="minimum number of beads/cell in a crop")
-        parser.add_argument("--dropout_range", type=float, nargs=2, default=[0.1, 0.3],
-                            help="Dropout range should be in (0.0,1.0)")
-        parser.add_argument("--rasterize_sigma", type=float, nargs=2, default=[1.0, 2.0],
-                            help="Sigma of the gaussian kernel used for rasterization")
-        parser.add_argument("--occlusion_fraction", type=float, nargs=2, default=[0.1, 0.3],
-                            help="Fraction of the sample which might be occluded. Should be in (0.0, 1.0)")
-        parser.add_argument("--global_size", type=int, default=128, help="size in pixel of the global crops")
-        parser.add_argument("--local_size", type=int, default=64, help="size in pixel of the local crops")
-        parser.add_argument("--global_scale", type=float, nargs=2, default=[0.8, 1.0],
-                            help="scale used in RandomResizedCrop for the global crops")
-        parser.add_argument("--local_scale", type=float, nargs=2, default=[0.4, 0.5],
-                            help="scale used in RandomResizedCrop for the local crops")
-        parser.add_argument("--n_local_crops", type=int, default=6, help="number of local crops")
-        parser.add_argument("--n_global_crops", type=int, default=2, help="number of global crops")
-
-        # test dataset
-        parser.add_argument("--n_crops_for_tissue_train", type=int, default=30,
-                            help="The number of crops in each training epoch will be: n_tissue * n_crops. \
-                            Set small for rapid prototyping")
-        parser.add_argument("--n_crops_for_tissue_test", type=int, default=30,
-                            help="The number of crops in each test epoch will be: n_tissue * n_crops. \
-                            Set small for rapid prototyping")
-        parser.add_argument("--batch_size_per_gpu", type=int, default=64,
-                            help="Batch size FOR EACH GPUs. Set small for rapid prototyping. \
-                            The total batch_size will increase linearly with the number of GPUs. \
-                            If strategy == 'tiling' then the actual batch_size might be smaller than this one")
-
-        return parser
-
-    def __tar_exists__(self):
-        return os.path.exists(os.path.join(self.data_dir, "slideseq_kidney_anndata_h5ad.tar.gz"))
-
-    def __download__tar__(self):
-        from google.cloud import storage
-
-        bucket_name = "ld-data-bucket"
-        source_blob_name = "tissue-purifier/slideseq_kidney_anndata_h5ad.tar.gz"
-        destination_file_name = os.path.join(self.data_dir, "slideseq_kidney_anndata_h5ad.tar.gz")
-
-        # create the directory where the file will be written
-        dirname_tmp = os.path.dirname(destination_file_name)
-        os.makedirs(dirname_tmp, exist_ok=True)
-
-        # connect ot the google bucket
-        storage_client = storage.Client()
-        bucket = storage_client.bucket(bucket_name)
-
-        # Construct a client side representation of a blob.
-        # Note `Bucket.blob` differs from `Bucket.get_blob` as it doesn't retrieve
-        # any content from Google Cloud Storage. As we don't need additional data,
-        # using `Bucket.blob` is preferred here.
-        blob = bucket.blob(source_blob_name)
-        blob.download_to_filename(destination_file_name)
-
-        print(
-            "Downloaded storage object {} from bucket {} to local file {}.".format(
-                source_blob_name, bucket_name, destination_file_name
-            )
-        )
-
-    def __untar__(self):
-        tar_file_name = os.path.join(self.data_dir, "slideseq_kidney_anndata_h5ad.tar.gz")
-
-        # untar the tar.gz file
-        with tarfile.open(tar_file_name, "r:gz") as fp:
-            fp.extractall(path=self.data_dir)
-
     def prepare_data(self):
         # these are things to be done only once in distributed settings
         print("-----> running datamodule prepare_data")
 
+        def __tar_exists__():
+            return os.path.exists(os.path.join(self._data_dir, "slideseq_kidney_anndata_h5ad.tar.gz"))
+
+        def __download__tar__():
+            from google.cloud import storage
+
+            bucket_name = "ld-data-bucket"
+            source_blob_name = "tissue-purifier/slideseq_kidney_anndata_h5ad.tar.gz"
+            destination_file_name = os.path.join(self._data_dir, "slideseq_kidney_anndata_h5ad.tar.gz")
+
+            # create the directory where the file will be written
+            dirname_tmp = os.path.dirname(destination_file_name)
+            os.makedirs(dirname_tmp, exist_ok=True)
+
+            # connect ot the google bucket
+            storage_client = storage.Client()
+            bucket = storage_client.bucket(bucket_name)
+
+            # Construct a client side representation of a blob.
+            # Note `Bucket.blob` differs from `Bucket.get_blob` as it doesn't retrieve
+            # any content from Google Cloud Storage. As we don't need additional data,
+            # using `Bucket.blob` is preferred here.
+            blob = bucket.blob(source_blob_name)
+            blob.download_to_filename(destination_file_name)
+
+            print(
+                "Downloaded storage object {} from bucket {} to local file {}.".format(
+                    source_blob_name, bucket_name, destination_file_name
+                )
+            )
+
+        def __untar__():
+            tar_file_name = os.path.join(self._data_dir, "slideseq_kidney_anndata_h5ad.tar.gz")
+
+            # untar the tar.gz file
+            with tarfile.open(tar_file_name, "r:gz") as fp:
+                fp.extractall(path=self._data_dir)
+
         print("Will create the test and train file")
-        if self.__tar_exists__():
+        if __tar_exists__():
             print("untar data")
-            self.__untar__()
+            __untar__()
         else:
             print("download and untar data")
-            self.__download__tar__()
-            self.__untar__()
+            __download__tar__()
+            __untar__()
 
-        df_archive = pd.read_csv(os.path.join(self.data_dir, "slideseq_kidney_datatable.csv"),
+        df_archive = pd.read_csv(os.path.join(self._data_dir, "slideseq_kidney_datatable.csv"),
                                  usecols=["arrays", "samples", "species"])
         array_list = df_archive["arrays"].tolist()
         condition_list = df_archive["samples"].tolist()
         array_to_condition = dict(zip(array_list, condition_list))
 
-        print("COHORT -->", self.cohort)
-        if self.cohort == 'test':
+        print("COHORT -->", self._cohort)
+        if self._cohort == 'small':
             puck_id_list = df_archive.head(6)['arrays'].tolist()
-        elif self.cohort == 'mouse_only':
+        elif self._cohort == 'mouse_only':
             puck_id_list = df_archive[df_archive['species'] == 'mouse']['arrays'].tolist()
-        elif self.cohort == 'human_only':
+        elif self._cohort == 'human_only':
             puck_id_list = df_archive[df_archive['species'] == 'human']['arrays'].tolist()
         else:
             puck_id_list = df_archive['arrays'].tolist()
 
         all_anndata_files = []
-        for file in listdir(self.data_dir):
+        for file in listdir(self._data_dir):
             if file.startswith("anndata"):
                 all_anndata_files.append(file)
 
@@ -1252,10 +932,10 @@ class SlideSeqKidneyDM(DinoDM):
         all_names_sparse_images = puck_id_included
         all_metadata = [MetadataCropperDataset(f_name=f_name, loc_x=0.0, loc_y=0.0, moran=-99.9) for
                         f_name in all_names_sparse_images]
-        all_anndata = [read_h5ad(os.path.join(self.data_dir, anndata)) for anndata in anndata_included]
+        all_anndata = [read_h5ad(os.path.join(self._data_dir, anndata)) for anndata in anndata_included]
 
         # set the count matrix to None (if necessary)
-        if not self.load_count_matrix:
+        if not self._load_count_matrix:
             for anndata in all_anndata:
                 anndata.X = None
 
@@ -1264,19 +944,19 @@ class SlideSeqKidneyDM(DinoDM):
             x_key="xcoord",
             y_key="ycoord",
             category_key="cell_type",
-            pixel_size=self.pixel_size,
+            pixel_size=self._pixel_size,
             padding=10,
             categories_to_codes=categories_to_codes) for anndata in all_anndata]
 
         all_sparse_images_cpu = [sp_image.to(torch.device('cpu')) for sp_image in all_sparse_images]
         torch.save((all_sparse_images_cpu, all_labels_sparse_images, all_metadata),
-                   os.path.join(self.data_dir, "train_dataset.pt"))
-        print("saved the file", os.path.join(self.data_dir, "train_dataset.pt"))
+                   os.path.join(self._data_dir, "train_dataset.pt"))
+        print("saved the file", os.path.join(self._data_dir, "train_dataset.pt"))
 
         # create test_dataset_random and write to file
         list_imgs, list_labels, list_fnames, list_loc_xs, list_loc_ys, list_morans = [], [], [], [], [], []
         for sp_img, label, fname in zip(all_sparse_images, all_labels_sparse_images, all_names_sparse_images):
-            sps_tmp, loc_x_tmp, loc_y_tmp = self.cropper_test(sp_img, n_crops=self.n_crops_for_tissue_test)
+            sps_tmp, loc_x_tmp, loc_y_tmp = self.cropper_test(sp_img, n_crops=self._n_crops_for_tissue_test)
             list_morans += [self.compute_moran(sparse_tensor).max().item() for sparse_tensor in sps_tmp]
             list_imgs += sps_tmp
             list_labels += [label] * len(sps_tmp)
@@ -1287,8 +967,8 @@ class SlideSeqKidneyDM(DinoDM):
         list_metadata = [MetadataCropperDataset(f_name=f_name, loc_x=loc_x, loc_y=loc_y, moran=moran) for
                          f_name, loc_x, loc_y, moran in zip(list_fnames, list_loc_xs, list_loc_ys, list_morans)]
         list_imgs_cpu = [img.cpu() for img in list_imgs]
-        torch.save((list_imgs_cpu, list_labels, list_metadata), os.path.join(self.data_dir, "test_dataset.pt"))
-        print("saved the file", os.path.join(self.data_dir, "test_dataset.pt"))
+        torch.save((list_imgs_cpu, list_labels, list_metadata), os.path.join(self._data_dir, "test_dataset.pt"))
+        print("saved the file", os.path.join(self._data_dir, "test_dataset.pt"))
 
     def setup(self, stage: Optional[str] = None) -> None:
         # these are things that run on each gpus.
@@ -1297,7 +977,7 @@ class SlideSeqKidneyDM(DinoDM):
         print("-----> running datamodule setup. stage -> {0}".format(stage))
 
         # This need to go here so that each gpu has a dictionary available
-        df_archive = pd.read_csv(os.path.join(self.data_dir, "slideseq_kidney_datatable.csv"),
+        df_archive = pd.read_csv(os.path.join(self._data_dir, "slideseq_kidney_datatable.csv"),
                                  usecols=["arrays", "samples", "species"])
 
         array_list = df_archive["arrays"].tolist()
@@ -1308,511 +988,19 @@ class SlideSeqKidneyDM(DinoDM):
         self.array_to_species = dict(zip(array_list, species_list))
         self.array_to_condition = dict(zip(array_list, condition_list))
 
-    def train_dataloader(self) -> DataLoaderWithLoad:
-        try:
-            device = self.trainer.model.device
-        except AttributeError:
-            device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        print("Inside train_dataloader", device)
 
-        # Read the imgs from disk and put them on the right CUDA memory
-        list_imgs_cpu, list_labels, list_metadata = torch.load(os.path.join(self.data_dir, "train_dataset.pt"))
-        list_imgs = [img.coalesce().to(device) for img in list_imgs_cpu]
-
-        dataset_train = CropperDataset(
-            imgs=list_imgs,
-            labels=list_labels,
-            metadatas=list_metadata,
-            cropper=self.cropper_train,
-        )
-        print("created train_dataset device = {0}, length = {1}".format(dataset_train.imgs[0].device,
-                                                                        dataset_train.__len__()))
-
-        dataloader_train = DataLoaderWithLoad(
-            dataset=dataset_train,
-            batch_size=self.batch_size_per_gpu,
-            collate_fn=CollateFnListTuple(),
-            num_workers=0,  # problem if this is larger than 0, see https://github.com/pytorch/pytorch/issues/20248
-            shuffle=True,
-            drop_last=True,
-        )
-        return dataloader_train
-
-    def val_dataloader(self) -> List[DataLoaderWithLoad]:  # the same as test
-        try:
-            device = self.trainer.model.device
-        except AttributeError:
-            device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        print("Inside test_dataloader", device)
-
-        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self.data_dir, "test_dataset.pt"))
-        list_imgs = [img.coalesce().to(device) for img in list_imgs]
-        dataset_test = CropperDataset(
-            imgs=list_imgs,
-            labels=list_labels,
-            metadatas=list_metadata,
-            cropper=None,
-        )
-        print("created test_dataset device = {0}, length = {1}".format(dataset_test.imgs[0].device,
-                                                                       dataset_test.__len__()))
-
-        test_dataloader = DataLoaderWithLoad(
-            dataset=dataset_test,
-            batch_size=self.batch_size_per_gpu,
-            collate_fn=CollateFnListTuple(),
-            num_workers=0,  # problem if this is larger than 0, see https://github.com/pytorch/pytorch/issues/20248
-            shuffle=False,
-            drop_last=False,
-        )
-        return [test_dataloader]
-
-    def test_dataloader(self) -> List[DataLoaderWithLoad]:
-        return self.val_dataloader()
-
-    def predict_dataloader(self) -> List[DataLoaderWithLoad]:
-        return self.val_dataloader()
-
-
-#####class CaltechDM(DinoDM):
-#####    def __init__(
-#####            self,
-#####            # stuff to redefine abstract properties
-#####            global_size: int,
-#####            local_size: int,
-#####            n_local_crops: int,
-#####            n_global_crops: int,
-#####
-#####            # additional arguments
-#####            num_workers: int,
-#####            data_dir: str,
-#####            batch_size_per_gpu: int,
-#####
-#####            # specify the transform
-#####            global_scale: Tuple[float, float],
-#####            local_scale: Tuple[float, float],
-#####            **kargs,
-#####    ):
-#####        super().__init__()
-#####        print("-----> running datamodule init")
-#####
-#####        # params for overwriting the abstract property
-#####        self._global_size = global_size
-#####        self._local_size = local_size
-#####        self._n_global_crops = n_global_crops
-#####        self._n_local_crops = n_local_crops
-#####
-#####        # global params
-#####        self.data_dir = data_dir
-#####        self.batch_size_per_gpu = batch_size_per_gpu
-#####        self.num_workers = cpu_count() if num_workers == -1 else num_workers
-#####        self.gpus = torch.cuda.device_count()
-#####
-#####        # specify the transform
-#####        self.global_scale = global_scale
-#####        self.local_scale = local_scale
-#####
-#####    def get_metadata_to_regress(self, metadata: MetadataCropperDataset) -> Dict[str, float]:
-#####        """ Extract one or more quantities to regress from the metadata """
-#####        return dict()
-#####
-#####    def get_metadata_to_classify(self, metadata: MetadataCropperDataset) -> Dict[str, int]:
-#####        """ Extract one or more quantities to classify from the metadata """
-#####        return dict()
-#####
-#####    @classproperty
-#####    def ch_in(self) -> int:
-#####        return 3
-#####
-#####    @property
-#####    def global_size(self) -> int:
-#####        return self._global_size
-#####
-#####    @property
-#####    def local_size(self) -> int:
-#####        return self._local_size
-#####
-#####    @property
-#####    def n_global_crops(self) -> int:
-#####        return self._n_global_crops
-#####
-#####    @property
-#####    def n_local_crops(self) -> int:
-#####        return self._n_local_crops
-#####
-#####    @property
-#####    def cropper_test(self):
-#####        return CropperSparseTensor(
-#####            strategy='identity',
-#####            n_crops=1)
-#####
-#####    @property
-#####    def trsfm_test(self) -> Callable:
-#####        return TransformForList(
-#####            transform_before_stack=torchvision.transforms.Compose([
-#####                ToRgb(),
-#####                LargestSquareCrop(self.global_size),
-#####                RandomHFlip(p=0.5),
-#####            ]),
-#####            transform_after_stack=None,
-#####        )
-#####
-#####    @property
-#####    def cropper_train(self):
-#####        return CropperSparseTensor(
-#####            strategy='identity',
-#####            n_crops=1)
-#####
-#####    @property
-#####    def trsfm_train_global(self) -> Callable:
-#####        return TransformForList(
-#####            transform_before_stack=torchvision.transforms.Compose([
-#####                ToRgb(),
-#####                LargestSquareCrop(self.global_size),
-#####            ]),
-#####            transform_after_stack=torchvision.transforms.Compose([
-#####                RandomHFlip(p=0.5),
-#####                torchvision.transforms.RandomResizedCrop(
-#####                    size=(self.global_size, self.global_size),
-#####                    scale=self.global_scale,
-#####                    ratio=(0.8, 1.2),
-#####                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
-#####            ])
-#####        )
-#####
-#####    @property
-#####    def trsfm_train_local(self) -> Callable:
-#####        return TransformForList(
-#####            transform_before_stack=torchvision.transforms.Compose([
-#####                ToRgb(),
-#####                LargestSquareCrop(self.global_size),
-#####            ]),
-#####            transform_after_stack=torchvision.transforms.Compose([
-#####                RandomHFlip(p=0.5),
-#####                torchvision.transforms.RandomResizedCrop(
-#####                    size=(self.local_size, self.local_size),
-#####                    scale=self.local_scale,
-#####                    ratio=(0.8, 1.2),
-#####                    interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
-#####            ])
-#####        )
-#####
-#####    @classmethod
-#####    def add_specific_args(cls, parent_parser):
-#####
-#####        parser = ArgumentParser(parents=[parent_parser], add_help=False, conflict_handler='resolve')
-#####
-#####        # global parameters
-#####        parser.add_argument("--data_dir", type=str, default="./caltech101_data",
-#####                            help="directory where to download the data")
-#####        parser.add_argument("--num_workers", default=cpu_count(), type=int,
-#####                            help="number of worker to load data. Meaningful only if dataset is on disk. \
-#####                            Set to zero if data in memory")
-#####
-#####        # specify the transform
-#####        parser.add_argument("--global_size", type=int, default=128, help="size in pixel of the global crops")
-#####        parser.add_argument("--local_size", type=int, default=64, help="size in pixel of the local crops")
-#####        parser.add_argument("--global_scale", type=float, nargs=2, default=[0.7, 1.0],
-#####                            help="scale used in RandomResizedCrop for the global crops")
-#####        parser.add_argument("--local_scale", type=float, nargs=2, default=[0.3, 0.5],
-#####                            help="scale used in RandomResizedCrop for the local crops")
-#####        parser.add_argument("--n_local_crops", type=int, default=6, help="number of local crops")
-#####        parser.add_argument("--n_global_crops", type=int, default=2, help="number of global crops")
-#####
-#####        # test dataset
-#####        parser.add_argument("--batch_size_per_gpu", type=int, default=64,
-#####                            help="Batch size FOR EACH GPUs. Set small for rapid prototyping. \
-#####                            The total batch_size will increase linearly with the number of GPUs. \
-#####                            If strategy is tiling then the actual batch_size might be smaller than this one")
-#####
-#####        return parser
-#####
-#####    def __tar_exists__(self):
-#####        return exists(os.path.join(self.data_dir, "caltech101.tar.gz"))
-#####
-#####    def __download__tar__(self):
-#####        from google.cloud import storage
-#####
-#####        bucket_name = "ld-data-bucket"
-#####        source_blob_name = "tissue-purifier/caltech101.tar.gz"
-#####        destination_file_name = os.path.join(self.data_dir, "caltech101.tar.gz")
-#####
-#####        # create the directory where the file will be written
-#####        import os.path
-#####        dirname = os.path.dirname(destination_file_name)
-#####        os.makedirs(dirname, exist_ok=True)
-#####
-#####        # connect ot the google bucket
-#####        storage_client = storage.Client()
-#####        bucket = storage_client.bucket(bucket_name)
-#####
-#####        # Construct a client side representation of a blob.
-#####        # Note `Bucket.blob` differs from `Bucket.get_blob` as it doesn't retrieve
-#####        # any content from Google Cloud Storage. As we don't need additional data,
-#####        # using `Bucket.blob` is preferred here.
-#####        blob = bucket.blob(source_blob_name)
-#####        blob.download_to_filename(destination_file_name)
-#####
-#####        print(
-#####            "Downloaded storage object {} from bucket {} to local file {}.".format(
-#####                source_blob_name, bucket_name, destination_file_name
-#####            )
-#####        )
-#####
-#####    def __untar__(self):
-#####        if exists(os.path.join(self.data_dir, "caltech101")):
-#####            print("untar already exists")
-#####        else:
-#####            tar_file_name = os.path.join(self.data_dir, "caltech101.tar.gz")
-#####            # untar the tar.gz file
-#####            with tarfile.open(tar_file_name, "r:gz") as fp:
-#####                fp.extractall(path=self.data_dir)
-#####
-#####    def prepare_data(self):
-#####        # this are thing to be done only once in distributed settings
-#####        print("-----> running datamodule prepare_data")
-#####        if self.__tar_exists__():
-#####            print("untar data")
-#####            self.__untar__()
-#####        else:
-#####            print("download and untar data")
-#####            self.__download__tar__()
-#####            self.__untar__()
-#####
-#####        # Image and category from folder dataset
-#####        dataset_img_category = torchvision.datasets.ImageFolder(
-#####            root=os.path.join(self.data_dir, 'caltech101/101_ObjectCategories'),
-#####            transform=torchvision.transforms.ToTensor())
-#####
-#####        # prepare to split the data into train and test (test has 10 images for category)
-#####        cat_id_for_each_img = torch.tensor([dataset_img_category.samples[n][1]
-#####                                            for n in range(dataset_img_category.__len__())])
-#####        counts_for_category = torch.bincount(cat_id_for_each_img)
-#####        end_of_each_category = torch.cumsum(counts_for_category, dim=0)
-#####        mask_train = torch.ones_like(cat_id_for_each_img).bool()
-#####        for n in end_of_each_category:
-#####            mask_train[n-10:n] = False
-#####        indices_full = torch.arange(dataset_img_category.__len__())
-#####        indices_train = indices_full[mask_train]
-#####        indices_test = indices_full[~mask_train]
-#####
-#####        # Add the fake metadata and split into train and test dataset
-#####        dataset_full = AddFakeMetadata(dataset_img_category)
-#####        dataset_train = torch.utils.data.dataset.Subset(dataset=dataset_full, indices=indices_train)
-#####        dataset_test = torch.utils.data.dataset.Subset(dataset=dataset_full, indices=indices_test)
-#####
-#####        print("train dataset length -->", dataset_train.__len__())
-#####        print("test dataset length -->", dataset_test.__len__())
-#####
-#####        torch.save(dataset_train, os.path.join(self.data_dir, "dataset_train.pt"))
-#####        torch.save(dataset_test, os.path.join(self.data_dir, "dataset_test.pt"))
-#####
-#####    def setup(self, stage: Optional[str] = None) -> None:
-#####        """ stage: either 'fit', 'validate', 'test', or 'predict' """
-#####        print("-----> running datamodule setup. stage ->{0}".format(stage))
-#####        pass
-#####
-#####    def train_dataloader(self) -> DataLoaderWithLoad:
-#####        dataset_train = torch.load(os.path.join(self.data_dir, "dataset_train.pt"))
-#####
-#####        dataloader_train = DataLoaderWithLoad(
-#####            dataset_train,
-#####            batch_size=min(dataset_train.__len__(), self.batch_size_per_gpu * max(1, self.gpus)),
-#####            collate_fn=CollateFnListTuple(),
-#####            num_workers=self.num_workers,
-#####            shuffle=True,
-#####            drop_last=True,
-#####            pin_memory=False
-#####        )
-#####        return dataloader_train
-#####
-#####    def val_dataloader(self) -> List[DataLoaderWithLoad]:  # the same as test
-#####        dataset_test = torch.load(os.path.join(self.data_dir, "dataset_test.pt"))
-#####
-#####        test_dataloader = DataLoaderWithLoad(
-#####            dataset_test,
-#####            batch_size=min(dataset_test.__len__(), self.batch_size_per_gpu * max(1, self.gpus)),
-#####            collate_fn=CollateFnListTuple(),
-#####            num_workers=self.num_workers,
-#####            shuffle=False,
-#####            drop_last=False,
-#####            pin_memory=False,
-#####        )
-#####        return [test_dataloader]
-#####
-#####
-#####class FashionDM(DinoDM):
-#####    def __init__(
-#####            self,
-#####            # stuff to redefine abstract properties
-#####            global_size: int,
-#####            local_size: int,
-#####            n_local_crops: int,
-#####            n_global_crops: int,
-#####
-#####            # additional arguments
-#####            num_workers: int,
-#####            data_dir: str,
-#####            batch_size_per_gpu: int,
-#####
-#####            # specify the transform
-#####            global_scale: Tuple[float, float],
-#####            local_scale: Tuple[float, float],
-#####            **kargs,
-#####    ):
-#####        super().__init__()
-#####        print("-----> running datamodule init")
-#####
-#####        # params for overwriting the abstract property
-#####        self._global_size = global_size
-#####        self._local_size = local_size
-#####        self._n_global_crops = n_global_crops
-#####        self._n_local_crops = n_local_crops
-#####
-#####        # global params
-#####        self.data_dir = data_dir
-#####        self.batch_size_per_gpu = batch_size_per_gpu
-#####        self.num_workers = cpu_count() if num_workers == -1 else num_workers
-#####        self.gpus = torch.cuda.device_count()
-#####
-#####        # specify the transform
-#####        self.global_scale = global_scale
-#####        self.local_scale = local_scale
-#####
-#####    def get_metadata_to_regress(self, metadata: MetadataCropperDataset) -> Dict[str, float]:
-#####        """ Extract one or more quantities to regress from the metadata """
-#####        return dict()
-#####
-#####    def get_metadata_to_classify(self, metadata: MetadataCropperDataset) -> Dict[str, int]:
-#####        """ Extract one or more quantities to classify from the metadata """
-#####        return dict()
-#####
-#####    @classproperty
-#####    def ch_in(self) -> int:
-#####        return 1
-#####
-#####    @property
-#####    def global_size(self) -> int:
-#####        return self._global_size
-#####
-#####    @property
-#####    def local_size(self) -> int:
-#####        return self._local_size
-#####
-#####    @property
-#####    def n_global_crops(self) -> int:
-#####        return self._n_global_crops
-#####
-#####    @property
-#####    def n_local_crops(self) -> int:
-#####        return self._n_local_crops
-#####
-#####    @property
-#####    def cropper_test(self):
-#####        return CropperSparseTensor(
-#####            strategy='identity',
-#####            n_crops=1)
-#####
-#####    @property
-#####    def trsfm_test(self) -> Callable:
-#####        return TransformForList(
-#####            transform_before_stack=None,
-#####            transform_after_stack=torchvision.transforms.Resize(size=self.global_size),
-#####        )
-#####
-#####    @property
-#####    def cropper_train(self):
-#####        return CropperSparseTensor(
-#####            strategy='identity',
-#####            n_crops=1)
-#####
-#####    @property
-#####    def trsfm_train_global(self) -> Callable:
-#####        return TransformForList(
-#####            transform_before_stack=None,
-#####            transform_after_stack=torchvision.transforms.Resize(size=self.global_size),
-#####        )
-#####
-#####    @property
-#####    def trsfm_train_local(self) -> Callable:
-#####        return TransformForList(
-#####            transform_before_stack=None,
-#####            transform_after_stack=torchvision.transforms.Resize(size=self.local_size),
-#####        )
-#####
-#####    @classmethod
-#####    def add_specific_args(cls, parent_parser):
-#####
-#####        parser = ArgumentParser(parents=[parent_parser], add_help=False, conflict_handler='resolve')
-#####
-#####        # global parameters
-#####        parser.add_argument("--data_dir", type=str, default="./fashion_data",
-#####                            help="directory where to download the data")
-#####        parser.add_argument("--num_workers", default=cpu_count(), type=int,
-#####                            help="number of worker to load data. Meaningful only if dataset is on disk. \
-#####                            Set to zero if data in memory")
-#####
-#####        # specify the transform
-#####        parser.add_argument("--global_size", type=int, default=32, help="size in pixel of the global crops")
-#####        parser.add_argument("--local_size", type=int, default=32, help="size in pixel of the local crops")
-#####        parser.add_argument("--global_scale", type=float, nargs=2, default=[0.7, 1.0],
-#####                            help="scale used in RandomResizedCrop for the global crops")
-#####        parser.add_argument("--local_scale", type=float, nargs=2, default=[0.3, 0.5],
-#####                            help="scale used in RandomResizedCrop for the local crops")
-#####        parser.add_argument("--n_local_crops", type=int, default=6, help="number of local crops")
-#####        parser.add_argument("--n_global_crops", type=int, default=2, help="number of global crops")
-#####
-#####        # test dataset
-#####        parser.add_argument("--batch_size_per_gpu", type=int, default=64,
-#####                            help="Batch size FOR EACH GPUs. Set small for rapid prototyping. \
-#####                            The total batch_size will increase linearly with the number of GPUs. \
-#####                            If strategy is tiling then the actual batch_size might be smaller than this one")
-#####
-#####        return parser
-#####
-#####    def setup(self, stage: Optional[str] = None) -> None:
-#####        """ stage: either 'fit', 'validate', 'test', or 'predict' """
-#####        print("-----> running datamodule setup. stage ->{0}".format(stage))
-#####        pass
-#####
-#####    def train_dataloader(self) -> DataLoaderWithLoad:
-#####        fashion_train = torchvision.datasets.FashionMNIST(
-#####            root="./fashion",
-#####            train=True,
-#####            transform=torchvision.transforms.ToTensor(),
-#####            download=True)
-#####
-#####        dataset_train = AddFakeMetadata(fashion_train)
-#####
-#####        dataloader_train = DataLoaderWithLoad(
-#####            dataset_train,
-#####            batch_size=min(dataset_train.__len__(), self.batch_size_per_gpu * max(1, self.gpus)),
-#####            collate_fn=CollateFnListTuple(),
-#####            num_workers=self.num_workers,
-#####            shuffle=True,
-#####            drop_last=True,
-#####            pin_memory=False
-#####        )
-#####        return dataloader_train
-#####
-#####    def val_dataloader(self) -> List[DataLoaderWithLoad]:  # the same as test
-#####        fashion_test = torchvision.datasets.FashionMNIST(
-#####            root="./fashion",
-#####            train=False,
-#####            transform=torchvision.transforms.ToTensor(),
-#####            download=True)
-#####
-#####        dataset_test = AddFakeMetadata(fashion_test)
-#####
-#####        test_dataloader = DataLoaderWithLoad(
-#####            dataset_test,
-#####            batch_size=min(dataset_test.__len__(), self.batch_size_per_gpu * max(1, self.gpus)),
-#####            collate_fn=CollateFnListTuple(),
-#####            num_workers=self.num_workers,
-#####            shuffle=False,
-#####            drop_last=False,
-#####            pin_memory=False,
-#####        )
-#####        return [test_dataloader]
-#####
-#####
-#####
+class DinoSparseFolderDM(DinoSparseDM):
+    """
+    It expects a folder structure as follow
+    root
+    ├── train/
+    |   ├── 0001.hd5d
+    |   └── 0002.h5ad
+    └── test/
+        ├── 0003.hd5d
+        └── 0004.h5ad
+    """
+    def __init__(self):
+        raise NotImplementedError
+        # TODO: Implement a general dataset that takes a folder with anndata objects.
+    pass
