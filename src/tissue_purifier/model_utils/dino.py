@@ -504,7 +504,7 @@ class DinoModel(LightningModule):
 
         # optimizer
         parser.add_argument("--optimizer_type", type=str, default='adam', help="optimizer type",
-                            choices=['adamw', 'sgd', 'adam', 'rmsprop'])
+                            choices=['adamw', 'lars', 'sgd', 'adam', 'rmsprop'])
 
         # Updating of the teacher network
         parser.add_argument("--param_momentum_init", type=float, default=0.996,
