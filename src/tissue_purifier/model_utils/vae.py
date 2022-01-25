@@ -13,9 +13,11 @@ from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from tissue_purifier.plot_utils.plot_embeddings import plot_embeddings
 from tissue_purifier.plot_utils.plot_images import show_batch
 from tissue_purifier.model_utils.classify_regress import classify_and_regress
+from tissue_purifier.misc_utils.nms import NonMaxSuppression
 
 from tissue_purifier.misc_utils.dict_util import (
     concatenate_list_of_dict,
+    subset_dict,
     subset_dict_non_overlapping_patches)
 
 from tissue_purifier.misc_utils.misc import (
@@ -793,13 +795,25 @@ class VaeModel(LightningModule):
 
                 # loop over subset made of not-overlapping patches
                 df_tot = None
-                for n in range(20):
+
+                # compute the patch_to_patch overlap just one at the beginning
+                patches = world_dict["patches_xywh"]
+                initial_score = torch.rand_like(patches[:, 0].float())
+                tissue_ids = world_dict["classify_tissue_label"]
+                nms_mask_n, overlap_nn = NonMaxSuppression.compute_nm_mask(
+                    score=initial_score,
+                    ids=tissue_ids,
+                    patches_xywh=patches,
+                    iom_threshold=self.val_iomin_threshold)
+                binarized_overlap_nn = (overlap_nn > self.val_iomin_threshold).float()
+
+                for n in range(100):
+                    print("loop over non-overlapping", n)
                     # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
-                    world_dict_subset = subset_dict_non_overlapping_patches(
-                        input_dict=world_dict,
-                        key_tissue="classify_tissue_label",
-                        key_patch_xywh="patches_xywh",
-                        iom_threshold=self.val_iomin_threshold)
+                    nms_mask_n = NonMaxSuppression._perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
+                                                                          score_n=torch.rand_like(initial_score),
+                                                                          possible_n=torch.ones_like(initial_score).bool())
+                    world_dict_subset = subset_dict(input_dict=world_dict, mask=nms_mask_n)
 
                     df_tmp = classify_and_regress(
                         input_dict=world_dict_subset,
