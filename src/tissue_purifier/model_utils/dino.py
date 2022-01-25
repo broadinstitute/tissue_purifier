@@ -846,9 +846,12 @@ class DinoModel(LightningModule):
 
                 embedding_keys = []
                 for k in ["features_teacher_bbone", "features_teacher_head"]:
+                    print("working on feature", k)
                     input_features = world_dict[k]
                     embeddings_pca = smart_pca.fit_transform(input_features, n_components=0.95)
+                    print("embeddings_pca.shape", embeddings_pca.shape)
                     embeddings_umap = smart_umap.fit_transform(embeddings_pca)
+                    print("done with UMAP", embeddings_umap.shape)
                     embedding_key = "umap_"+k
                     world_dict[embedding_key] = embeddings_umap
                     embedding_keys.append(embedding_key)
