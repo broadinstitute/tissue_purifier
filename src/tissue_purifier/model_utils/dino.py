@@ -878,6 +878,7 @@ class DinoModel(LightningModule):
 
                 for fig_tmp, key_tmp in zip(all_figs, embedding_keys):
                     self.logger.run["maps/" + key_tmp].log(File.as_image(fig_tmp))
+                print("printed the embeddings")
 
                 # Do KNN classification
                 def exclude_self(d):
@@ -902,9 +903,10 @@ class DinoModel(LightningModule):
                 regressor = KNeighborsRegressor(**kn_kargs)
                 classifier = KNeighborsClassifier(**kn_kargs)
 
-                # loop over subset made of not-overlapping patches
+                # loop over subset made of non-overlapping patches
                 df_tot = None
                 for n in range(100):
+                    print("loop over non-overlapping", n)
 
                     # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
                     world_dict_subset = subset_dict_non_overlapping_patches(
