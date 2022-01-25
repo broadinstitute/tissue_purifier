@@ -422,6 +422,26 @@ class DummyDM(DinoSparseDM):
 
         super().__init__(n_element_min_for_crop=20, **kargs)
 
+    @classmethod
+    def add_specific_args(cls, parent_parser) -> ArgumentParser:
+        parser_from_super = super().add_specific_args(parent_parser)
+        parser = ArgumentParser(parents=[parser_from_super], add_help=False, conflict_handler='resolve')
+
+        parser.add_argument("--data_dir", type=str, default="./slide_seq_testis",
+                            help="directory where to download the data")
+        parser.add_argument("--num_workers", default=cpu_count(), type=int,
+                            help="number of worker to load data. Meaningful only if dataset is on disk. \
+                            Set to zero if data in memory")
+        parser.add_argument("--pixel_size", type=float, default=4.0,
+                            help="size of the pixel (used to convert raw_coordinates to pixel_coordinates)")
+        parser.add_argument("--load_count_matrix", type=smart_bool, default=False,
+                            help="If true load the count matrix in the anndata object. \
+                            Count matrix is memory intensive therefore it can be advantegeous not to load it.")
+        parser.add_argument("--n_neighbours_moran", type=int, default=6,
+                            help="number of neighbours used to compute moran")
+
+        return parser
+
     def get_metadata_to_regress(self, metadata: MetadataCropperDataset) -> Dict[str, float]:
         """ Extract one or more quantities to regress from the metadata """
         return {
