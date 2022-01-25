@@ -521,12 +521,10 @@ class SmartPca:
 
         std, mean = self._preprocess(data)
         data = (data - mean) / std
-        try:
-            cov = torch.einsum('np,nq -> pq', data, data) / (data.shape[0] - 1)  # (p x p) covariance matrix
-        except RuntimeError as e:
-            print("error in computing the covariance matrix ->", e)
-            data = data.cpu()
-            cov = torch.einsum('np,nq -> pq', data, data) / (data.shape[0] - 1)  # (p x p) covariance matrix
+
+        # move stuff to cpu b/c covariance matrix can lead to CUDA out of memory error
+        data = data.cpu()
+        cov = torch.einsum('np,nq -> pq', data, data) / (data.shape[0] - 1)  # (p x p) covariance matrix
         # add a small diagonal term to make sure that the covariance matrix is not singular
         eps = 1E-4 * torch.randn(cov.shape[0], dtype=cov.dtype, device=cov.device)
         cov += torch.diag_embed(eps, offset=0, dim1=- 2, dim2=- 1)
