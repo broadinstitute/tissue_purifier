@@ -918,7 +918,7 @@ class DinoModel(LightningModule):
                     iom_threshold=self.val_iomin_threshold)
                 binarized_overlap_nn = (overlap_nn > self.val_iomin_threshold).float()
 
-                for n in range(100):
+                for n in range(20):
                     print("loop over non-overlapping", n)
                     nms_mask_n = NonMaxSuppression._perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
                                                                           score_n=torch.rand_like(initial_score),
