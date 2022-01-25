@@ -9,6 +9,7 @@ import igraph as ig
 import scipy
 import torch
 from torch.optim.optimizer import Optimizer
+from sklearn.decomposition import PCA
 
 
 def smart_bool(v):
@@ -522,21 +523,33 @@ class SmartPca:
         std, mean = self._preprocess(data)
         data = (data - mean) / std
 
-        # move stuff to cpu b/c covariance matrix can lead to CUDA out of memory error
-        data = data.cpu()
-        cov = torch.einsum('np,nq -> pq', data, data) / (data.shape[0] - 1)  # (p x p) covariance matrix
-        # add a small diagonal term to make sure that the covariance matrix is not singular
-        eps = 1E-4 * torch.randn(cov.shape[0], dtype=cov.dtype, device=cov.device)
-        cov += torch.diag_embed(eps, offset=0, dim1=- 2, dim2=- 1)
-        try:
-            U, S, Vh = torch.linalg.svd(cov, full_matrices=True)
-            self._explained_variance = torch.cumsum(S, dim=-1) / torch.sum(S, dim=-1)
-            self._U = U
-        except RuntimeError as e:
-            print("error in torch.svd ->", e)
-            self._explained_variance = torch.linspace(start=0.0, end=1.0, steps=cov.shape[0],
-                                                      device=cov.device, dtype=cov.dtype)
-            self._U = torch.eye(cov.shape[0], dtype=cov.dtype, device=cov.device)
+        n, p = data.shape
+
+        if p <= 1000:
+            # exact full SVD using CUDA
+            cov = torch.einsum('np,nq -> pq', data, data) / (data.shape[0] - 1)  # (p x p) covariance matrix
+            # add a small diagonal term to make sure that the covariance matrix is not singular
+            eps = 1E-4 * torch.randn(cov.shape[0], dtype=cov.dtype, device=cov.device)
+            cov += torch.diag_embed(eps, offset=0, dim1=- 2, dim2=- 1)
+            try:
+                U, S, Vh = torch.linalg.svd(cov, full_matrices=True)
+                self._explained_variance = torch.cumsum(S, dim=-1) / torch.sum(S, dim=-1)
+                self._U = U
+            except RuntimeError as e:
+                print("error in torch.svd ->", e)
+                self._explained_variance = torch.linspace(start=0.0, end=1.0, steps=cov.shape[0],
+                                                          device=cov.device, dtype=cov.dtype)
+                self._U = torch.eye(cov.shape[0], dtype=cov.dtype, device=cov.device)
+
+        else:
+            print("alternative pca")
+            data = data.cpu().numpy()
+            n_comp = int(data.shape[-1] // 2)
+            pca = PCA(n_components=n_comp, copy=True, whiten=False, svd_solver='randomized', tol=0.0,
+                      iterated_power='auto', random_state=0)
+            pca.fit(data)
+            self._explained_variance = torch.from_numpy(pca.explained_variance_)  # shape (components)
+            self._U = torch.from_numpy(pca.components_).permute(1, 0)  # shape (features, components)
 
         self._std = std
         self._mean = mean
