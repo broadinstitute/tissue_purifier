@@ -490,9 +490,15 @@ class SmartPca:
         self._std = None
 
     @property
-    def _explained_variance(self):
+    def explained_variance_(self):
         """ For compatibility with scikit_learn """
         return self._eigen_cov_matrix
+
+    @property
+    def explained_variance_ratio_(self):
+        """ For compatibility with scikit_learn """
+        tmp = self.explained_variance_.cumsum(dim=-1)
+        return tmp / tmp[-1]
 
     def _compute_std_mean(self, data) -> (torch.Tensor, torch.Tensor):
         if self.preprocess_strategy == 'z_score':
@@ -516,9 +522,7 @@ class SmartPca:
         if isinstance(n_components, int) and (0 < n_components <= p):
             return n_components
         elif isinstance(n_components, float) and (0.0 < n_components <= 1.0):
-            tmp = torch.cumsum(self._explained_variance)
-            explained_variance_ratio = tmp / tmp[-1]
-            indicator = (explained_variance_ratio > n_components)
+            indicator = (self.explained_variance_ratio_ > n_components)
             values, counts = torch.unique_consecutive(indicator, return_counts=True)
             return counts[0]
         else:
@@ -537,14 +541,13 @@ class SmartPca:
         data_new = self._apply_scaling(data_new)
 
         n, p = data_new.shape
-        q = int(0.5 * min(n, p))
-        U, S, V = torch.pca_lowrank(data_new, center=False, niter=20, q=q)
-        assert U.shape == torch.Size([n, q])
-        assert S.shape == torch.Size([q])
-        assert V.shape == torch.Size([p, q])
+        q = min(n, p)
+        U, S, V = torch.pca_lowrank(data_new, center=False, niter=2, q=q)
+        assert U.shape == torch.Size([n, q]), "U.shape {0}".format(U.shape)
+        assert S.shape == torch.Size([q]), "S.shape {0}".format(S.shape)
+        assert V.shape == torch.Size([p, q]), "V.shape {0}".format(V.shape)
         dist = torch.dist(data_new, U @ torch.diag(S) @ V.permute(1, 0))
-        # assert dist < 1.0E-2
-        print("check the low_rank_PCA ->", dist)
+        print("{0} check the low_rank_PCA -> {1}".format(n, dist))
 
         eigen_cov_matrix = S.pow(2) / (n-1)
         self._eigen_cov_matrix = eigen_cov_matrix

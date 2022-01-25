@@ -29,9 +29,19 @@ def test_get_percentile(capsys):
     assert torch.all(diff < 1E-4)
 
 
-# @pytest.mark.parametrize("n, p", [[100, 20], [20, 2000], [20, 3000]])
+@pytest.mark.parametrize("n, p", [[200, 30], [20, 300]])
+def test_pca(n, p):
+    q = 0.75
+    data = torch.randn((n, p))
+    pca = SmartPca(preprocess_strategy='raw')
+    x1 = pca.fit_transform(data, n_components=q)
+    nq = x1.shape[-1]
+    assert (pca.explained_variance_ratio_[nq] > q)
+
+
 @pytest.mark.parametrize("n, q, p", [[20, 2, 200], [20, 2, 3000]])
-def test_pca(n, q, p, capsys):
+def test_pca_vs_scikit(n, q, p, capsys):
+    """ Compare myPCA vs scikit-learn PCA"""
     # n = sample
     # q = low dimension (a bit larger than true rank), i.e. output of PCA
     # p = features
@@ -79,7 +89,7 @@ def test_pca(n, q, p, capsys):
     corr_abs = numpy.abs(corr)
 
     # check that the explained variance works
-    ex_var1 = pca._explained_variance[:q].detach().cpu().numpy()
+    ex_var1 = pca.explained_variance_[:q].detach().cpu().numpy()
     ex_var2 = pca_scikit.explained_variance_
     variance_error = numpy.abs(ex_var1-ex_var2) / ex_var2
 
