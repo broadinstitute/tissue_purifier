@@ -793,7 +793,7 @@ class VaeModel(LightningModule):
 
                 # loop over subset made of not-overlapping patches
                 df_tot = None
-                for n in range(100):
+                for n in range(20):
                     # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
                     world_dict_subset = subset_dict_non_overlapping_patches(
                         input_dict=world_dict,

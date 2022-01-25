@@ -905,7 +905,7 @@ class DinoModel(LightningModule):
 
                 # loop over subset made of non-overlapping patches
                 df_tot = None
-                for n in range(100):
+                for n in range(20):
                     print("loop over non-overlapping", n)
 
                     # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
