@@ -916,7 +916,7 @@ class DinoModel(LightningModule):
                     ids=tissue_ids,
                     patches_xywh=patches,
                     iom_threshold=self.val_iomin_threshold)
-                binarized_overlap_nn = (overlap_nn > self.iom_threshold).float()
+                binarized_overlap_nn = (overlap_nn > self.val_iom_threshold).float()
 
                 for n in range(20):
                     print("loop over non-overlapping", n)
