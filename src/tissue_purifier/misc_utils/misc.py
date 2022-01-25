@@ -525,8 +525,8 @@ class SmartPca:
 
         n, p = data.shape
 
-        if p <= 1000:
-            # exact full SVD using CUDA
+        if p <= 2500:
+            # exact full SVD using CUDA followed by
             cov = torch.einsum('np,nq -> pq', data, data) / (data.shape[0] - 1)  # (p x p) covariance matrix
             # add a small diagonal term to make sure that the covariance matrix is not singular
             eps = 1E-4 * torch.randn(cov.shape[0], dtype=cov.dtype, device=cov.device)
@@ -544,7 +544,8 @@ class SmartPca:
         else:
             print("alternative pca")
             data = data.cpu().numpy()
-            n_comp = int(data.shape[-1] // 2)
+            n_comp = int(min(n, p) * 0.5)
+            print("n_comp", n_comp)
             pca = PCA(n_components=n_comp, copy=True, whiten=False, svd_solver='randomized', tol=0.0,
                       iterated_power='auto', random_state=0)
             pca.fit(data)
