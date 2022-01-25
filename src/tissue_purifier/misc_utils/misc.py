@@ -361,7 +361,7 @@ class SmartUmap(UMAP):
         """ Returns the symmetric (dense) matrix with the DISTANCES between elements """
         return self._distances
 
-    def _preprocess(self, data) -> (torch.Tensor, torch.Tensor):
+    def _compute_std_mean(self, data) -> (torch.Tensor, torch.Tensor):
         if self.preprocess_strategy == 'z_score':
             std, mean = torch.std_mean(data, dim=-2, unbiased=True, keepdim=True)
             return std, mean
@@ -377,15 +377,16 @@ class SmartUmap(UMAP):
     def fit(self, data, y=None) -> "SmartUmap":
         assert y is None
         if isinstance(data, numpy.ndarray):
-            data = torch.tensor(data)
-        data = data.float()  # upgrade to full precision in case you are at Half
+            data_new = torch.tensor(data).clone().float()
+        else:
+            data_new = data.clone().float()
 
-        std, mean = self._preprocess(data)
+        std, mean = self._compute_std_mean(data_new)
         self._mean = mean
         self._std = std
         self._fitted = True
-        data = (data - mean) / std
-        return super(SmartUmap, self).fit(data.detach().clone().cpu().numpy(), y)
+        data_new = (data_new - mean) / std
+        return super(SmartUmap, self).fit(data_new.detach().cpu().numpy(), y)
 
     def transform(self, data) -> numpy.ndarray:
         """
@@ -398,25 +399,22 @@ class SmartUmap(UMAP):
         assert self._fitted, "UMAP is not fitted. Cal 'fit' or 'fit_transform' first."
 
         if isinstance(data, numpy.ndarray):
-            data = torch.tensor(data)
-        data = data.float()  # upgrade to full precision in case you are at Half
+            data_new = torch.tensor(data).clone().float()
+        else:
+            data_new = data.clone().float()
 
-        data = (data - self._mean.to(data.device)) / self._std.to(data.device)
-        embeddings = super(SmartUmap, self).transform(data.cpu().numpy())
+        data_new = (data_new - self._mean.to(data_new.device)) / self._std.to(data_new.device)
+        embeddings = super(SmartUmap, self).transform(data_new.detach().cpu().numpy())
 
         if self.compute_all_pairwise_distances:
             self._distances = compute_distance_embedding(
-                ref_embeddings=data,
-                other_embeddings=data,
+                ref_embeddings=data_new,
+                other_embeddings=data_new,
                 metric=self.metric).cpu().numpy()
 
         return embeddings
 
     def fit_transform(self, data, y=None) -> numpy.ndarray:
-        if isinstance(data, numpy.ndarray):
-            data = torch.tensor(data)
-        data = data.float()  # upgrade to full precision in case you are at Half
-
         self.fit(data)
         return self.transform(data)
 
@@ -486,12 +484,17 @@ class SmartPca:
         self.preprocess_strategy = preprocess_strategy
         self._fitted = False
         self._n_components = None
-        self._U = None
-        self._explained_variance = None
+        self._V = None  # matrix of shape (p,q) i.e. (features, reduced_dimension)
+        self._eigen_cov_matrix = None
         self._mean = None
         self._std = None
 
-    def _preprocess(self, data) -> (torch.Tensor, torch.Tensor):
+    @property
+    def _explained_variance(self):
+        """ For compatibility with scikit_learn """
+        return self._eigen_cov_matrix
+
+    def _compute_std_mean(self, data) -> (torch.Tensor, torch.Tensor):
         if self.preprocess_strategy == 'z_score':
             std, mean = torch.std_mean(data, dim=-2, unbiased=True, keepdim=True)
             return std, mean
@@ -504,11 +507,18 @@ class SmartPca:
             std = torch.ones_like(mean)
             return std, mean
 
+    def _apply_scaling(self, data):
+        self._mean = self._mean.to(device=data.device, dtype=data.dtype)
+        self._std = self._std.to(device=data.device, dtype=data.dtype)
+        return (data - self._mean) / self._std
+
     def _get_q(self, n_components: Union[int, float], p: int) -> int:
         if isinstance(n_components, int) and (0 < n_components <= p):
             return n_components
         elif isinstance(n_components, float) and (0.0 < n_components <= 1.0):
-            indicator = self._explained_variance > n_components
+            tmp = torch.cumsum(self._explained_variance)
+            explained_variance_ratio = tmp / tmp[-1]
+            indicator = (explained_variance_ratio > n_components)
             values, counts = torch.unique_consecutive(indicator, return_counts=True)
             return counts[0]
         else:
@@ -517,43 +527,27 @@ class SmartPca:
 
     def fit(self, data) -> "SmartPca":
         if isinstance(data, numpy.ndarray):
-            data = torch.tensor(data)
-        data = data.float()  # upgrade to full precision in case you are at Half
-
-        std, mean = self._preprocess(data)
-        data = (data - mean) / std
-
-        n, p = data.shape
-
-        if p <= 2500:
-            # exact full SVD using CUDA followed by
-            cov = torch.einsum('np,nq -> pq', data, data) / (data.shape[0] - 1)  # (p x p) covariance matrix
-            # add a small diagonal term to make sure that the covariance matrix is not singular
-            eps = 1E-4 * torch.randn(cov.shape[0], dtype=cov.dtype, device=cov.device)
-            cov += torch.diag_embed(eps, offset=0, dim1=- 2, dim2=- 1)
-            try:
-                U, S, Vh = torch.linalg.svd(cov, full_matrices=True)
-                self._explained_variance = torch.cumsum(S, dim=-1) / torch.sum(S, dim=-1)
-                self._U = U
-            except RuntimeError as e:
-                print("error in torch.svd ->", e)
-                self._explained_variance = torch.linspace(start=0.0, end=1.0, steps=cov.shape[0],
-                                                          device=cov.device, dtype=cov.dtype)
-                self._U = torch.eye(cov.shape[0], dtype=cov.dtype, device=cov.device)
-
+            data_new = torch.tensor(data).clone().float()
         else:
-            print("alternative pca")
-            data = data.cpu().numpy()
-            n_comp = int(min(n, p) * 0.5)
-            print("n_comp", n_comp)
-            pca = PCA(n_components=n_comp, copy=True, whiten=False, svd_solver='randomized', tol=0.0,
-                      iterated_power='auto', random_state=0)
-            pca.fit(data)
-            self._explained_variance = torch.from_numpy(pca.explained_variance_)  # shape (components)
-            self._U = torch.from_numpy(pca.components_).permute(1, 0)  # shape (features, components)
+            data_new = data.clone().float()  # upgrade to full precision in case you are at Half
 
+        std, mean = self._compute_std_mean(data_new)
         self._std = std
         self._mean = mean
+        data_new = self._apply_scaling(data_new)
+
+        n, p = data_new.shape
+        q = int(0.5 * min(n, p))
+        U, S, V = torch.pca_lowrank(data_new, center=False, niter=20, q=q)
+        assert U.shape == torch.Size([n, q])
+        assert S.shape == torch.Size([q])
+        assert V.shape == torch.Size([p, q])
+        dist = torch.dist(data_new, U @ torch.diag(S) @ V.permute(1, 0))
+        assert dist < 1.0E-3
+
+        eigen_cov_matrix = S.pow(2) / (n-1)
+        self._eigen_cov_matrix = eigen_cov_matrix
+        self._V = V  # shape (p, q)
         self._fitted = True
         return self
 
@@ -566,23 +560,22 @@ class SmartPca:
                 If none it uses the previously used value.
         """
         assert self._fitted, "PCA is not fitted. Cal 'fit' or 'fit_transform' first."
-
         if isinstance(data, numpy.ndarray):
-            data = torch.tensor(data)
-        data = data.float()  # upgrade to full precision in case you are at Half
+            data_new = torch.tensor(data).clone().float()
+        else:
+            data_new = data.clone().float()
 
-        data = (data - self._mean.to(data.device)) / self._std.to(data.device)
+        data_new = self._apply_scaling(data_new)
         if n_components is None and self._n_components is not None:
-            q = self._n_components
-            # print("Setting n_components to the previously defined value {0}".format(q))
+            q = self._n_components  # use the previously defined value
         elif n_components is None and self._n_components is None:
             raise Exception("n_components has never been specified. Expected n_components = Union[ont, float]")
         else:
-            q = self._get_q(n_components, p=data.shape[-1])
+            q = self._get_q(n_components, p=data_new.shape[-1])
             self._n_components = q
 
-        self._U = self._U.to(data.device)
-        return torch.einsum('np,pq -> nq', data.float(), self._U[:, :q]).cpu().numpy()
+        self._V = self._V.to(device=data_new.device, dtype=data_new.dtype)
+        return torch.einsum('np,pq -> nq', data_new, self._V[:, :q]).cpu().numpy()
 
     def fit_transform(self, data, n_components: Union[int, float] = None) -> numpy.ndarray:
         """
@@ -591,11 +584,10 @@ class SmartPca:
             n_components: If integer specifies the dimensionality of the data after PCA. If float in (0, 1)
                 it auto selects the dimensionality so that the explained variance is at least that value.
                 If none (defaults) uses the value previously used.
-        """
-        if isinstance(data, numpy.ndarray):
-            data = torch.tensor(data)
-        data = data.float()  # upgrade to full precision in case you are at Half
 
+        Returns:
+            data_transformed: array of shape (n, q)
+        """
         self.fit(data)
         return self.transform(data, n_components)
 
@@ -632,7 +624,7 @@ class SmartScaler:
         self._low = None
         self._high = None
 
-    def _preprocess(self, data) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+    def _compute_median_quantile(self, data) -> (torch.Tensor, torch.Tensor, torch.Tensor):
         median = torch.median(data, dim=-2)[0]
         q_tensor = torch.tensor([self._q_low, self._q_high], dtype=data.dtype, device=data.device)
         qs = torch.quantile(data, q=q_tensor, dim=-2)
@@ -640,10 +632,11 @@ class SmartScaler:
 
     def fit(self, data) -> "SmartScaler":
         if isinstance(data, numpy.ndarray):
-            data = torch.tensor(data)
-        data = data.float()  # upgrade to full precision in case you are at Half
+            data = torch.tensor(data).clone().float()
+        else:
+            data = data.clone().float()
 
-        low, high, median = self._preprocess(data)
+        low, high, median = self._compute_median_quantile(data)
         test = low < high
         assert torch.all(test).item()
 
@@ -653,6 +646,11 @@ class SmartScaler:
         self._fitted = True
         return self
 
+    def _apply_scaling(self, data):
+        scale = (self._high - self._low).to(device=data.device, dtype=data.dtype)
+        median = self._median.to(device=data.device, dtype=data.dtype)
+        return (data - median) / scale
+
     def transform(self, data) -> numpy.ndarray:
         """
         Args:
@@ -661,26 +659,20 @@ class SmartScaler:
         assert self._fitted, "Scaler is not fitted. Cal 'fit' or 'fit_transform' first."
 
         if isinstance(data, numpy.ndarray):
-            data = torch.tensor(data)
-        data = data.float()  # upgrade to full precision in case you are at Half
+            data_new = torch.tensor(data).clone().float()
+        else:
+            data_new = data.clone().float()
 
         if self._clamp:
-            data = data.clamp(min=self._low.to(data.device), max=self._high.to(data.device))
-
-        scale = (self._high - self._low).to(data.device)
-        data = (data - self._median.to(data.device)) / scale
-
-        return data.cpu().numpy()
+            data_new = data.clamp(min=self._low.to(data_new.device),
+                                  max=self._high.to(data_new.device))
+        return self._apply_scaling(data_new).cpu().numpy()
 
     def fit_transform(self, data) -> numpy.ndarray:
         """
         Args:
             data: tensor of shape (n, p)
         """
-        if isinstance(data, numpy.ndarray):
-            data = torch.tensor(data)
-        data = data.float()  # upgrade to full precision in case you are at Half
-
         self.fit(data)
         return self.transform(data)
 
