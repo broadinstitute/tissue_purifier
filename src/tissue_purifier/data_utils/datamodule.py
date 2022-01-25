@@ -420,6 +420,7 @@ class DummyDM(DinoSparseDM):
         self.dataset_train = None
         self.dataset_test = None
 
+        _ = kargs.pop("n_element_min_for_crop", None)
         super().__init__(n_element_min_for_crop=20, **kargs)
 
     @classmethod
