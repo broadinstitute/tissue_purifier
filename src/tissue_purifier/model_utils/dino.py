@@ -830,6 +830,7 @@ class DinoModel(LightningModule):
                     # In interactive mode the all_gather does not add an extra leading dimension
                     # This check makes sure that I am not flattening when leading dim has not been added
                     world_dict[key] = world_dict[key].flatten(end_dim=1)
+
                 # Add the z_score
                 if key.startswith("feature") and key.endswith("bbone"):
                     tmp_key = key + '_zscore'
@@ -845,17 +846,14 @@ class DinoModel(LightningModule):
                 smart_umap = SmartUmap(n_neighbors=25, preprocess_strategy='raw',
                                        n_components=2, min_dist=0.5, metric='euclidean')
 
-                embedding_keys = []
-                for k in ["features_teacher_bbone", "features_teacher_head"]:
+                embedding_keys = ["features_teacher_bbone", "features_teacher_head"]
+                for k in embedding_keys:
                     print("working on feature", k)
                     input_features = world_dict[k]
                     embeddings_pca = smart_pca.fit_transform(input_features, n_components=0.95)
-                    print("embeddings_pca.shape", embeddings_pca.shape)
                     embeddings_umap = smart_umap.fit_transform(embeddings_pca)
-                    print("done with UMAP", embeddings_umap.shape)
-                    embedding_key = "umap_"+k
-                    world_dict[embedding_key] = embeddings_umap
-                    embedding_keys.append(embedding_key)
+                    world_dict['pca_'+k] = embeddings_pca
+                    world_dict['umap_'+k] = embeddings_umap
 
                 annotation_keys, titles = [], []
                 for k in world_dict.keys():
@@ -892,13 +890,14 @@ class DinoModel(LightningModule):
                     "weights": exclude_self,
                 }
 
+                feature_keys = ["features_teacher_bbone", "features_student_bbone"]
                 feature_keys, regress_keys, classify_keys = [], [], []
                 for key in world_dict.keys():
                     if key.startswith("regress"):
                         regress_keys.append(key)
                     elif key.startswith("classify"):
                         classify_keys.append(key)
-                    elif key.startswith("feature"):
+                    elif key.startswith("pca_") or key.startswith("umap_"):
                         feature_keys.append(key)
 
                 regressor = KNeighborsRegressor(**kn_kargs)
