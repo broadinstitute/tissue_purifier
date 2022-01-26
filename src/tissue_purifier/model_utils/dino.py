@@ -891,7 +891,7 @@ class DinoModel(LightningModule):
                 }
 
                 feature_keys = ["features_teacher_bbone", "features_student_bbone"]
-                feature_keys, regress_keys, classify_keys = [], [], []
+                regress_keys, classify_keys = [], []
                 for key in world_dict.keys():
                     if key.startswith("regress"):
                         regress_keys.append(key)
