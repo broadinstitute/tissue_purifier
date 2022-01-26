@@ -738,14 +738,13 @@ class VaeModel(LightningModule):
                 smart_umap = SmartUmap(n_neighbors=25, preprocess_strategy='raw',
                                        n_components=2, min_dist=0.5, metric='euclidean')
 
-                embedding_keys = []
-                for k in ["features_mu"]:
+                embedding_keys = ["features_mu"]
+                for k in embedding_keys:
                     input_features = world_dict[k]
-                    embeddings_pca = smart_pca.fit_transform(input_features, n_components=0.9)
+                    embeddings_pca = smart_pca.fit_transform(input_features, n_components=0.95)
                     embeddings_umap = smart_umap.fit_transform(embeddings_pca)
-                    embedding_key = "umap_" + k
-                    world_dict[embedding_key] = embeddings_umap
-                    embedding_keys.append(embedding_key)
+                    world_dict['pca_' + k] = embeddings_pca
+                    world_dict['umap_' + k] = embeddings_umap
 
                 annotation_keys, titles = [], []
                 for k in world_dict.keys():
@@ -781,13 +780,14 @@ class VaeModel(LightningModule):
                     "weights": exclude_self,
                 }
 
-                feature_keys, regress_keys, classify_keys = [], [], []
+                feature_keys = ["features_mu"]
+                regress_keys, classify_keys = [], []
                 for key in world_dict.keys():
                     if key.startswith("regress"):
                         regress_keys.append(key)
                     elif key.startswith("classify"):
                         classify_keys.append(key)
-                    elif key.startswith("feature"):
+                    elif key.startswith("pca_") or key.startswith("umap_"):
                         feature_keys.append(key)
 
                 regressor = KNeighborsRegressor(**kn_kargs)

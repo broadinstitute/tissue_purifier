@@ -541,17 +541,29 @@ class SmartPca:
         data_new = self._apply_scaling(data_new)
 
         n, p = data_new.shape
-        q = min(n, p)
-        U, S, V = torch.pca_lowrank(data_new, center=False, niter=2, q=q)
-        assert U.shape == torch.Size([n, q]), "U.shape {0}".format(U.shape)
-        assert S.shape == torch.Size([q]), "S.shape {0}".format(S.shape)
-        assert V.shape == torch.Size([p, q]), "V.shape {0}".format(V.shape)
-        dist = torch.dist(data_new, U @ torch.diag(S) @ V.permute(1, 0))
-        print("{0} check the low_rank_PCA -> {1}".format(n, dist))
+        q = min(p, n)
+        if p <= 2500:
+            # Use the covariance method, i.e. p x p matrix
+            cov = torch.einsum('np,nq -> pq', data_new, data_new) / (n - 1)  # (p x p) covariance matrix
+            # add a small diagonal term to make sure that the covariance matrix is not singular
+            eps = 1E-4 * torch.randn(p, dtype=cov.dtype, device=cov.device)
+            cov += torch.diag(eps)
+            assert cov.shape == torch.Size([p, p])
+            U, S, _ = torch.linalg.svd(cov, full_matrices=True)
+            self._eigen_cov_matrix = S[:q]  # shape (q)
+            self._V = U[:, :q]  # shape (p, q)
+        else:
+            # Use the approximate random method
+            U, S, V = torch.pca_lowrank(data_new, center=False, niter=2, q=q)
+            assert U.shape == torch.Size([n, q]), "U.shape {0}".format(U.shape)
+            assert S.shape == torch.Size([q]), "S.shape {0}".format(S.shape)
+            assert V.shape == torch.Size([p, q]), "V.shape {0}".format(V.shape)
+            # dist = torch.dist(data_new, U @ torch.diag(S) @ V.permute(1, 0))
+            # print("{0} check the low_rank_PCA -> {1}".format(n, dist))
+            eigen_cov_matrix = S.pow(2) / (n-1)
+            self._eigen_cov_matrix = eigen_cov_matrix  # shape (q)
+            self._V = V  # shape (p, q)
 
-        eigen_cov_matrix = S.pow(2) / (n-1)
-        self._eigen_cov_matrix = eigen_cov_matrix
-        self._V = V  # shape (p, q)
         self._fitted = True
         return self
 

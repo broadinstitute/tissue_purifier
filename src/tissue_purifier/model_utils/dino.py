@@ -919,6 +919,7 @@ class DinoModel(LightningModule):
 
                 for n in range(20):
                     print("loop over non-overlapping", n)
+                    # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
                     nms_mask_n = NonMaxSuppression._perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
                                                                           score_n=torch.rand_like(initial_score),
                                                                           possible_n=torch.ones_like(initial_score).bool())
