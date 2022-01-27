@@ -361,3 +361,22 @@ def show_raw_all_channels(
 
     plt.close(fig)
     return fig
+
+
+def show_corr_matrix(data: torch.Tensor, show_colorbar: bool = True, sup_title: str = None):
+    fig, axes = plt.subplots(ncols=2, figsize=(12, 4))
+
+    im0 = axes[0].imshow(data, cmap='inferno')
+    axes[0].set_axis_off()
+
+    im1 = axes[1].imshow(data.detach().cpu().numpy() - numpy.eye(data.shape[0]), cmap='seismic')
+    axes[1].set_axis_off()
+
+    if show_colorbar:
+        fig.colorbar(im0, ax=[axes[0]])
+        fig.colorbar(im1, ax=[axes[1]])
+
+    if sup_title:
+        fig.suptitle(sup_title)
+    plt.close(fig)
+    return fig

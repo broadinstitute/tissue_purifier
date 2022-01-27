@@ -8,6 +8,7 @@ from pytorch_lightning.trainer import Trainer
 from sklearn.metrics import r2_score, accuracy_score
 from sklearn.model_selection import RepeatedStratifiedKFold, RepeatedKFold
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
+from sklearn.linear_model import RidgeClassifierCV, RidgeCV
 from sklearn.base import is_regressor, is_classifier
 from tissue_purifier.misc_utils.misc import linear_warmup_and_cosine_protocol
 from tissue_purifier.model_utils.beta_mixture_1d import BetaMixture1D
@@ -903,8 +904,8 @@ def classify_and_regress(
         feature_keys: List[str],
         regress_keys: List[str] = None,
         classify_keys: List[str] = None,
-        regressor: Union[KNeighborsRegressor, PlRegressor] = None,
-        classifier: Union[KNeighborsClassifier, PlClassifier] = None,
+        regressor: Union[KNeighborsRegressor, RidgeCV, PlRegressor] = None,
+        classifier: Union[KNeighborsClassifier, RidgeClassifierCV, PlClassifier] = None,
         n_splits: int = 5,
         n_repeats: int = 1,
         verbose: bool = False) -> [pandas.DataFrame, pandas.DataFrame]:
@@ -921,7 +922,7 @@ def classify_and_regress(
         n_splits: int, number of splits for RepeatedKFold (regressor) or RepeatedStratifiedKFold (classifier).
             If n_splits is 5 (defaults) then train_test_split is 80% - 20%.
         n_repeats: int, number of repeats for RepeatedKFold (regressor) or RepeatedStratifiedKFold (classifier).
-            If n_repeats is 1 (defaults) then only one sample is done.
+            The total number of trained model is n_plists * n_repeats.
         verbose: bool, if true print some intermediate statements
 
     Returns:

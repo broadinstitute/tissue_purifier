@@ -11,6 +11,7 @@ from pytorch_lightning.trainer import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 from tissue_purifier.misc_utils.misc import smart_bool
+from tissue_purifier.model_utils.barlow import BarlowModel
 from tissue_purifier.model_utils.dino import DinoModel
 from tissue_purifier.model_utils.vae import VaeModel
 from tissue_purifier.data_utils.datamodule import DinoDM, SlideSeqTestisDM, SlideSeqKidneyDM, DummyDM
@@ -52,7 +53,9 @@ def initialization(
 
     if initialization_type in {'resume'}:
         # use ckpt_file only
-        if args_dict["model"] == "dino":
+        if args_dict["model"] == "barlow":
+            pl_model = BarlowModel.load_from_checkpoint(checkpoint_path=ckpt_file)
+        elif args_dict["model"] == "dino":
             pl_model = DinoModel.load_from_checkpoint(checkpoint_path=ckpt_file)
         elif args_dict["model"] == "vae":
             pl_model = VaeModel.load_from_checkpoint(checkpoint_path=ckpt_file)
@@ -64,7 +67,9 @@ def initialization(
 
     elif initialization_type in {'predict_only'}:
         # use ckpt_file only but overwrite stuff relative to the duration of the training
-        if args_dict["model"] == "dino":
+        if args_dict["model"] == "barlow":
+            pl_model = BarlowModel.load_from_checkpoint(checkpoint_path=ckpt_file)
+        elif args_dict["model"] == "dino":
             pl_model = DinoModel.load_from_checkpoint(checkpoint_path=ckpt_file)
         elif args_dict["model"] == "vae":
             pl_model = VaeModel.load_from_checkpoint(checkpoint_path=ckpt_file)
@@ -77,7 +82,9 @@ def initialization(
 
     elif initialization_type in {'extend'}:
         # use ckpt_file only but overwrite stuff relative to the duration of the training
-        if args_dict["model"] == "dino":
+        if args_dict["model"] == "barlow":
+            pl_model = BarlowModel.load_from_checkpoint(checkpoint_path=ckpt_file)
+        elif args_dict["model"] == "dino":
             pl_model = DinoModel.load_from_checkpoint(checkpoint_path=ckpt_file)
         elif args_dict["model"] == "vae":
             pl_model = VaeModel.load_from_checkpoint(checkpoint_path=ckpt_file)
@@ -92,7 +99,9 @@ def initialization(
 
     elif initialization_type in {'scratch'}:
         # use args only
-        if args_dict["model"] == "dino":
+        if args_dict["model"] == "barlow":
+            pl_model = BarlowModel(**args_dict)
+        elif args_dict["model"] == "dino":
             pl_model = DinoModel(**args_dict)
         elif args_dict["model"] == "vae":
             pl_model = VaeModel(**args_dict)
@@ -104,6 +113,8 @@ def initialization(
     elif initialization_type in {'pretraining'}:
         # use checkpoint but overwrite
         if args_dict["model"] == "dino":
+            pl_model = BarlowModel.load_from_checkpoint(checkpoint_path=ckpt_file, **args_dict)
+        elif args_dict["model"] == "dino":
             pl_model = DinoModel.load_from_checkpoint(checkpoint_path=ckpt_file, **args_dict)
         elif args_dict["model"] == "vae":
             pl_model = VaeModel.load_from_checkpoint(checkpoint_path=ckpt_file, **args_dict)
@@ -137,11 +148,14 @@ def initialization(
         profiler = PassThroughProfiler()
 
     if torch.cuda.device_count() == 0:
-        # cpu emulating ddp process
-        # TODO: This hangs. Lightining removed the ddp_cpu. Investigate
-        strategy = 'ddp'
+        # TODO:
+        #   This is supposed to mimic a multi-gpu training on CPU for debugging purposes
+        #   Unfortunately it hangs. Lightining removed the ddp_cpu. Investigate solution
+        #   For now, I change parameter so that it runs a single-cpu training.
+        #   Can still be used for debug but not the ddp part.
+        strategy = None  # 'ddp'
         accelerator = 'cpu'
-        num_processes = 2
+        num_processes = 1  # 2
         sync_batchnorm = False
         precision = 32
     elif torch.cuda.device_count() == 1:
@@ -154,17 +168,15 @@ def initialization(
     else:
         # more that 1 gpu
         accelerator = None
-        if args_dict["model"] == "dino":
-            # dino uses automatic optimization. I can set this flag to False for speed.
-            strategy = DDPPlugin(find_unused_parameters=False)
-        elif args_dict["model"] == "vae":
-            # vae uses manual optimization. I need to set this flag to true
-            strategy = DDPPlugin(find_unused_parameters=True)
-        else:
-            raise Exception("Model is not recognized. Received {0}".format(args_dict["model"]))
         num_processes = 1
         sync_batchnorm = True
         precision = new_dict["precision"]
+        if args_dict["model"] == "vae":
+            # vae uses manual optimization. I need to set this flag to true
+            strategy = DDPPlugin(find_unused_parameters=True)
+        else:
+            # everything else works with automatic differentiation. Set this to false for speed
+            strategy = DDPPlugin(find_unused_parameters=False)
 
     # monitor the learning rate. This will work both when manual or scheduler is used to change the learning rate.
     lr_monitor = LearningRateMonitor(logging_interval='epoch', log_momentum=True)
@@ -380,7 +392,7 @@ def parse_args(argv: List[str]) -> dict:
     parser.add_argument("--deterministic", type=smart_bool, default=False, help="Deterministic operation in CUDA?")
 
     # select the model and dataset
-    parser.add_argument("--model", default="dino", type=str, choices=["dino", "vae"],
+    parser.add_argument("--model", default="barlow", type=str, choices=["barlow", "dino", "vae"],
                         help="methodology for representation learning")
     parser.add_argument("--dataset", default="slide_seq_testis", type=str,
                         choices=["slide_seq_testis", "slide_seq_kidney", "dummy_dm"],
@@ -404,7 +416,9 @@ def parse_args(argv: List[str]) -> dict:
         (args, _) = parser.parse_known_args(args=argv)
 
     # Decide which model to use
-    if args.model == "dino":
+    if args.model == "barlow":
+        parser = BarlowModel.add_specific_args(parser)
+    elif args.model == "dino":
         parser = DinoModel.add_specific_args(parser)
     elif args.model == 'vae':
         parser = VaeModel.add_specific_args(parser)

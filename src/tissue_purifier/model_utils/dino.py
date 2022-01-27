@@ -9,24 +9,14 @@ import math
 
 from neptune.new.types import File
 from pytorch_lightning import LightningModule
-from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 
+from tissue_purifier.model_utils.benckmark_model import BenchmarkModel
 from tissue_purifier.data_utils.dataset import MetadataCropperDataset
 from tissue_purifier.plot_utils.plot_images import show_raw_all_channels
-from tissue_purifier.plot_utils.plot_embeddings import plot_embeddings
-from tissue_purifier.model_utils.classify_regress import classify_and_regress
 from tissue_purifier.misc_utils.misc import LARS
-from tissue_purifier.misc_utils.nms import NonMaxSuppression
-from tissue_purifier.misc_utils.dict_util import (
-    concatenate_list_of_dict,
-    subset_dict,
-    subset_dict_non_overlapping_patches)
-
+from tissue_purifier.misc_utils.dict_util import concatenate_list_of_dict
 from tissue_purifier.misc_utils.misc import (
     smart_bool,
-    SmartPca,
-    SmartUmap,
-    get_z_score,
     linear_warmup_and_cosine_protocol)
 
 
@@ -260,21 +250,6 @@ class MultiResolutionNet(torch.nn.Module):
         last_conv_channels = list(net.children())[-1].in_features
         first_conv_out_channels = list(net.children())[0].out_channels
 
-        # This use both AvgPoll2D and MaxPoll2D
-        # new_net = torch.nn.Sequential(
-        #     torch.nn.Conv2d(
-        #         backbone_in_ch,
-        #         first_conv_out_channels,
-        #         kernel_size=(7, 7),
-        #         stride=(2, 2),
-        #         padding=(3, 3),
-        #         bias=False,
-        #     ),
-        #     *list(net.children())[1:-2],  # note that I am excluding: AdaptivePool and last_fc_layer
-        #     AdaptiveAvgMaxPool2d(),  # adding both max and average pool in concatenation
-        #     torch.nn.Conv2d(2*last_conv_channels, backbone_out_ch, kernel_size=(1, 1)),
-        # )
-
         # This use AvgPoll2D only
         new_net = torch.nn.Sequential(
             torch.nn.Conv2d(
@@ -321,7 +296,7 @@ class MultiResolutionNet(torch.nn.Module):
         return self.head(output), output
 
 
-class DinoModel(LightningModule):
+class DinoModel(BenchmarkModel):
     """
     See
     https://pytorch-lightning.readthedocs.io/en/stable/starter/style_guide.html  and
@@ -368,14 +343,11 @@ class DinoModel(LightningModule):
             param_momentum_epochs_end: int = 1000,
             **kwargs,
             ):
-        super().__init__()
+        super(DinoModel, self).__init__(val_iomin_threshold=val_iomin_threshold)
 
         # Next two lines will make checkpointing much simpler. Always keep them as-is
         self.save_hyperparameters()  # all hyperparameters are saved to the checkpoint
         self.neptune_run_id = None  # if from scratch neptune_experiment_is is None
-
-        # validation
-        self.val_iomin_threshold = val_iomin_threshold
 
         # architecture
         self.student = MultiResolutionNet(
@@ -807,152 +779,6 @@ class DinoModel(LightningModule):
             val_dict["regress_" + k] = torch.tensor(v, device=self.device)
 
         return val_dict
-
-    def validation_epoch_end(self, list_of_val_dict) -> None:
-        """ You can receive a list_of_valdict or, if you have multiple val_datasets, a list_of_list_of_valdict """
-        print("inside validation epoch end")
-
-        if isinstance(list_of_val_dict[0], dict):
-            list_dict = [concatenate_list_of_dict(list_of_val_dict)]
-        elif isinstance(list_of_val_dict[0], list):
-            list_dict = [concatenate_list_of_dict(tmp_list) for tmp_list in list_of_val_dict]
-        else:
-            raise Exception("In validation epoch end. I received an unexpected input")
-
-        for loader_idx, total_dict in enumerate(list_dict):
-            print("rank {0} dataloader_idx {1}".format(self.global_rank, loader_idx))
-
-            # gather dictionaries from the other processes and flatten the extra dimension.
-            world_dict = self.all_gather(total_dict)
-            all_keys = list(world_dict.keys())
-            for key in all_keys:
-                if len(world_dict[key].shape) == 1 + len(total_dict[key].shape):
-                    # In interactive mode the all_gather does not add an extra leading dimension
-                    # This check makes sure that I am not flattening when leading dim has not been added
-                    world_dict[key] = world_dict[key].flatten(end_dim=1)
-
-                # Add the z_score
-                if key.startswith("feature") and key.endswith("bbone"):
-                    tmp_key = key + '_zscore'
-                    world_dict[tmp_key] = get_z_score(world_dict[key], dim=-2)
-            print("done dictionary. rank {0}".format(self.global_rank))
-
-            # DO operations ONLY on rank 0.
-            # ADD "rank_zero_only=True" to avoid deadlocks on synchronization.
-            if self.global_rank == 0:
-
-                # plot the UMAP colored by all available annotations
-                smart_pca = SmartPca(preprocess_strategy='z_score')
-                smart_umap = SmartUmap(n_neighbors=25, preprocess_strategy='raw',
-                                       n_components=2, min_dist=0.5, metric='euclidean')
-
-                embedding_keys = ["features_teacher_bbone", "features_teacher_head"]
-                for k in embedding_keys:
-                    print("working on feature", k)
-                    input_features = world_dict[k]
-                    embeddings_pca = smart_pca.fit_transform(input_features, n_components=0.95)
-                    embeddings_umap = smart_umap.fit_transform(embeddings_pca)
-                    world_dict['pca_'+k] = embeddings_pca
-                    world_dict['umap_'+k] = embeddings_umap
-
-                annotation_keys, titles = [], []
-                for k in world_dict.keys():
-                    if k.startswith("regress") or k.startswith("classify"):
-                        annotation_keys.append(k)
-                        titles.append("{0} -> Epoch={1}".format(k, self.current_epoch))
-
-                # Now I have both annotation_keys and feature_keys
-                all_figs = []
-                for embedding_key in embedding_keys:
-                    fig_tmp = plot_embeddings(
-                        world_dict,
-                        embedding_key=embedding_key,
-                        annotation_keys=annotation_keys,
-                        x_label="UMAP1",
-                        y_label="UMAP2",
-                        titles=titles,
-                        n_col=2,
-                    )
-                    all_figs.append(fig_tmp)
-
-                for fig_tmp, key_tmp in zip(all_figs, embedding_keys):
-                    self.logger.run["maps/" + key_tmp].log(File.as_image(fig_tmp))
-                print("printed the embeddings")
-
-                # Do KNN classification
-                def exclude_self(d):
-                    w = numpy.ones_like(d)
-                    w[d == 0.0] = 0.0
-                    return w
-
-                kn_kargs = {
-                    "n_neighbors": 5,
-                    "weights": exclude_self,
-                }
-
-                feature_keys = ["features_teacher_bbone", "features_student_bbone"]
-                regress_keys, classify_keys = [], []
-                for key in world_dict.keys():
-                    if key.startswith("regress"):
-                        regress_keys.append(key)
-                    elif key.startswith("classify"):
-                        classify_keys.append(key)
-                    elif key.startswith("pca_") or key.startswith("umap_"):
-                        feature_keys.append(key)
-
-                regressor = KNeighborsRegressor(**kn_kargs)
-                classifier = KNeighborsClassifier(**kn_kargs)
-
-                # loop over subset made of non-overlapping patches
-                df_tot = None
-
-                # compute the patch_to_patch overlap just one at the beginning
-                patches = world_dict["patches_xywh"]
-                initial_score = torch.rand_like(patches[:, 0].float())
-                tissue_ids = world_dict["classify_tissue_label"]
-                nms_mask_n, overlap_nn = NonMaxSuppression.compute_nm_mask(
-                    score=initial_score,
-                    ids=tissue_ids,
-                    patches_xywh=patches,
-                    iom_threshold=self.val_iomin_threshold)
-                binarized_overlap_nn = (overlap_nn > self.val_iomin_threshold).float()
-
-                for n in range(20):
-                    print("loop over non-overlapping", n)
-                    # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
-                    nms_mask_n = NonMaxSuppression._perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
-                                                                          score_n=torch.rand_like(initial_score),
-                                                                          possible_n=torch.ones_like(initial_score).bool())
-                    world_dict_subset = subset_dict(input_dict=world_dict, mask=nms_mask_n)
-
-                    df_tmp = classify_and_regress(
-                        input_dict=world_dict_subset,
-                        feature_keys=feature_keys,
-                        regress_keys=regress_keys,
-                        classify_keys=classify_keys,
-                        regressor=regressor,
-                        classifier=classifier,
-                        n_repeats=1,
-                        n_splits=1,
-                        verbose=False,
-                    )
-                    df_tot = df_tmp if df_tot is None else df_tot.merge(df_tmp, how='outer')
-
-                df_tot["combined_key"] = df_tot["x_key"] + "_" + df_tot["y_key"]
-                df_mean = df_tot.groupby("combined_key").mean()
-                df_std = df_tot.groupby("combined_key").std()
-
-                for row in df_mean.itertuples():
-                    for k, v in row._asdict().items():
-                        if isinstance(v, float) and numpy.isfinite(v):
-                            name = "kn/" + row.Index + "/" + k + "/mean"
-                            self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
-
-                for row in df_std.itertuples():
-                    for k, v in row._asdict().items():
-                        if isinstance(v, float) and numpy.isfinite(v):
-                            name = "kn/" + row.Index + "/" + k + "/std"
-                            self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
 
     def __update_temperatures__(self, output_t, output_s, ipr_t, ipr_s):
 
