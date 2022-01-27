@@ -8,11 +8,11 @@ model: dino
 data_dir: ./slide_seq_testis
 dataset: slide_seq_testis
 num_workers: -1
-max_time_minutes: 600
+max_time_minutes: 2000
 gradient_clip_algorithm: value
 gradient_clip_val: 0.0
 overfit_batches: 0
-initialization_type: scratch
+initialization_type: extend
 training: true
 logging: true
 precision: 32
@@ -42,7 +42,7 @@ max_weight_decay: 1.0E-6
 min_weight_decay: 1.0E-6
 warm_up_epochs: 20
 warm_down_epochs: 20000
-max_epochs: 1000
+max_epochs: 10000
 
 # temperature
 set_temperature_using_ipr_init: False  # if true temperature_init is disregarded, if false ipr_init is disregarded
