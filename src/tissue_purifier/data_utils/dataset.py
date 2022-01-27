@@ -435,6 +435,7 @@ class CropperDataset(Dataset):
                                                                  len(labels),
                                                                  len(metadatas))
         )
+        assert len(imgs) >= 1, "I can not create a dataset with less than 1 image."
 
         # check that all sparse_images have a _categories_to_code before putting them together into a dataset.
         if hasattr(imgs[0], '_categories_to_codes'):
