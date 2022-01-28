@@ -93,6 +93,7 @@ class BarlowModel(BenchmarkModel):
             ch_in=backbone_ch_out,
             ch_hidden=head_hidden_chs,
             ch_out=head_out_ch)
+        # Use bn to center and scale the feature across multiple-gpus
         self.bn_final = torch.nn.BatchNorm1d(head_out_ch, affine=False)
 
         # loss
@@ -295,8 +296,8 @@ class BarlowModel(BenchmarkModel):
             self.__log_example_images__(n_examples=10, n_cols=5, which_loaders="train")
 
     def forward(self, x) -> (torch.Tensor, torch.Tensor):
-        y = self.backbone(x).flatten(start_dim=1)
-        z = self.projection(y)
+        y = self.backbone(x).flatten(start_dim=1)  # shape (batch, ch, 1, 1) -> (batch, ch)
+        z = self.projection(y)  # shape: (batch, latent)
         return z, y
 
     def compute_features(self, x):
@@ -320,20 +321,18 @@ class BarlowModel(BenchmarkModel):
         z2, y2 = self(x2)
 
         # empirical cross-correlation matrix
-        # note that batchnorm are syncronized therefore mean and std are computed across all devices
-        corr = self.bn_final(z1).T @ self.bn_final(z2)
-        corr.div_(z1.shape[0])  # divide by batch size
-
-        # average the cross-correlation matrix between all gpus
-        corr_av = sync_ddp_if_available(corr, group=None, reduce_op='mean')
-        self.cross_corr = corr_av  # this is for logging
+        # note that batch-norm are syncronized therefore mean and std are computed across all devices
+        corr_tmp = self.bn_final(z1).T @ self.bn_final(z2)
         batch_size_per_gpu = z1.shape[0]
-        batch_size_total = self.all_gather(z1.shape[0], sync_grads=True).sum()
+        batch_size_total = self.all_gather(z1.shape[0], sync_grads=False).sum()
+        corr_sum = sync_ddp_if_available(corr_tmp, group=None, reduce_op='sum')  # sum across devices
+        corr = corr_sum / batch_size_total  # divide by total batch size
+        self.cross_corr = corr.detach()  # this is for logging
 
         # compute the loss
-        mask_diag = torch.eye(corr_av.shape[-1], dtype=torch.bool, device=corr_av.device)
-        on_diag = corr_av[mask_diag].add_(-1).pow_(2).sum()
-        off_diag = corr_av[~mask_diag].pow_(2).sum()
+        mask_diag = torch.eye(corr.shape[-1], dtype=torch.bool, device=corr.device)
+        on_diag = corr[mask_diag].add_(-1.0).pow_(2).sum()
+        off_diag = corr[~mask_diag].pow_(2).sum()
         loss = on_diag + self.lambda_off_diagonal * off_diag
 
         # Update the optimizer parameters and log stuff

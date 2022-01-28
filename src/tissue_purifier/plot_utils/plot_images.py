@@ -389,7 +389,7 @@ def show_corr_matrix(data: torch.Tensor, show_colorbar: bool = True, sup_title: 
                 ax=ax[1])
 
     if sup_title:
-        _ = fig.suptitle("Hello")
+        _ = fig.suptitle(sup_title)
     plt.close(fig)
     return fig
 
