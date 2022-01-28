@@ -48,7 +48,7 @@ max_epochs: 1000
 # dataset
 n_crops_for_tissue_test: 600
 n_crops_for_tissue_train: 600
-n_element_min_for_crop: 200
+n_element_min_for_crop: 100
 load_count_matrix: false
 n_neighbours_moran: 6
 pixel_size: 4.0
@@ -57,8 +57,8 @@ image_in_ch: 9
 # augmentations
 n_global_crops: 1
 n_local_crops: 1
-global_size: 64
-local_size: 64
+global_size: 96
+local_size: 96
 dropout_rates:
 - 0.1
 - 0.2

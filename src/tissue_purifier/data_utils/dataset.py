@@ -374,6 +374,10 @@ class CropperSparseTensor(CropperTensor):
         n_elements = (values * element_mask).sum(dim=-1)
         valid_patch = criterium_fn(n_elements)
         n_valid_patches = valid_patch.sum().item()
+        if n_valid_patches < n_crops:
+            # import warnings
+            # warnings.warn("Warning. Not enough valid crops found. Change the parameters. ")
+            print("Warning. Not enough valid crops found. Change the parameters.")
         n_max = min(n_crops, n_valid_patches)
 
         ix = x_corner[valid_patch, 0][: n_max]  # shape: n_max

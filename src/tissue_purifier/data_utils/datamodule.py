@@ -139,10 +139,10 @@ class DinoDM(pl.LightningDataModule):
         raise NotImplementedError
 
     def test_dataloader(self) -> List[DataLoaderWithLoad]:
-        return NotImplementedError
+        raise NotImplementedError
 
     def predict_dataloader(self) -> List[DataLoaderWithLoad]:
-        return NotImplementedError
+        raise NotImplementedError
 
 
 # class DinoDenseDM(DinoDM):
@@ -436,6 +436,8 @@ class DinoSparseDM(DinoDM):
             n_crops_for_tissue_train: The number of crops in each training epoch will be: n_tissue * n_crops
             batch_size_per_gpu: batch size FOR EACH GPUs.
         """
+        super(DinoSparseDM, self).__init__()
+        
         # params for overwriting the abstract property
         self._global_size = global_size
         self._local_size = local_size
@@ -456,7 +458,6 @@ class DinoSparseDM(DinoDM):
         self._batch_size_per_gpu = batch_size_per_gpu
         self.dataset_train = None
         self.dataset_test = None
-
 
     @classmethod
     def add_specific_args(cls, parent_parser) -> ArgumentParser:
@@ -635,19 +636,10 @@ class DinoSparseDM(DinoDM):
     def predict_dataloader(self) -> List[DataLoaderWithLoad]:
         return self.val_dataloader()
 
-    def prepare_data(self):
-        raise NotImplementedError
-
     def setup(self, stage: Optional[str] = None) -> None:
-        """ The train and test dataset should be specified here """
+        """ Must overwrite this function and redefine dataset_train, dataset_test """
         self.dataset_train = None
         self.dataset_test = None
-        raise NotImplementedError
-
-    def get_metadata_to_regress(self, metadata) -> Dict[str, float]:
-        raise NotImplementedError
-
-    def get_metadata_to_classify(self, metadata) -> Dict[str, int]:
         raise NotImplementedError
 
 
@@ -829,7 +821,7 @@ class SlideSeqTestisDM(DinoSparseDM):
             n_neighbours=self._n_neighbours_moran,
             neigh_correct=False)
 
-        super().__init__(**kargs)
+        super(SlideSeqTestisDM, self).__init__(**kargs)
         print("-----> running datamodule init")
 
     @classmethod
@@ -1017,7 +1009,7 @@ class SlideSeqTestisDM(DinoSparseDM):
                                                                        self.dataset_test.__len__()))
 
 
-class SlideSeqKidneyDM(DinoDM):
+class SlideSeqKidneyDM(DinoSparseDM):
     def __init__(self,
                  cohort: str = 'all',
                  data_dir: str = './slide_seq_kidney',
@@ -1046,7 +1038,7 @@ class SlideSeqKidneyDM(DinoDM):
         self.array_to_code = None
         self.array_to_species = None
         self.array_to_condition = None
-        super().__init__(**kargs)
+        super(SlideSeqKidneyDM, self).__init__(**kargs)
         print("-----> running datamodule init")
 
     @classmethod
@@ -1245,6 +1237,7 @@ class SlideSeqKidneyDM(DinoDM):
         print("saved the file", os.path.join(self._data_dir, "test_dataset.pt"))
 
     def setup(self, stage: Optional[str] = None) -> None:
+        raise NotImplementedError
         # these are things that run on each gpus.
         # Surprisingly, here model.device == cpu while later in dataloader model.device == cuda:0
         """ stage: either 'fit', 'validate', 'test', or 'predict' """
@@ -1261,6 +1254,7 @@ class SlideSeqKidneyDM(DinoDM):
         self.array_to_code = dict(zip(array_list, range(len(array_list))))
         self.array_to_species = dict(zip(array_list, species_list))
         self.array_to_condition = dict(zip(array_list, condition_list))
+
 
 
 class DinoSparseFolderDM(DinoSparseDM):
