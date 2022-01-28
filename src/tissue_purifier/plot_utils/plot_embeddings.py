@@ -17,10 +17,10 @@ def _plot_single_embeddings(
         cmap_colors: "matplotlib.colors.ListedColormap" = plt.cm.inferno,
         cmap_labels: "matplotlib.colors.ListedColormap" = plt.cm.tab20):
     if colors is not None and labels is None:
-        scatter_plot = ax.scatter(embeddings[:, 0], embeddings[:, 1], c=colors, cmap=cmap_colors, s=size)
-        _ = plt.colorbar(scatter_plot, ax=ax)
         _ = ax.set_xlim(emit=False, auto=True)
         _ = ax.set_ylim(emit=False, auto=True)
+        scatter_plot = ax.scatter(embeddings[:, 0], embeddings[:, 1], c=colors, cmap=cmap_colors, s=size)
+        _ = plt.colorbar(scatter_plot, ax=ax)
     elif colors is None and labels is not None:
         unique_labels = numpy.unique(labels)
         colors_tmp = numpy.array(cmap_labels.colors)[:, :3]
@@ -29,9 +29,9 @@ def _plot_single_embeddings(
 
         for n, l in enumerate(unique_labels):
             mask = (labels == l)
-            _ = ax.scatter(embeddings[mask, 0], embeddings[mask, 1], color=discrete_colors[n], label=l, s=size)
             _ = ax.set_xlim(emit=False, auto=True)
             _ = ax.set_ylim(emit=False, auto=True)
+            _ = ax.scatter(embeddings[mask, 0], embeddings[mask, 1], color=discrete_colors[n], label=l, s=size)
         if len(unique_labels) < 15:
             _ = ax.legend()
     else:
