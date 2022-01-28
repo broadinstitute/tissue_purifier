@@ -10,6 +10,7 @@ from torchvision.transforms.functional import to_pil_image
 from torchvision.utils import make_grid
 from torchvision.transforms import CenterCrop as trsfm_center_crop
 from torchvision.transforms import Compose as trsfm_compose
+import seaborn as sns
 
 
 def _get_color_tensor(_cmap, _ch):
@@ -364,7 +365,36 @@ def show_raw_all_channels(
 
 
 def show_corr_matrix(data: torch.Tensor, show_colorbar: bool = True, sup_title: str = None):
-    data_np = data.detach().cpu().numpy()
+    data = data.detach().cpu().clone()
+    data_subtracted = data - torch.eye(data.shape[0])
+
+    fig, ax = plt.subplots(ncols=2, figsize=(12, 4))
+    sns.heatmap(data=data,
+                square=True,
+                xticklabels=False,
+                yticklabels=False,
+                center=0.0,
+                vmin=-1.0,
+                vmax=1.0,
+                cbar=show_colorbar,
+                ax=ax[0])
+
+    sns.heatmap(data=data_subtracted,
+                square=True,
+                xticklabels=False,
+                yticklabels=False,
+                center=0.0,
+                robust=True,
+                cbar=show_colorbar,
+                ax=ax[1])
+
+    if sup_title:
+        _ = fig.suptitle("Hello")
+    plt.close(fig)
+    return fig
+
+
+
 
     fig, axes = plt.subplots(ncols=2, figsize=(12, 4))
 

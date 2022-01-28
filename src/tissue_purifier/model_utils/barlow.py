@@ -285,8 +285,10 @@ class BarlowModel(BenchmarkModel):
 
     def on_validation_epoch_start(self) -> None:
         if self.global_rank == 0 and self.cross_corr is not None:
-            fig_corr_matrix = show_corr_matrix(self.cross_corr, sup_title="epoch {0}".format(self.current_epoch))
-            self.logger.run["corr_matrix"].log(File.as_image(fig_corr_matrix))
+            corr_matrix_plot = show_corr_matrix(data=self.cross_corr.detach().clone(),
+                                                show_colorbar=True,
+                                                sup_title="epoch {0}".format(self.current_epoch))
+            self.logger.run["corr_matrix"].log(File.as_image(corr_matrix_plot))
 
     def on_train_start(self) -> None:
         if self.global_rank == 0:
