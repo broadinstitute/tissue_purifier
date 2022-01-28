@@ -18,7 +18,9 @@ def _plot_single_embeddings(
         cmap_labels: "matplotlib.colors.ListedColormap" = plt.cm.tab20):
     if colors is not None and labels is None:
         scatter_plot = ax.scatter(embeddings[:, 0], embeddings[:, 1], c=colors, cmap=cmap_colors, s=size)
-        plt.colorbar(scatter_plot, ax=ax)
+        _ = plt.colorbar(scatter_plot, ax=ax)
+        _ = ax.set_xlim(emit=False, auto=True)
+        _ = ax.set_ylim(emit=False, auto=True)
     elif colors is None and labels is not None:
         unique_labels = numpy.unique(labels)
         colors_tmp = numpy.array(cmap_labels.colors)[:, :3]
@@ -27,18 +29,20 @@ def _plot_single_embeddings(
 
         for n, l in enumerate(unique_labels):
             mask = (labels == l)
-            ax.scatter(embeddings[mask, 0], embeddings[mask, 1], color=discrete_colors[n], label=l, s=size)
+            _ = ax.scatter(embeddings[mask, 0], embeddings[mask, 1], color=discrete_colors[n], label=l, s=size)
+            _ = ax.set_xlim(emit=False, auto=True)
+            _ = ax.set_ylim(emit=False, auto=True)
         if len(unique_labels) < 15:
-            ax.legend()
+            _ = ax.legend()
     else:
         raise Exception("Exactly one among labels and colors need to be specified.")
 
     if title:
-        ax.set_title(title)
+        _ = ax.set_title(title)
     if x_label:
-        ax.set_xlabel(x_label)
+        _ = ax.set_xlabel(x_label)
     if y_label:
-        ax.set_ylabel(y_label)
+        _ = ax.set_ylabel(y_label)
 
 
 def plot_embeddings(
@@ -135,6 +139,6 @@ def plot_embeddings(
                 cmap_labels=None)
 
     if sup_title:
-        fig.suptitle(sup_title)
+        _ = fig.suptitle(sup_title)
     plt.close(fig)
     return fig

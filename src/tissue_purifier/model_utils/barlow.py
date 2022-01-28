@@ -5,7 +5,6 @@ from argparse import ArgumentParser
 import torchvision
 from pytorch_lightning.utilities.distributed import sync_ddp_if_available
 
-
 from neptune.new.types import File
 from tissue_purifier.model_utils.benckmark_model import BenchmarkModel
 from tissue_purifier.data_utils.dataset import MetadataCropperDataset
@@ -325,7 +324,7 @@ class BarlowModel(BenchmarkModel):
         # note that batch-norm are syncronized therefore mean and std are computed across all devices
         corr_tmp = self.bn_final(z1).T @ self.bn_final(z2)
         batch_size_per_gpu = z1.shape[0]
-        batch_size_total = self.all_gather(z1.shape[0], sync_grads=False).sum()
+        batch_size_total = sync_ddp_if_available(z1.shape[0], group=None, reduce_op='sum')
         corr_sum = sync_ddp_if_available(corr_tmp, group=None, reduce_op='sum')  # sum across devices
         corr = corr_sum / batch_size_total  # divide by total batch size
         self.cross_corr = corr.detach()  # this is for logging
