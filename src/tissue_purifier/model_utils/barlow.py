@@ -9,7 +9,8 @@ from pytorch_lightning.utilities.distributed import sync_ddp_if_available
 from neptune.new.types import File
 from tissue_purifier.model_utils.benckmark_model import BenchmarkModel
 from tissue_purifier.data_utils.dataset import MetadataCropperDataset
-from tissue_purifier.plot_utils.plot_images import show_raw_all_channels, show_corr_matrix
+from tissue_purifier.plot_utils.plot_images import show_raw_all_channels
+from tissue_purifier.plot_utils.plot_misc import show_corr_matrix
 from tissue_purifier.misc_utils.misc import LARS
 from tissue_purifier.misc_utils.dict_util import concatenate_list_of_dict
 from tissue_purifier.misc_utils.misc import (
