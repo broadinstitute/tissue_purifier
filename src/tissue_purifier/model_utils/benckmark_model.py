@@ -165,7 +165,7 @@ class BenchmarkModel(LightningModule):
                                        n_components=2, min_dist=0.5, metric='euclidean')
 
                 embedding_keys = []
-                annotation_keys, titles = [], []
+                annotation_keys = []
                 all_keys = list(world_dict.keys())
                 for k in all_keys:
                     if k.startswith("feature"):
@@ -178,23 +178,19 @@ class BenchmarkModel(LightningModule):
                         world_dict['umap_' + k] = embeddings_umap
                     elif k.startswith("regress") or k.startswith("classify"):
                         annotation_keys.append(k)
-                        titles.append("{0} -> Epoch={1}".format(k, self.current_epoch))
 
-                all_figs = []
+                all_files = []
                 for embedding_key in embedding_keys:
                     fig_tmp = plot_embeddings(
-                        world_dict,
+                        input_dictionary=world_dict,
                         embedding_key=embedding_key,
                         annotation_keys=annotation_keys,
-                        x_label="UMAP1",
-                        y_label="UMAP2",
-                        titles=titles,
                         n_col=2,
                     )
-                    all_figs.append(fig_tmp)
+                    all_files.append(File.as_image(fig_tmp))
 
-                for fig_tmp, key_tmp in zip(all_figs, embedding_keys):
-                    self.logger.run["maps/" + key_tmp].log(File.as_image(fig_tmp))
+                for file_tmp, key_tmp in zip(all_files, embedding_keys):
+                    self.logger.run["maps/" + key_tmp].log(file_tmp)
                 # print("printed the embeddings")
 
                 # knn classification/regression
