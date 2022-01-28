@@ -237,7 +237,7 @@ class CropperDenseTensor(CropperTensor):
 
 
 class CropperSparseTensor(CropperTensor):
-    SAFETY_FACTOR = 3
+    SAFETY_FACTOR = 5
 
     def __init__(self,
                  n_element_min: int = 100,
@@ -377,7 +377,8 @@ class CropperSparseTensor(CropperTensor):
         if n_valid_patches < n_crops:
             # import warnings
             # warnings.warn("Warning. Not enough valid crops found. Change the parameters. ")
-            print("Warning. Not enough valid crops found. Change the parameters.")
+            print("Warning. Only {0} valid crops found when requested {1}. \
+            Change the parameters.".format(n_valid_patches, n_crops))
         n_max = min(n_crops, n_valid_patches)
 
         ix = x_corner[valid_patch, 0][: n_max]  # shape: n_max
