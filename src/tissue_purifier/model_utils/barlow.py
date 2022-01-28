@@ -3,6 +3,8 @@ from typing import Sequence, List, Any, Dict
 import torch
 from argparse import ArgumentParser
 import torchvision
+from pytorch_lightning.utilities.distributed import sync_ddp_if_available
+
 
 from neptune.new.types import File
 from tissue_purifier.model_utils.benckmark_model import BenchmarkModel
@@ -91,6 +93,7 @@ class BarlowModel(BenchmarkModel):
             ch_in=backbone_ch_out,
             ch_hidden=head_hidden_chs,
             ch_out=head_out_ch)
+        self.bn_final = torch.nn.BatchNorm1d(head_out_ch, affine=False)
 
         # loss
         self.lambda_off_diagonal = lambda_off_diagonal
@@ -307,24 +310,29 @@ class BarlowModel(BenchmarkModel):
         # this is data augmentation
         with torch.no_grad():
             list_imgs, list_labels, list_metadata = batch
-            x_a = self.trsfm_train_global(list_imgs)
-            x_b = self.trsfm_train_local(list_imgs)
+            x1 = self.trsfm_train_global(list_imgs)
+            x2 = self.trsfm_train_local(list_imgs)
 
         # forward is inside the no-grad context
-        z_a, y_a = self(x_a)
-        z_b, y_b = self(x_b)
-        world_z_a, world_z_b = self.all_gather([z_a, z_b])
-        world_z_a_flatten = world_z_a.flatten(end_dim=-2)
-        world_z_b_flatten = world_z_b.flatten(end_dim=-2)
-        batch_size_per_gpu = z_a.shape[0]
-        batch_size_total = world_z_a_flatten.shape[0]
+        z1, y1 = self(x1)
+        z2, y2 = self(x2)
 
-        loss, cross_corr = barlow_loss(
-            z_a=world_z_a_flatten,
-            z_b=world_z_b_flatten,
-            lambda_param=self.lambda_off_diagonal,
-            eps=1e-5)
-        self.cross_corr = cross_corr
+        # empirical cross-correlation matrix
+        # note that batchnorm are syncronized therefore mean and std are computed across all devices
+        corr = self.bn_final(z1).T @ self.bn_final(z2)
+        corr.div_(z1.shape[0])  # divide by batch size
+
+        # average the cross-correlation matrix between all gpus
+        # world_corr = self.all_gather(corr, sync_grads=True)
+        corr_av = sync_ddp_if_available(corr, group=None, reduce_op='mean')
+        batch_size_per_gpu = z1.shape[0]
+        # batch_size_total = XXX
+
+        # compute the loss
+        mask_diag = torch.eye(corr_av.shape[-1], dtype=torch.bool, device=corr_av.device)
+        on_diag = corr_av[mask_diag].add_(-1).pow_(2).sum()
+        off_diag = corr_av[~mask_diag].pow_(2).sum()
+        loss = on_diag + self.lambda_off_diagonal * off_diag
 
         # Update the optimizer parameters and log stuff
         with torch.no_grad():
@@ -343,7 +351,7 @@ class BarlowModel(BenchmarkModel):
             self.log('weight_decay', wd, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
             self.log('learning_rate', lr, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
             self.log('batch_size_per_gpu_train', batch_size_per_gpu, on_step=False, on_epoch=True, rank_zero_only=True)
-            self.log('batch_size_total_train', batch_size_total, on_step=False, on_epoch=True, rank_zero_only=True)
+            # self.log('batch_size_total_train', batch_size_total, on_step=False, on_epoch=True, rank_zero_only=True)
 
         return loss
 
