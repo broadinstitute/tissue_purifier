@@ -277,3 +277,33 @@ def plot_multiple_barplots(
     fig.tight_layout()
     plt.close(fig)
     return fig
+
+
+def show_corr_matrix(data: torch.Tensor, show_colorbar: bool = True, sup_title: str = None):
+    data = data.detach().cpu().clone()
+    data_subtracted = data - torch.eye(data.shape[0])
+
+    fig, ax = plt.subplots(ncols=2, figsize=(12, 4))
+    seaborn.heatmap(data=data,
+                    square=True,
+                    xticklabels=False,
+                    yticklabels=False,
+                    center=0.0,
+                    vmin=-1.0,
+                    vmax=1.0,
+                    cbar=show_colorbar,
+                    ax=ax[0])
+
+    seaborn.heatmap(data=data_subtracted,
+                    square=True,
+                    xticklabels=False,
+                    yticklabels=False,
+                    center=0.0,
+                    robust=True,
+                    cbar=show_colorbar,
+                    ax=ax[1])
+
+    if sup_title:
+        _ = fig.suptitle(sup_title)
+    plt.close(fig)
+    return fig
