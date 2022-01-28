@@ -323,11 +323,10 @@ class BarlowModel(BenchmarkModel):
         corr.div_(z1.shape[0])  # divide by batch size
 
         # average the cross-correlation matrix between all gpus
-        # world_corr = self.all_gather(corr, sync_grads=True)
         corr_av = sync_ddp_if_available(corr, group=None, reduce_op='mean')
         self.cross_corr = corr_av  # this is for logging
         batch_size_per_gpu = z1.shape[0]
-        # batch_size_total = XXX
+        batch_size_total = self.all_gather(z1.shape[0], sync_grads=True).sum()
 
         # compute the loss
         mask_diag = torch.eye(corr_av.shape[-1], dtype=torch.bool, device=corr_av.device)
@@ -352,7 +351,7 @@ class BarlowModel(BenchmarkModel):
             self.log('weight_decay', wd, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
             self.log('learning_rate', lr, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
             self.log('batch_size_per_gpu_train', batch_size_per_gpu, on_step=False, on_epoch=True, rank_zero_only=True)
-            # self.log('batch_size_total_train', batch_size_total, on_step=False, on_epoch=True, rank_zero_only=True)
+            self.log('batch_size_total_train', batch_size_total, on_step=False, on_epoch=True, rank_zero_only=True)
 
         return loss
 
