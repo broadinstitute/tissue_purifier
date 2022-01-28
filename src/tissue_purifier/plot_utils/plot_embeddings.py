@@ -19,21 +19,36 @@ def plot_embeddings(
 
     Args:
         input_dictionary: dictionary with input data
-        embedding_key: str corresponding to the embeddings to use
+        embedding_key: str corresponding to the embeddings in input_dictionary
+        annotation_keys: List[str] corresponding to annotations in input_dictionary
+
     """
 
-    def _is_categorical(_x):
-        is_float = (_x.dtype == numpy.single or _x.dtype == numpy.float or _x.dtype == numpy.double)
-        is_many = (_x.shape[0] > 100)
-        is_continuous = is_many and is_float
-        return ~is_continuous
+    assert set(annotation_keys + [embedding_key]).issubset(input_dictionary.keys()), \
+        "Either embeddings or annotation keys are missing from the input dictionary"
+
+    def _is_categorical(_x) -> bool:
+        is_float = (
+                isinstance(_x[0], float) or
+                isinstance(_x[0], numpy.float16) or
+                isinstance(_x[0], numpy.float32) or
+                isinstance(_x[0], numpy.float64)
+        )
+        is_many = (_x.shape[0] > 30)
+        is_continuous = (is_many and is_float)
+        is_categorical = not is_continuous
+        print(_x)
+        print(_x.shape, _x.dtype, is_float, is_many, is_continuous, is_categorical)
+        return is_categorical
 
     # make a copy of the dict with the torch to numpy conversion
     cloned_dict = {}
     for k, v in input_dictionary.items():
         if isinstance(v, torch.Tensor):
             cloned_dict[k] = v.detach().cpu().numpy()
-        else:
+        elif isinstance(v, list):
+            cloned_dict[k] = numpy.array(v)
+        elif isinstance(v, numpy.ndarray):
             cloned_dict[k] = v
 
     # create dataframe with annotations
@@ -41,7 +56,10 @@ def plot_embeddings(
     for k in annotation_keys:
         vec = numpy.unique(df[k].to_numpy())
         if _is_categorical(vec):
+            print(k, "is categorical")
             df[k] = df[k].astype("category")
+
+    assert 1==2
 
     # create anndata with annotations and embeddings
     adata = AnnData(obs=df)

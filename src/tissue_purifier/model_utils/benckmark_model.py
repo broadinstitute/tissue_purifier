@@ -164,6 +164,7 @@ class BenchmarkModel(LightningModule):
                 smart_umap = SmartUmap(n_neighbors=25, preprocess_strategy='raw',
                                        n_components=2, min_dist=0.5, metric='euclidean')
 
+                print("starting with embeddings")
                 embedding_keys = []
                 annotation_keys = []
                 all_keys = list(world_dict.keys())
@@ -178,7 +179,9 @@ class BenchmarkModel(LightningModule):
                         world_dict['umap_' + k] = embeddings_umap
                     elif k.startswith("regress") or k.startswith("classify"):
                         annotation_keys.append(k)
+                print("done with embeddings")
 
+                print("starting to make umaps")
                 all_files = []
                 for embedding_key in embedding_keys:
                     fig_tmp = plot_embeddings(
@@ -188,6 +191,7 @@ class BenchmarkModel(LightningModule):
                         n_col=2,
                     )
                     all_files.append(File.as_image(fig_tmp))
+                print("done making umaps")
 
                 print("starting to log the umaps")
                 for file_tmp, key_tmp in zip(all_files, embedding_keys):
