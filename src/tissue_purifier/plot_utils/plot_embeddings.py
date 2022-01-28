@@ -14,6 +14,13 @@ def plot_embeddings(
         sup_title: str = None,
         n_col: int = 3,
         cmap: Colormap = None) -> "matplotlib.pyplot.figure":
+    """
+    Takes a dictionary with embeddings and annotations and make some nice plots
+
+    Args:
+        input_dictionary: dictionary with input data
+        embedding_key: str corresponding to the embeddings to use
+    """
 
     def _is_categorical(_x):
         is_float = (_x.dtype == numpy.single or _x.dtype == numpy.float or _x.dtype == numpy.double)
@@ -38,7 +45,7 @@ def plot_embeddings(
 
     # create anndata with annotations and embeddings
     adata = AnnData(obs=df)
-    adata.obsm[embedding_key] = input_dictionary[embedding_key]
+    adata.obsm[embedding_key] = cloned_dict[embedding_key]
 
     # leverage anndata embedding capabilities
     fig = embedding(adata,
