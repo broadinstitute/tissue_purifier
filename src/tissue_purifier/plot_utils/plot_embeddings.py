@@ -21,19 +21,26 @@ def plot_embeddings(
         is_continuous = is_many and is_float
         return ~is_continuous
 
+    # make a copy of the dict with the torch to numpy conversion
+    cloned_dict = {}
     for k, v in input_dictionary.items():
         if isinstance(v, torch.Tensor):
-            input_dictionary[k] = v.detach().cpu().numpy()
+            cloned_dict[k] = v.detach().cpu().numpy()
+        else:
+            cloned_dict[k] = v
 
-    df = pd.DataFrame(input_dictionary, columns=annotation_keys)
+    # create dataframe with annotations
+    df = pd.DataFrame(cloned_dict, columns=annotation_keys)
     for k in annotation_keys:
         vec = numpy.unique(df[k].to_numpy())
         if _is_categorical(vec):
             df[k] = df[k].astype("category")
 
+    # create anndata with annotations and embeddings
     adata = AnnData(obs=df)
     adata.obsm[embedding_key] = input_dictionary[embedding_key]
 
+    # leverage anndata embedding capabilities
     fig = embedding(adata,
                     basis=embedding_key,
                     color=annotation_keys,

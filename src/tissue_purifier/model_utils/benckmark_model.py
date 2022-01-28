@@ -189,9 +189,10 @@ class BenchmarkModel(LightningModule):
                     )
                     all_files.append(File.as_image(fig_tmp))
 
+                print("starting to log the umaps")
                 for file_tmp, key_tmp in zip(all_files, embedding_keys):
                     self.logger.run["maps/" + key_tmp].log(file_tmp)
-                # print("printed the embeddings")
+                print("printed the embeddings")
 
                 # knn classification/regression
                 df_mean_knn, df_std_knn = knn_classification(world_dict, self.val_iomin_threshold)
