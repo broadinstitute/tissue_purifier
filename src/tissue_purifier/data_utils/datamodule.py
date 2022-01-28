@@ -477,7 +477,7 @@ class DinoSparseDM(DinoDM):
                             help="minimum number of beads/cell in a crop")
         parser.add_argument("--dropout_rates", type=float, nargs='*', default=[0.1, 0.2, 0.3],
                             help="Possible values of the dropout. Should be > 0.0")
-        parser.add_argument("--rasterize_sigma", type=float, nargs='*', default=[0.5, 1.0, 1.5, 2.0],
+        parser.add_argument("--rasterize_sigmas", type=float, nargs='*', default=[0.5, 1.0, 1.5, 2.0],
                             help="Possible values of the sigma of the gaussian kernel used for rasterization")
         parser.add_argument("--occlusion_fraction", type=float, nargs=2, default=[0.1, 0.3],
                             help="Fraction of the sample which is occluded is drawn uniformly between these values.")
