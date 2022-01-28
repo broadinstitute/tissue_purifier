@@ -2,6 +2,7 @@ from anndata import AnnData
 import pandas as pd
 from scanpy.plotting import embedding
 import numpy
+import torch
 from matplotlib.colors import Colormap
 from typing import List
 
@@ -14,11 +15,15 @@ def plot_embeddings(
         n_col: int = 3,
         cmap: Colormap = None) -> "matplotlib.pyplot.figure":
 
-    def _is_categorical(x_np):
-        is_float = (x_np.dtype == numpy.single or x_np.dtype == numpy.float or x_np.dtype == numpy.double)
-        is_many = (x_np.shape[0] > 100)
-        is_continuous = is_many * is_float
+    def _is_categorical(_x):
+        is_float = (_x.dtype == numpy.single or _x.dtype == numpy.float or _x.dtype == numpy.double)
+        is_many = (_x.shape[0] > 100)
+        is_continuous = is_many and is_float
         return ~is_continuous
+
+    for k, v in input_dictionary.items():
+        if isinstance(v, torch.Tensor):
+            input_dictionary[k] = v.detach().cpu().numpy()
 
     df = pd.DataFrame(input_dictionary, columns=annotation_keys)
     for k in annotation_keys:
