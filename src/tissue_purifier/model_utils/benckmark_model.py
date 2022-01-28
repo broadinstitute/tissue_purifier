@@ -199,7 +199,7 @@ class BenchmarkModel(LightningModule):
 
                 # knn classification/regression
                 df_mean_knn, df_std_knn = knn_classification(world_dict, self.val_iomin_threshold)
-                print("df_mean_knn ->", df_mean_knn)
+                # print("df_mean_knn ->", df_mean_knn)
 
                 for row in df_mean_knn.itertuples():
                     for k, v in row._asdict().items():
@@ -215,7 +215,7 @@ class BenchmarkModel(LightningModule):
 
                 # linear classification/regression
                 df_mean_linear, df_std_linear = linear_classification(world_dict)
-                print("df_mean_linear ->", df_mean_linear)
+                # print("df_mean_linear ->", df_mean_linear)
 
                 for row in df_mean_linear.itertuples():
                     for k, v in row._asdict().items():

@@ -325,6 +325,7 @@ class BarlowModel(BenchmarkModel):
         # average the cross-correlation matrix between all gpus
         # world_corr = self.all_gather(corr, sync_grads=True)
         corr_av = sync_ddp_if_available(corr, group=None, reduce_op='mean')
+        self.cross_corr = corr_av  # this is for logging
         batch_size_per_gpu = z1.shape[0]
         # batch_size_total = XXX
 
