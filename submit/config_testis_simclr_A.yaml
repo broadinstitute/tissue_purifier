@@ -2,8 +2,8 @@
 random_seed: 11
 neptune_project: cellarium/tissue-purifier
 batch_size_per_gpu: 64
-check_val_every_n_epoch: 10
-checkpoint_interval_minutes: 5
+check_val_every_n_epoch: 1
+checkpoint_interval_minutes: 25
 model: simclr
 data_dir: ./slide_seq_testis
 dataset: slide_seq_testis
