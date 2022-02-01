@@ -2,7 +2,7 @@
 random_seed: 11
 neptune_project: cellarium/tissue-purifier
 batch_size_per_gpu: 64
-check_val_every_n_epoch: 1
+check_val_every_n_epoch: 20
 checkpoint_interval_minutes: 25
 model: barlow
 data_dir: ./slide_seq_testis

@@ -494,7 +494,7 @@ class VaeModel(BenchmarkModelMixin):
         # The real value will be set by the scheduler
         regularized = []
         not_regularized = []
-        for name, param in self.student.named_parameters():
+        for name, param in self.vae.named_parameters():
             if not param.requires_grad:
                 continue
             # we do not regularize biases nor Norm parameters
