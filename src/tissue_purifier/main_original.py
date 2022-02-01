@@ -11,11 +11,19 @@ from pytorch_lightning.trainer import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 from tissue_purifier.misc_utils.misc import smart_bool
+from tissue_purifier.model_utils.logger import NeptuneLoggerCkpt
+
 from tissue_purifier.model_utils.barlow import BarlowModel
 from tissue_purifier.model_utils.dino import DinoModel
 from tissue_purifier.model_utils.vae import VaeModel
-from tissue_purifier.data_utils.datamodule import DinoDM, SlideSeqTestisDM, SlideSeqKidneyDM, DummyDM
-from tissue_purifier.model_utils.logger import NeptuneLoggerCkpt
+from tissue_purifier.model_utils.simclr import SimclrModel
+
+from tissue_purifier.data_utils.datamodule import (
+    DinoDM,
+    SlideSeqTestisDM,
+    SlideSeqKidneyDM,
+    DummyDM
+)
 
 
 def initialization(
@@ -51,30 +59,28 @@ def initialization(
     else:
         ckpt_file_for_trainer = None
 
+    # Ridefine the model
+    if args_dict["model"] == "barlow":
+        PlModel = BarlowModel
+    elif args_dict["model"] == "dino":
+        PlModel = DinoModel
+    elif args_dict["model"] == "vae":
+        PlModel = VaeModel
+    elif args_dict["model"] == "simclr":
+        PlModel = SimclrModel
+    else:
+        raise Exception("Invalid model value. Received {0}".format(args_dict["model"]))
+
+
     if initialization_type in {'resume'}:
-        # use ckpt_file only
-        if args_dict["model"] == "barlow":
-            pl_model = BarlowModel.load_from_checkpoint(checkpoint_path=ckpt_file)
-        elif args_dict["model"] == "dino":
-            pl_model = DinoModel.load_from_checkpoint(checkpoint_path=ckpt_file)
-        elif args_dict["model"] == "vae":
-            pl_model = VaeModel.load_from_checkpoint(checkpoint_path=ckpt_file)
-        else:
-            raise Exception("Invalid model value. Received {0}".format(args_dict["model"]))
+        pl_model = PlModel.load_from_checkpoint(checkpoint_path=ckpt_file)
         # TODO: I am having trouble using the same run_id
         neptune_run_id = None  # pl_model.neptune_run_id
         new_dict = pl_model.__dict__['_hparams'].copy()
 
     elif initialization_type in {'predict_only'}:
         # use ckpt_file only but overwrite stuff relative to the duration of the training
-        if args_dict["model"] == "barlow":
-            pl_model = BarlowModel.load_from_checkpoint(checkpoint_path=ckpt_file)
-        elif args_dict["model"] == "dino":
-            pl_model = DinoModel.load_from_checkpoint(checkpoint_path=ckpt_file)
-        elif args_dict["model"] == "vae":
-            pl_model = VaeModel.load_from_checkpoint(checkpoint_path=ckpt_file)
-        else:
-            raise Exception("Invalid model value. Received {0}".format(args_dict["model"]))
+        pl_model = PlModel.load_from_checkpoint(checkpoint_path=ckpt_file)
         # TODO: I am having trouble using the same run_id
         neptune_run_id = None  # pl_model.neptune_run_id
         new_dict = pl_model.__dict__['_hparams'].copy()
@@ -82,14 +88,7 @@ def initialization(
 
     elif initialization_type in {'extend'}:
         # use ckpt_file only but overwrite stuff relative to the duration of the training
-        if args_dict["model"] == "barlow":
-            pl_model = BarlowModel.load_from_checkpoint(checkpoint_path=ckpt_file)
-        elif args_dict["model"] == "dino":
-            pl_model = DinoModel.load_from_checkpoint(checkpoint_path=ckpt_file)
-        elif args_dict["model"] == "vae":
-            pl_model = VaeModel.load_from_checkpoint(checkpoint_path=ckpt_file)
-        else:
-            raise Exception("Invalid model value. Received {0}".format(args_dict["model"]))
+        pl_model = PlModel.load_from_checkpoint(checkpoint_path=ckpt_file)
         # TODO: I am having trouble using the same run_id
         neptune_run_id = None  # pl_model.neptune_run_id
         new_dict = pl_model.__dict__['_hparams'].copy()
@@ -99,27 +98,13 @@ def initialization(
 
     elif initialization_type in {'scratch'}:
         # use args only
-        if args_dict["model"] == "barlow":
-            pl_model = BarlowModel(**args_dict)
-        elif args_dict["model"] == "dino":
-            pl_model = DinoModel(**args_dict)
-        elif args_dict["model"] == "vae":
-            pl_model = VaeModel(**args_dict)
-        else:
-            raise Exception("Invalid model value. Received {0}".format(args_dict["model"]))
+        pl_model = PlModel(**args_dict)
         neptune_run_id = None
         new_dict = args_dict.copy()
 
     elif initialization_type in {'pretraining'}:
         # use checkpoint but overwrite
-        if args_dict["model"] == "dino":
-            pl_model = BarlowModel.load_from_checkpoint(checkpoint_path=ckpt_file, **args_dict)
-        elif args_dict["model"] == "dino":
-            pl_model = DinoModel.load_from_checkpoint(checkpoint_path=ckpt_file, **args_dict)
-        elif args_dict["model"] == "vae":
-            pl_model = VaeModel.load_from_checkpoint(checkpoint_path=ckpt_file, **args_dict)
-        else:
-            raise Exception("Invalid model value. Received {0}".format(args_dict["model"]))
+        pl_model = PlModel.load_from_checkpoint(checkpoint_path=ckpt_file, **args_dict)
         neptune_run_id = None
         new_dict = args_dict.copy()
 
@@ -392,7 +377,7 @@ def parse_args(argv: List[str]) -> dict:
     parser.add_argument("--deterministic", type=smart_bool, default=False, help="Deterministic operation in CUDA?")
 
     # select the model and dataset
-    parser.add_argument("--model", default="barlow", type=str, choices=["barlow", "dino", "vae"],
+    parser.add_argument("--model", default="barlow", type=str, choices=["barlow", "dino", "vae", "simclr"],
                         help="methodology for representation learning")
     parser.add_argument("--dataset", default="slide_seq_testis", type=str,
                         choices=["slide_seq_testis", "slide_seq_kidney", "dummy_dm"],
@@ -422,6 +407,8 @@ def parse_args(argv: List[str]) -> dict:
         parser = DinoModel.add_specific_args(parser)
     elif args.model == 'vae':
         parser = VaeModel.add_specific_args(parser)
+    elif args.model == 'simclr':
+        parser = SimclrModel.add_specific_args(parser)
     else:
         raise Exception("Invalid model {0}".format(args.model))
 

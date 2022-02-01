@@ -251,7 +251,7 @@ class CropperSparseTensor(CropperTensor):
         self.n_element_min = n_element_min
 
         def criterium_fn(n_elements):
-            return n_elements > n_element_min
+            return n_elements >= n_element_min
 
         super().__init__(criterium_fn=criterium_fn,
                          **kargs)

@@ -13,7 +13,7 @@ def plot_embeddings(
         annotation_keys: List[str],
         sup_title: str = None,
         n_col: int = 3,
-        cmap: Colormap = None) -> "matplotlib.pyplot.figure":
+        cmap: Colormap = 'inferno') -> "matplotlib.pyplot.figure":
     """
     Takes a dictionary with embeddings and annotations and make some nice plots
 
@@ -21,7 +21,9 @@ def plot_embeddings(
         input_dictionary: dictionary with input data
         embedding_key: str corresponding to the embeddings in input_dictionary
         annotation_keys: List[str] corresponding to annotations in input_dictionary
-
+        sup_title:
+        n_col:
+        cmap:
     """
 
     assert set(annotation_keys + [embedding_key]).issubset(input_dictionary.keys()), \
@@ -37,8 +39,6 @@ def plot_embeddings(
         is_many = (_x.shape[0] > 30)
         is_continuous = (is_many and is_float)
         is_categorical = not is_continuous
-        print(_x)
-        print(_x.shape, _x.dtype, is_float, is_many, is_continuous, is_categorical)
         return is_categorical
 
     # make a copy of the dict with the torch to numpy conversion
@@ -56,7 +56,6 @@ def plot_embeddings(
     for k in annotation_keys:
         vec = numpy.unique(df[k].to_numpy())
         if _is_categorical(vec):
-            print(k, "is categorical")
             df[k] = df[k].astype("category")
 
     # create anndata with annotations and embeddings

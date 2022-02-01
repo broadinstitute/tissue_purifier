@@ -646,11 +646,24 @@ class DinoSparseDM(DinoDM):
 class DummyDM(DinoSparseDM):
     def __init__(self, **kargs):
         """ All inputs are neglected and the default values are applied. """
-        super().__init__()
         print("-----> running datamodule init")
 
+        configs_for_transforms = {
+            'batch_size_per_gpu': 10,
+            'n_crops_for_tissue_test': 10,
+            'n_crops_for_tissue_train': 10,
+            'n_element_min_for_crop': 1,
+            'global_size': 64,
+            'global_scale': (0.75, 1.0),
+            'local_size': 32,
+            'local_scale': (0.5, 0.75)
+        }
+        for k,v in configs_for_transforms.items():
+            kargs[k] = v
+
+        super(DummyDM, self).__init__(**kargs)
+
         self._data_dir = "./dummy_data"
-        self._batch_size_per_gpu = 10
         self._num_workers = 1
         self._gpus = torch.cuda.device_count()
         self._load_count_matrix = False
@@ -664,9 +677,6 @@ class DummyDM(DinoSparseDM):
             neigh_correct=False)
         self.dataset_train = None
         self.dataset_test = None
-
-        _ = kargs.pop("n_element_min_for_crop", None)
-        super().__init__(n_element_min_for_crop=20, **kargs)
 
     @classmethod
     def add_specific_args(cls, parent_parser) -> ArgumentParser:
@@ -721,12 +731,12 @@ class DummyDM(DinoSparseDM):
         import numpy
         from anndata import AnnData
 
-        n_tissues, n_beads = 5, 1000
+        n_tissues, n_beads = 5, 5000
         all_anndata, all_names_sparse_images, all_labels_sparse_images = [], [], []
         for n_tissue in range(n_tissues):
             tmp_dict = {
-                "x_raw": 200.0 + 100.0 * numpy.random.rand(n_beads),
-                "y_raw": 200.0 + 100.0 * numpy.random.rand(n_beads),
+                "x_raw": 200.0 + 500.0 * numpy.random.rand(n_beads),
+                "y_raw": -200.0 + 500.0 * numpy.random.rand(n_beads),
                 "cell_type": [cell_list[i] for i in numpy.random.randint(low=0, high=9, size=n_beads)],
                 "barcodes": [random.getrandbits(128) for i in range(n_beads)]
             }

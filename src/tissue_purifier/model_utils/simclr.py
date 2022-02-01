@@ -1,11 +1,10 @@
-from typing import Sequence, List, Any, Dict
+from typing import List, Dict, Any
 
 import torch
 from argparse import ArgumentParser
 import torchvision
-from pytorch_lightning.utilities.distributed import sync_ddp_if_available
+from torch.nn import functional as F
 
-from neptune.new.types import File
 from tissue_purifier.model_utils.resnet_backbone import make_resnet_backbone
 from tissue_purifier.model_utils.base_benchmark_model import BaseBenchmarkModel
 from tissue_purifier.plot_utils.plot_misc import show_corr_matrix
@@ -13,12 +12,73 @@ from tissue_purifier.misc_utils.misc import LARS
 from tissue_purifier.misc_utils.misc import linear_warmup_and_cosine_protocol
 
 
-class BarlowModel(BaseBenchmarkModel):
+class NTXentLoss(torch.nn.Module):
+    """ Very smart implementation of contrastive loss """
+    def __init__(self,
+                 temperature: float = 0.5):
+        super().__init__()
+        self.temperature = temperature
+        self.cross_entropy = torch.nn.CrossEntropyLoss(reduction='mean')
+        self.eps = 1e-8
+
+    def forward(self,
+                out0: torch.Tensor,
+                out1: torch.Tensor,
+                verbose: bool = False,
+                ):
+        """Forward pass through Contrastive Cross-Entropy Loss.
+
+            Args:
+                out0:
+                    Output projections of the first set of transformed images.
+                    Shape: (batch_size, embedding_size)
+                out1:
+                    Output projections of the second set of transformed images.
+                    Shape: (batch_size, embedding_size)
+                verbose: Print some information while running
+
+            Returns:
+                Contrastive Cross Entropy Loss value.
+
+            Example:
+            >>> batch, latent_dim = 3, 1028
+            >>> out_1 = torch.randn((batch, latent_dim))
+            >>> out_2 = out1 + 0.1  # this mimic a very good encoding where pair images have close embeddings
+            >>> ntx_loss = NTXentLoss()
+            >>> _ = ntx_loss(out_1, out_2, verbose=True)
+        """
+        device = out0.device
+        batch_size, _ = out0.shape
+
+        # normalize the output to length 1
+        out0 = F.normalize(out0, dim=1)  # shape: batch_size, latent_dim
+        out1 = F.normalize(out1, dim=1)  # shape: batch_size, latent_dim
+
+        # use other samples from batch as negatives
+        output = torch.cat((out0, out1), dim=0)  # shape: 2*batch_size, latent_dim
+
+        # the logits are the similarity matrix divided by the temperature
+        logits = torch.einsum('nc,mc->nm', output, output) / self.temperature  # shape: 2*batch_size, 2*batch_size
+
+        # We need to removed the similarities of samples to themselves
+        logits = logits[~torch.eye(2*batch_size, dtype=torch.bool,
+                                   device=out0.device)].view(2*batch_size, -1)  # shape: 2*batch_size, 2*batch_size - 1
+
+        # The labels point from a sample in out_i to its equivalent in out_(1-i)
+        target = torch.arange(batch_size, device=device, dtype=torch.long)  # shape: batch_size
+        target = torch.cat([target + batch_size - 1, target])  # shape: 2*batch_size
+
+        loss = self.cross_entropy(logits, target)  # shape: 2*batch_size before reduction, after reduction is a scalar
+        return loss
+
+
+class SimclrModel(BaseBenchmarkModel):
     """
     See
-    official: https://github.com/facebookresearch/barlowtwins
-    implementation for tiny datasets: https://github.com/IgorSusmelj/barlowtwins/blob/main/main.py
+    https://pytorch-lightning.readthedocs.io/en/stable/starter/style_guide.html  and
+    https://github.com/PyTorchLightning/Lightning-Bolts/blob/master/pl_bolts/models/self_supervised/simclr/simclr_module.py#L61-L301
     """
+
     def __init__(
             self,
             # architecture
@@ -27,7 +87,7 @@ class BarlowModel(BaseBenchmarkModel):
             head_hidden_chs: List[int],
             head_out_ch: int,
             # loss
-            lambda_off_diagonal: float,
+
             # optimizer
             optimizer_type: str,
             # scheduler
@@ -42,9 +102,9 @@ class BarlowModel(BaseBenchmarkModel):
             val_iomin_threshold: float = 0.0,
             **kwargs,
             ):
-        super(BarlowModel, self).__init__(val_iomin_threshold=val_iomin_threshold)
+        super(SimclrModel, self).__init__(val_iomin_threshold=val_iomin_threshold)
 
-        # Next two lines will make checkpointing much simpler. Always keep them as-is
+        # Next two lines will make checkpointing much simpler
         self.save_hyperparameters()  # all hyperparameters are saved to the checkpoint
         self.neptune_run_id = None  # if from scratch neptune_experiment_is is None
 
@@ -61,12 +121,9 @@ class BarlowModel(BaseBenchmarkModel):
             ch_in=backbone_ch_out,
             ch_hidden=head_hidden_chs,
             ch_out=head_out_ch)
-        # Use bn to center and scale the feature across multiple-gpus
-        self.bn_final = torch.nn.BatchNorm1d(head_out_ch, affine=False)
 
         # loss
-        self.lambda_off_diagonal = lambda_off_diagonal
-        self.cross_corr = None
+        self.nt_xent_loss = NTXentLoss()
 
         # optimizer
         self.optimizer_type = optimizer_type
@@ -108,13 +165,9 @@ class BarlowModel(BaseBenchmarkModel):
         parser.add_argument("--image_in_ch", type=int, default=3, help="number of channels in the input images")
         parser.add_argument("--backbone_type", type=str, default="resnet34", help="backbone type",
                             choices=['resnet18', 'resnet34', 'resnet50'])
-        parser.add_argument("--head_hidden_chs", type=int, nargs='+', default=[2048, 2048],
+        parser.add_argument("--head_hidden_chs", type=int, nargs='+', default=[128, 256],
                             help="List of integers. Hidden channels in projection head.")
-        parser.add_argument("--head_out_ch", type=int, default=2048, help="head output channels")
-
-        # loss
-        parser.add_argument("--lambda_off_diagonal", type=float, default=5e-3,
-                            help="lambda multiplying off diagonal elements in the loss")
+        parser.add_argument("--head_out_ch", type=int, default=128, help="head output channels")
 
         # optimizer
         parser.add_argument("--optimizer_type", type=str, default='adam', help="optimizer type",
@@ -140,18 +193,11 @@ class BarlowModel(BaseBenchmarkModel):
     @classmethod
     def get_default_params(cls) -> dict:
         parser = ArgumentParser()
-        parser = BarlowModel.add_specific_args(parser)
+        parser = SimclrModel.add_specific_args(parser)
         args = parser.parse_args(args=[])
         return args.__dict__
 
-    def on_validation_epoch_start(self) -> None:
-        if self.global_rank == 0 and self.cross_corr is not None:
-            corr_matrix_plot = show_corr_matrix(data=self.cross_corr.detach().clone(),
-                                                show_colorbar=True,
-                                                sup_title="epoch {0}".format(self.current_epoch))
-            self.logger.run["corr_matrix"].log(File.as_image(corr_matrix_plot))
-
-    def forward(self, x) -> torch.Tensor:
+    def forward(self, x):
         # this is the stuff that will generate the embeddings
         y = self.backbone(x)  # shape (batch, ch)
         return y
@@ -166,27 +212,18 @@ class BarlowModel(BaseBenchmarkModel):
         # this is data augmentation
         with torch.no_grad():
             list_imgs, list_labels, list_metadata = batch
-            x1 = self.trsfm_train_global(list_imgs)
-            x2 = self.trsfm_train_global(list_imgs)
+            img1 = self.trsfm_train_global(list_imgs)
+            img2 = self.trsfm_train_global(list_imgs)
 
-        # forward is inside the no-grad context
-        z1, y1 = self.shared_step(x1)
-        z2, y2 = self.shared_step(x2)
 
-        # empirical cross-correlation matrix
-        # note that batch-norm are syncronized therefore mean and std are computed across all devices
-        corr_tmp = self.bn_final(z1).T @ self.bn_final(z2)
-        batch_size_per_gpu = z1.shape[0]
-        batch_size_total = sync_ddp_if_available(z1.shape[0], group=None, reduce_op='sum')
-        corr_sum = sync_ddp_if_available(corr_tmp, group=None, reduce_op='sum')  # sum across devices
-        corr = corr_sum / batch_size_total  # divide by total batch size
-        self.cross_corr = corr.detach()  # this is for logging
+        z1, y1 = self.shared_step(img1)
+        z2, y2 = self.shared_step(img2)
 
-        # compute the loss
-        mask_diag = torch.eye(corr.shape[-1], dtype=torch.bool, device=corr.device)
-        on_diag = corr[mask_diag].add_(-1.0).pow_(2).sum()
-        off_diag = corr[~mask_diag].pow_(2).sum()
-        loss = on_diag + self.lambda_off_diagonal * off_diag
+        world_z1, world_z2 = self.all_gather([z1, z2])
+        z1_tot = world_z1.flatten(end_dim=-2)  # shape: (gpus * batch, latent)
+        z2_tot = world_z2.flatten(end_dim=-2)  # shape: (gpus * batch, latent)
+
+        loss = self.nt_xent_loss(z1_tot, z2_tot)
 
         # Update the optimizer parameters and log stuff
         with torch.no_grad():
@@ -200,6 +237,8 @@ class BarlowModel(BaseBenchmarkModel):
                     pg["weight_decay"] = 0.0
 
             # Finally I log interesting stuff
+            batch_size_per_gpu = z1.shape[0]
+            batch_size_total = world_z1.shape[0]
             self.log('train_loss', loss, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
             self.log('weight_decay', wd, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
             self.log('learning_rate', lr, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)

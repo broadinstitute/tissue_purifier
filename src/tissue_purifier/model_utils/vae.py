@@ -1,117 +1,19 @@
-from typing import Sequence, List, Any, Dict, Tuple, Callable
-
+from typing import List, Any, Dict, Tuple
 import torch
-import numpy
 from argparse import ArgumentParser
-import torchvision
 
 from torch.nn import functional as F
 from neptune.new.types import File
-from pytorch_lightning import LightningModule
-from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
-
-from tissue_purifier.plot_utils.plot_embeddings import plot_embeddings
+from tissue_purifier.data_utils.dataset import MetadataCropperDataset
 from tissue_purifier.plot_utils.plot_images import show_batch
-from tissue_purifier.model_utils.classify_regress import classify_and_regress
-from tissue_purifier.misc_utils.nms import NonMaxSuppression
-
-from tissue_purifier.misc_utils.dict_util import (
-    concatenate_list_of_dict,
-    subset_dict,
-    subset_dict_non_overlapping_patches)
-
-from tissue_purifier.misc_utils.misc import (
-    smart_bool,
-    SmartPca,
-    SmartUmap,
-    get_z_score,
-    linear_warmup_and_cosine_protocol)
-
-
-def make_encoder_backbone_from_resnet(in_channels: int, resnet_type: str):
-    if resnet_type == 'resnet18':
-        net = torchvision.models.resnet18(pretrained=True)
-    elif resnet_type == 'resnet34':
-        net = torchvision.models.resnet34(pretrained=True)
-    elif resnet_type == 'resnet50':
-        net = torchvision.models.resnet50(pretrained=True)
-    else:
-        raise Exception("Invalid enc_dec_type. Received {0}".format(resnet_type))
-
-    first_conv_out_channels = list(net.children())[0].out_channels
-    encoder_backbone = torch.nn.Sequential(
-        torch.nn.Conv2d(
-            in_channels,
-            first_conv_out_channels,
-            kernel_size=(7, 7),
-            stride=(2, 2),
-            padding=(3, 3),
-            bias=False,
-        ),
-        *list(net.children())[1:-2],  # note that I am excluding the last (fc) layer and the average_pool2D
-    )
-    return encoder_backbone
-
-
-def make_decoder_backbone_from_resnet(resnet_type: str):
-    from pl_bolts.models.autoencoders.components import DecoderBlock, ResNetDecoder, DecoderBottleneck
-
-    if resnet_type == 'resnet18':
-        net = ResNetDecoder(DecoderBlock, [2, 2, 2, 2], latent_dim=1,
-                            input_height=1, first_conv=True, maxpool1=True)
-        backbone_dec = torch.nn.Sequential(*list(net.children())[1:-3])  # remove the first and last layer
-    elif resnet_type == 'resnet34':
-        net = ResNetDecoder(DecoderBlock, [3, 4, 6, 3], latent_dim=1,
-                            input_height=1, first_conv=True, maxpool1=True)
-        backbone_dec = torch.nn.Sequential(*list(net.children())[1:-3])  # remove the first and last layer
-    elif resnet_type == 'resnet50':
-        net = ResNetDecoder(DecoderBottleneck, [3, 4, 6, 3], latent_dim=1,
-                            input_height=1, first_conv=True, maxpool1=True)
-        backbone_dec = torch.nn.Sequential(*list(net.children())[1:-3])  # remove the first and last layer
-    else:
-        raise NotImplementedError
-
-    return backbone_dec
-
-
-def make_encoder_backbone_from_scratch(in_channels: int, hidden_dims: Tuple[int]):
-    modules = []
-    ch_in = in_channels
-    for h_dim in hidden_dims:
-        modules.append(
-            torch.nn.Sequential(
-                torch.nn.Conv2d(
-                    in_channels=ch_in,
-                    out_channels=h_dim,
-                    kernel_size=(3, 3),
-                    stride=(2, 2),
-                    padding=1),
-                torch.nn.BatchNorm2d(h_dim),
-                torch.nn.LeakyReLU())
-        )
-        ch_in = h_dim
-    encoder_backbone = torch.nn.Sequential(*modules)
-    return encoder_backbone
-
-
-def make_decoder_backbone_from_scratch(hidden_dims: Tuple[int]):
-    modules = []
-
-    for i in range(len(hidden_dims) - 1):
-        modules.append(
-            torch.nn.Sequential(
-                torch.nn.ConvTranspose2d(
-                    in_channels=hidden_dims[i],
-                    out_channels=hidden_dims[i + 1],
-                    kernel_size=(3, 3),
-                    stride=(2, 2),
-                    padding=1,
-                    output_padding=1),
-                torch.nn.BatchNorm2d(hidden_dims[i + 1]),
-                torch.nn.LeakyReLU())
-        )
-    decoder_backbone = torch.nn.Sequential(*modules)
-    return decoder_backbone
+from tissue_purifier.misc_utils.dict_util import concatenate_list_of_dict
+from tissue_purifier.misc_utils.misc import linear_warmup_and_cosine_protocol
+from tissue_purifier.model_utils.base_benchmark_model import BaseBenchmarkModel
+from tissue_purifier.model_utils.resnet_backbone import (
+    make_vae_decoder_backbone_from_scratch,
+    make_vae_decoder_backbone_from_resnet,
+    make_vae_encoder_backbone_from_scratch,
+    make_vae_encoder_backbone_from_resnet)
 
 
 class ConvolutionalVae(torch.nn.Module):
@@ -132,11 +34,12 @@ class ConvolutionalVae(torch.nn.Module):
         x_fake = torch.zeros((2, in_channels, in_size, in_size))
 
         # encoder
+        print("making encoder", vae_type)
         self.latent_dim = latent_dim
         if vae_type == 'vanilla':
-            self.encoder_backbone = make_encoder_backbone_from_scratch(in_channels=in_channels, hidden_dims=hidden_dims)
+            self.encoder_backbone = make_vae_encoder_backbone_from_scratch(in_channels=in_channels, hidden_dims=hidden_dims)
         elif vae_type.startswith("resnet"):
-            self.encoder_backbone = make_encoder_backbone_from_resnet(in_channels=in_channels, resnet_type=vae_type)
+            self.encoder_backbone = make_vae_encoder_backbone_from_resnet(in_channels=in_channels, resnet_type=vae_type)
         else:
             raise Exception("Invalid vae_type. Received {0}".format(vae_type))
 
@@ -154,9 +57,9 @@ class ConvolutionalVae(torch.nn.Module):
             tmp_list = list(hidden_dims)
             tmp_list.reverse()
             reverse_hidden_dims = tuple(tmp_list)
-            self.decoder_backbone = make_decoder_backbone_from_scratch(hidden_dims=reverse_hidden_dims)
+            self.decoder_backbone = make_vae_decoder_backbone_from_scratch(hidden_dims=reverse_hidden_dims)
         elif vae_type.startswith("resnet"):
-            self.decoder_backbone = make_decoder_backbone_from_resnet(resnet_type=vae_type)
+            self.decoder_backbone = make_vae_decoder_backbone_from_resnet(resnet_type=vae_type)
         else:
             raise Exception("Invalid vae_type. Received {0}".format(vae_type))
 
@@ -183,10 +86,10 @@ class ConvolutionalVae(torch.nn.Module):
         )
 
         # make sure the VAE reproduce the correct shape
-        x_rec, x, mu, log_var = self.forward(x_fake)
-        assert x_rec.shape == x_fake.shape
+        dict_vae = self.forward(x_fake)
+        assert dict_vae['x_rec'].shape == x_fake.shape
 
-    def encode(self, x: torch.Tensor) -> List[torch.Tensor]:
+    def encode(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
         Encodes the input by passing through the encoder network
         and returns the latent codes.
@@ -202,8 +105,7 @@ class ConvolutionalVae(torch.nn.Module):
         result = torch.flatten(result, start_dim=1)
         mu = self.fc_mu(result)
         log_var = self.fc_var(result)
-
-        return [mu, log_var]
+        return {'mu': mu, 'log_var': log_var}
 
     def decode(self, z: torch.Tensor) -> torch.Tensor:
         """
@@ -219,8 +121,8 @@ class ConvolutionalVae(torch.nn.Module):
         result = self.decoder_input(z)
         result = result.view(z.shape[0], -1, self.small_size, self.small_size)
         result = self.decoder_backbone(result)
-        result = self.final_layer(result)
-        return result
+        x_rec = self.final_layer(result)
+        return x_rec
 
     @staticmethod
     def reparameterize(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
@@ -228,14 +130,14 @@ class ConvolutionalVae(torch.nn.Module):
         eps = torch.randn_like(std)
         return eps * std + mu
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:
-        mu, log_var = self.encode(x)
-        z = self.reparameterize(mu, log_var)
+    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+        dict_encoder = self.encode(x)
+        z = self.reparameterize(mu=dict_encoder['mu'], logvar=dict_encoder['log_var'])
         x_rec = self.decode(z)
-        return [x_rec, x, mu, log_var]
+        return {'x_rec': x_rec, 'x_in': x, 'mu': dict_encoder['mu'], 'log_var': dict_encoder['log_var']}
 
 
-class VaeModel(LightningModule):
+class VaeModel(BaseBenchmarkModel):
     def __init__(
             self,
 
@@ -255,6 +157,7 @@ class VaeModel(LightningModule):
             # scheduler
             warm_up_epochs: int,
             warm_down_epochs: int,
+            max_epochs: int,
             min_learning_rate: float,
             max_learning_rate: float,
             min_weight_decay: float,
@@ -268,20 +171,17 @@ class VaeModel(LightningModule):
             val_iomin_threshold: float = 0.0,
             **kwargs,
             ):
-        super().__init__()
+        super(VaeModel, self).__init__(val_iomin_threshold=val_iomin_threshold)
 
         # Important: This property activates manual optimization.
         self.automatic_optimization = False
 
         # Next two lines will make checkpointing much simpler. Always keep them as-is
         self.save_hyperparameters()  # all hyperparameters are saved to the checkpoint
-        self.neptune_run_id = None  # if from scratch neptune_run_id is None
+        self.neptune_run_id = None  # if from scratch neptune_experiment_is is None
 
-        # to make sure that you load the inoput images only once
+        # to make sure that you load the input images only once
         self.already_loaded_input_val_images = False
-
-        # validation
-        self.val_iomin_threshold = val_iomin_threshold
 
         # architecture
         if decoder_output_activation == 'identity':
@@ -323,44 +223,15 @@ class VaeModel(LightningModule):
 
         # optimizer
         self.optimizer_type = optimizer_type
+
+        # scheduler
+        assert warm_up_epochs + warm_down_epochs <= max_epochs
         self.learning_rate_fn = linear_warmup_and_cosine_protocol(
             f_values=(min_learning_rate, max_learning_rate, min_learning_rate),
-            x_milestones=(0, warm_up_epochs, warm_up_epochs, warm_up_epochs + warm_down_epochs))
+            x_milestones=(0, warm_up_epochs, max_epochs - warm_down_epochs, max_epochs))
         self.weight_decay_fn = linear_warmup_and_cosine_protocol(
             f_values=(min_weight_decay, min_weight_decay, max_weight_decay),
-            x_milestones=(0, warm_up_epochs, warm_up_epochs, warm_up_epochs + warm_down_epochs))
-
-        # default metadata to regress/classify is None
-        self._get_metadata_to_classify = lambda x: dict()
-        self._get_metadata_to_regress = lambda x: dict()
-
-    def get_metadata_to_regress(self, metadata) -> dict:
-        try:
-            return self.trainer.datamodule.get_metadata_to_regress(metadata)
-        except AttributeError:
-            return self._get_metadata_to_regress(metadata)
-
-    def get_metadata_to_classify(self, metadata):
-        try:
-            return self.trainer.datamodule.get_metadata_to_classify(metadata)
-        except AttributeError:
-            return self._get_metadata_to_classify(metadata)
-
-    @property
-    def n_global_crops(self):
-        return self.trainer.datamodule.n_global_crops
-
-    @property
-    def trsfm_train_global(self):
-        return self.trainer.datamodule.trsfm_train_global
-
-    @property
-    def trsfm_train_local(self):
-        return self.trainer.datamodule.trsfm_train_local
-
-    @property
-    def trsfm_test(self):
-        return self.trainer.datamodule.trsfm_test
+            x_milestones=(0, warm_up_epochs, max_epochs - warm_down_epochs, max_epochs))
 
     @classmethod
     def add_specific_args(cls, parent_parser):
@@ -402,14 +273,17 @@ class VaeModel(LightningModule):
                             help="momentum for the EMA which updates the value of beta")
 
         # scheduler
-        parser.add_argument("--warm_up_epochs", default=100, type=int,
+        parser.add_argument("--warm_up_epochs", default=10, type=int,
                             help="Number of epochs for the linear learning-rate warm up.")
-        parser.add_argument("--warm_down_epochs", default=1000, type=int,
+        parser.add_argument("--warm_down_epochs", default=100, type=int,
                             help="Number of epochs for the cosine decay.")
+        parser.add_argument("--max_epochs", type=int, default=300, help="maximum number of training epochs")
+
         parser.add_argument('--min_learning_rate', type=float, default=1e-5,
                             help="Target LR at the end of cosine protocol (smallest LR used during training).")
         parser.add_argument("--max_learning_rate", type=float, default=5e-4,
                             help="learning rate at the end of linear ramp (largest LR used during training).")
+
         parser.add_argument('--min_weight_decay', type=float, default=0.0,
                             help="Minimum value of the weight decay. It is used during the linear ramp.")
         parser.add_argument('--max_weight_decay', type=float, default=0.0,
@@ -424,78 +298,25 @@ class VaeModel(LightningModule):
         args = parser.parse_args(args=[])
         return args.__dict__
 
-    def on_predict_start(self) -> None:
-        if self.global_rank == 0:
-            self.__log_example_images__(n_examples=10, n_cols=5, which_loaders="predict")
-
-    def on_train_start(self) -> None:
-        if self.global_rank == 0:
-            self.__log_example_images__(n_examples=10, n_cols=5, which_loaders="train")
-            # path_test = os_join(self.trainer.datamodule.data_dir, "train_dataset.pt")
-            # path_train = os_join(self.trainer.datamodule.data_dir, "train_dataset.pt")
-            # self.logger.run["dataset/test"].upload(path_test)
-            # self.logger.run["dataset/train"].upload(path_train)
-
-    def __log_example_images__(self, which_loaders: str, n_examples: int = 10, n_cols: int = 5):
-        if which_loaders == "val":
-            loaders = self.trainer.datamodule.val_dataloader()
-            log_name = "val_imgs"
-        elif which_loaders == "train":
-            loaders = self.trainer.datamodule.train_dataloader()
-            log_name = "train_imgs"
-        elif which_loaders == "predict":
-            loaders = self.trainer.datamodule.predict_dataloader()
-            log_name = "predict_imgs"
-        else:
-            raise Exception("Invalid value for which_loaders. Expected 'val' or 'train' or 'predict'. \
-            Received={0}".format(which_loaders))
-
-        if not isinstance(loaders, Sequence):
-            loaders = [loaders]
-
-        for idx_dataloader, loader in enumerate(loaders):
-            indeces = torch.randperm(n=loader.dataset.__len__())[:n_examples]
-            list_imgs, _, _ = loader.load(index=indeces)
-            list_imgs = list_imgs[:n_examples]
-
-            tmp_ref = self.trsfm_test(list_imgs)
-            tmp_ref_plot = show_batch(tmp_ref.float(), n_col=n_cols)
-            # self.logger.log_image(log_name=log_name+"/ref_" + str(idx_dataloader), image=tmp_ref_plot)
-            self.logger.run[log_name+"/ref_" + str(idx_dataloader)].log(File.as_image(tmp_ref_plot))
-
-            if which_loaders == 'train':
-                tmp_global = self.trsfm_train_global(list_imgs)
-                tmp_global_plot = show_batch(tmp_global.float(), n_col=n_cols)
-                # self.logger.log_image(log_name=log_name+"/global", image=tmp_global_plot)
-                self.logger.run[log_name + "/global"].log(File.as_image(tmp_global_plot))
-
-                tmp_local = self.trsfm_train_local(list_imgs)
-                tmp_local_plot = show_batch(tmp_local.float(), n_col=n_cols)
-                # self.logger.log_image(log_name=log_name + "/local", image=tmp_local_plot)
-                self.logger.run[log_name + "/local"].log(File.as_image(tmp_local_plot))
-
-    def compute_losses(self, x, x_rec, mu, log_var):
+    def compute_losses(self, x_in, x_rec, mu, log_var):
         # compute both kl and derivative of kl w.r.t. mu and log_var
         assert len(mu.shape) == 2
         batch_size = mu.shape[0]
         kl_loss = 0.5 * (mu ** 2 + log_var.exp() - log_var - 1.0).sum() / batch_size
-        mse_loss = F.mse_loss(x, x_rec, reduction='mean')
+        mse_loss = F.mse_loss(x_in, x_rec, reduction='mean')
 
         return {
             'mse_loss': mse_loss,
             'kl_loss': kl_loss,
         }
 
-    def forward(self, x) -> (torch.Tensor, torch.Tensor):
-        return self.vae(x)
+    def shared_step(self, img_in) -> Dict[str, torch.Tensor]:
+        return self.vae(img_in)
 
-    def compute_features(self, x):
-        with torch.no_grad():
-            assert isinstance(x, torch.Tensor) and len(x.shape) == 4
-            self.eval()
-            x_rec, x, mu, log_var = self.vae(x)
-            self.train()
-            return mu
+    def forward(self, x) -> torch.Tensor:
+        # this is the stuff that returns the embeddings "
+        dict_encoder = self.vae.encode(x)
+        return dict_encoder['mu']
 
     def training_step(self, batch, batch_idx):
 
@@ -517,8 +338,13 @@ class VaeModel(LightningModule):
                 "img.shape {0} vs image_size {1}".format(img_in.shape[-1], self.image_size)
 
         # does the encoding-decoding
-        x_rec, x, mu, log_var = self(img_in)
-        loss_dict = self.compute_losses(x=x, x_rec=x_rec, mu=mu, log_var=log_var)
+        dict_vae = self.shared_step(img_in)
+        loss_dict = self.compute_losses(
+            x_in=dict_vae['x_in'],
+            x_rec=dict_vae['x_rec'],
+            mu=dict_vae['mu'],
+            log_var=dict_vae['log_var']
+        )
 
         # Manual optimization
         opt.zero_grad()
@@ -552,7 +378,10 @@ class VaeModel(LightningModule):
                      on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
 
             # Use the 75% quantile, i.e. we are requiring that 75% of the pixel are reconstructed better than rec_target
-            mse_for_constraint = torch.quantile((x - x_rec).pow(2).sum(dim=-3), q=0.75)
+            mse_for_constraint = torch.quantile(
+                input=(dict_vae['x_in'] - dict_vae['x_rec']).pow(2).sum(dim=-3),
+                q=0.75
+            )
 
             self.log('train_loss', loss_kl + loss_mse,
                      on_step=False, on_epoch=True, rank_zero_only=True, batch_size=batch_size)
@@ -630,12 +459,21 @@ class VaeModel(LightningModule):
             self.beta_vae = tmp.clamp(min=1.0E-5, max=1.0 - 1.0E-5)
 
     def validation_step(self, batch, batch_idx, dataloader_idx: int = -1) -> Dict[str, torch.Tensor]:
+        """ Vae is a bit different from backbone/projection head models therefore I am overwriting this """
+        list_imgs: List[torch.sparse.Tensor]
+        list_labels: List[int]
+        list_metadata: List[MetadataCropperDataset]
         list_imgs, list_labels, list_metadata = batch
 
         # Compute the embeddings
-        img = self.trsfm_test(list_imgs)
-        x_rec, x, mu, log_var = self(img)
-        loss_dict = self.compute_losses(x=x, x_rec=x_rec, mu=mu, log_var=log_var)
+        img_in = self.trsfm_test(list_imgs)
+        dict_vae = self.shared_step(img_in)
+        loss_dict = self.compute_losses(
+            x_in=dict_vae['x_in'],
+            x_rec=dict_vae['x_rec'],
+            mu=dict_vae['mu'],
+            log_var=dict_vae['log_var']
+        )
         loss = self.beta_vae * loss_dict["kl_loss"] + (1.0 - self.beta_vae) * loss_dict["mse_loss"]
 
         batch_size = len(list_imgs)
@@ -648,7 +486,7 @@ class VaeModel(LightningModule):
 
         if self.global_rank == 0 and batch_idx == 0:
 
-            img_out = x_rec.clone().detach().float()  # make sure this is in full precision for plotting
+            img_out = dict_vae['x_rec'].clone().detach().float()  # make sure this is in full precision for plotting
             one_ch_tmp_out_plot = show_batch(img_out[0].unsqueeze(dim=-3), n_col=5,
                                              title="output, epoch={0}".format(self.current_epoch))
             self.logger.run["rec/output_imgs/one_ch"].log(File.as_image(one_ch_tmp_out_plot))
@@ -657,26 +495,28 @@ class VaeModel(LightningModule):
             self.logger.run["rec/output_imgs/all_ch"].log(File.as_image(all_ch_tmp_out_plot))
 
             if not self.already_loaded_input_val_images:
-                img_in = img.clone().detach().float()  # make sure this is in full precision for plotting
-                one_ch_tmp_in_plot = show_batch(img_in[0].unsqueeze(dim=-3), n_col=5,
+                img_in_tmp = img_in.clone().detach().float()  # make sure this is in full precision for plotting
+                one_ch_tmp_in_plot = show_batch(img_in_tmp[0].unsqueeze(dim=-3), n_col=5,
                                                 title="input, epoch={0}".format(self.current_epoch))
                 self.logger.run["rec/input_imgs/one_ch"].log(File.as_image(one_ch_tmp_in_plot))
-                all_ch_tmp_in_plot = show_batch(img_in[:10], n_col=5,
+                all_ch_tmp_in_plot = show_batch(img_in_tmp[:10], n_col=5,
                                                 title="input, epoch={0}".format(self.current_epoch))
                 self.logger.run["rec/input_imgs/all_ch"].log(File.as_image(all_ch_tmp_in_plot))
                 self.already_loaded_input_val_images = True
 
         # Collect the xywh for the patches in the validation
-        w, h = img.shape[-2:]
-        patch_x = torch.tensor([metadata.loc_x for metadata in list_metadata], dtype=mu.dtype, device=mu.device)
-        patch_y = torch.tensor([metadata.loc_y for metadata in list_metadata], dtype=mu.dtype, device=mu.device)
+        w, h = img_in.shape[-2:]
+        patch_x = torch.tensor([metadata.loc_x for metadata in list_metadata],
+                               dtype=img_in.dtype, device=img_in.device)
+        patch_y = torch.tensor([metadata.loc_y for metadata in list_metadata],
+                               dtype=img_in.dtype, device=img_in.device)
         patch_w = w * torch.ones_like(patch_x)
         patch_h = h * torch.ones_like(patch_x)
         patches_xywh = torch.stack([patch_x, patch_y, patch_w, patch_h], dim=-1)
 
         # Create the validation dictionary. Note that all the entries are torch.Tensors
         val_dict = {
-            "features_mu": mu,
+            "features_mu": dict_vae['mu'],
             "patches_xywh": patches_xywh
         }
 
@@ -692,157 +532,6 @@ class VaeModel(LightningModule):
             val_dict["regress_" + k] = torch.tensor(v, device=self.device)
 
         return val_dict
-
-    def validation_epoch_end(self, list_of_val_dict) -> None:
-        """ You can receive a list_of_valdict or, if you have multiple val_datasets, a list_of_list_of_valdict """
-        print("--- inside validation epoch end")
-
-        """ You can receive a list_of_valdict or, if you have multiple val_datasets, a list_of_list_of_valdict """
-        print("inside validation epoch end")
-
-        if isinstance(list_of_val_dict[0], dict):
-            list_dict = [concatenate_list_of_dict(list_of_val_dict)]
-        elif isinstance(list_of_val_dict[0], list):
-            list_dict = [concatenate_list_of_dict(tmp_list) for tmp_list in list_of_val_dict]
-        else:
-            raise Exception("In validation epoch end. I received an unexpected input")
-
-        for loader_idx, total_dict in enumerate(list_dict):
-            print("rank {0} dataloader_idx {1}".format(self.global_rank, loader_idx))
-
-            # gather dictionaries from the other processes and flatten the extra dimension.
-            world_dict = self.all_gather(total_dict)
-            all_keys = list(world_dict.keys())
-            for key in all_keys:
-                if len(world_dict[key].shape) == 1 + len(total_dict[key].shape):
-                    # In interactive mode the all_gather does not add an extra leading dimension
-                    # This check makes sure that I am not flattening when leading dim has not been added
-                    world_dict[key] = world_dict[key].flatten(end_dim=1)
-                # Add the z_score
-                if key.startswith("feature") and key.endswith("bbone"):
-                    tmp_key = key + '_zscore'
-                    world_dict[tmp_key] = get_z_score(world_dict[key], dim=-2)
-            print("done dictionary. rank {0}".format(self.global_rank))
-
-            # DO operations ONLY on rank 0.
-            # ADD "rank_zero_only=True" to avoid deadlocks on synchronization.
-            if self.global_rank == 0:
-
-                # plot the UMAP colored by all available annotations
-                smart_pca = SmartPca(preprocess_strategy='z_score')
-                smart_umap = SmartUmap(n_neighbors=25, preprocess_strategy='raw',
-                                       n_components=2, min_dist=0.5, metric='euclidean')
-
-                # plot the UMAP colored by all available annotations
-                smart_pca = SmartPca(preprocess_strategy='z_score')
-                smart_umap = SmartUmap(n_neighbors=25, preprocess_strategy='raw',
-                                       n_components=2, min_dist=0.5, metric='euclidean')
-
-                embedding_keys = ["features_mu"]
-                for k in embedding_keys:
-                    input_features = world_dict[k]
-                    embeddings_pca = smart_pca.fit_transform(input_features, n_components=0.95)
-                    embeddings_umap = smart_umap.fit_transform(embeddings_pca)
-                    world_dict['pca_' + k] = embeddings_pca
-                    world_dict['umap_' + k] = embeddings_umap
-
-                annotation_keys, titles = [], []
-                for k in world_dict.keys():
-                    if k.startswith("regress") or k.startswith("classify"):
-                        annotation_keys.append(k)
-                        titles.append("{0} -> Epoch={1}".format(k, self.current_epoch))
-
-                # Now I have both annotation_keys and feature_keys
-                all_figs = []
-                for embedding_key in embedding_keys:
-                    fig_tmp = plot_embeddings(
-                        world_dict,
-                        embedding_key=embedding_key,
-                        annotation_keys=annotation_keys,
-                        x_label="UMAP1",
-                        y_label="UMAP2",
-                        titles=titles,
-                        n_col=2,
-                    )
-                    all_figs.append(fig_tmp)
-
-                for fig_tmp, key_tmp in zip(all_figs, embedding_keys):
-                    self.logger.run["maps/" + key_tmp].log(File.as_image(fig_tmp))
-
-                # Do KNN classification
-                def exclude_self(d):
-                    w = numpy.ones_like(d)
-                    w[d == 0.0] = 0.0
-                    return w
-
-                kn_kargs = {
-                    "n_neighbors": 5,
-                    "weights": exclude_self,
-                }
-
-                feature_keys = ["features_mu"]
-                regress_keys, classify_keys = [], []
-                for key in world_dict.keys():
-                    if key.startswith("regress"):
-                        regress_keys.append(key)
-                    elif key.startswith("classify"):
-                        classify_keys.append(key)
-                    elif key.startswith("pca_") or key.startswith("umap_"):
-                        feature_keys.append(key)
-
-                regressor = KNeighborsRegressor(**kn_kargs)
-                classifier = KNeighborsClassifier(**kn_kargs)
-
-                # loop over subset made of not-overlapping patches
-                df_tot = None
-
-                # compute the patch_to_patch overlap just one at the beginning
-                patches = world_dict["patches_xywh"]
-                initial_score = torch.rand_like(patches[:, 0].float())
-                tissue_ids = world_dict["classify_tissue_label"]
-                nms_mask_n, overlap_nn = NonMaxSuppression.compute_nm_mask(
-                    score=initial_score,
-                    ids=tissue_ids,
-                    patches_xywh=patches,
-                    iom_threshold=self.val_iomin_threshold)
-                binarized_overlap_nn = (overlap_nn > self.val_iomin_threshold).float()
-
-                for n in range(20):
-                    print("loop over non-overlapping", n)
-                    # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
-                    nms_mask_n = NonMaxSuppression._perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
-                                                                          score_n=torch.rand_like(initial_score),
-                                                                          possible_n=torch.ones_like(initial_score).bool())
-                    world_dict_subset = subset_dict(input_dict=world_dict, mask=nms_mask_n)
-
-                    df_tmp = classify_and_regress(
-                        input_dict=world_dict_subset,
-                        feature_keys=feature_keys,
-                        regress_keys=regress_keys,
-                        classify_keys=classify_keys,
-                        regressor=regressor,
-                        classifier=classifier,
-                        n_repeats=1,
-                        n_splits=1,
-                        verbose=False,
-                    )
-                    df_tot = df_tmp if df_tot is None else df_tot.merge(df_tmp, how='outer')
-
-                df_tot["combined_key"] = df_tot["x_key"] + "_" + df_tot["y_key"]
-                df_mean = df_tot.groupby("combined_key").mean()
-                df_std = df_tot.groupby("combined_key").std()
-
-                for row in df_mean.itertuples():
-                    for k, v in row._asdict().items():
-                        if isinstance(v, float) and numpy.isfinite(v):
-                            name = "kn/" + row.Index + "/" + k + "/mean"
-                            self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
-
-                for row in df_std.itertuples():
-                    for k, v in row._asdict().items():
-                        if isinstance(v, float) and numpy.isfinite(v):
-                            name = "kn/" + row.Index + "/" + k + "/std"
-                            self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
 
     def configure_optimizers(self):
         # the learning_rate and weight_decay are very large. They are just placeholder.

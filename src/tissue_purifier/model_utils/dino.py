@@ -7,14 +7,9 @@ import torchvision
 import numpy
 import math
 
-from neptune.new.types import File
-from pytorch_lightning import LightningModule
-
-from tissue_purifier.model_utils.benckmark_model import BenchmarkModel
-from tissue_purifier.data_utils.dataset import MetadataCropperDataset
-from tissue_purifier.plot_utils.plot_images import show_raw_all_channels
+from tissue_purifier.model_utils.resnet_backbone import make_resnet_backbone
+from tissue_purifier.model_utils.base_benchmark_model import BaseBenchmarkModel
 from tissue_purifier.misc_utils.misc import LARS
-from tissue_purifier.misc_utils.dict_util import concatenate_list_of_dict
 from tissue_purifier.misc_utils.misc import (
     smart_bool,
     linear_warmup_and_cosine_protocol)
@@ -166,21 +161,6 @@ class DINOHead(torch.nn.Module):
         return x
 
 
-class AdaptiveAvgMaxPool2d(torch.nn.Module):
-    """
-    Performs both AdaptiveAvgPool2d and AdaptiveMaxPool2d and concatenates the results along the channel dimension.
-    """
-    def __init__(self, output_size: int = 1):
-        super().__init__()
-        self.adaptive_avg = torch.nn.AdaptiveAvgPool2d(output_size=output_size)
-        self.adaptive_max = torch.nn.AdaptiveMaxPool2d(output_size=output_size)
-
-    def forward(self, x):
-        _avg = self.adaptive_avg(x)
-        _max = self.adaptive_max(x)
-        return torch.cat((_avg, _max), dim=-3)  # concatenates along the channel dimension
-
-
 class MultiResolutionNet(torch.nn.Module):
     """
     Net that can act on both a single torch.Tensor or a list of torch.Tensors
@@ -188,9 +168,7 @@ class MultiResolutionNet(torch.nn.Module):
     """
     def __init__(self,
                  backbone_type: str,
-                 backbone_pretrained: bool,
                  backbone_in_ch: int,
-                 backbone_out_ch: int,
                  head_type: str,
                  head_hidden_ch: int,
                  head_bottleneck_ch: int,
@@ -198,24 +176,23 @@ class MultiResolutionNet(torch.nn.Module):
                  head_use_bn: bool):
         super().__init__()
         self.backbone_type = backbone_type
-        self.backbone_pretrained = backbone_pretrained
         self.backbone_in_ch = backbone_in_ch
-        self.backbone_out_ch = backbone_out_ch
         self.head_type = head_type
         self.head_hidden_ch = head_hidden_ch
         self.head_bottleneck_ch = head_bottleneck_ch
         self.head_out_ch = head_out_ch
         self.head_use_bn = head_use_bn
 
-        self.backbone = self.init_backbone(
-            backbone_pretrained=self.backbone_pretrained,
+        self.backbone = make_resnet_backbone(
             backbone_in_ch=self.backbone_in_ch,
-            backbone_out_ch=self.backbone_out_ch,
             backbone_type=self.backbone_type)
+        in_tmp = torch.zeros((1, self.backbone_in_ch, 32, 32))
+        out_tmp = self.backbone(in_tmp)
+        head_ch_in = out_tmp.shape[1]
 
         if self.head_type == 'dino':
             self.head = DINOHead(
-                in_dim=self.backbone_out_ch,
+                in_dim=head_ch_in,
                 out_dim=self.head_out_ch,
                 use_bn=self.head_use_bn,
                 norm_last_layer=True,
@@ -224,46 +201,13 @@ class MultiResolutionNet(torch.nn.Module):
                 bottleneck_dim=self.head_bottleneck_ch)
         elif self.head_type == 'mlp':
             self.head = MLPHead(
-                in_dim=self.backbone_out_ch,
+                in_dim=head_ch_in,
                 out_dim=self.head_out_ch,
                 use_bn=self.head_use_bn,
                 norm_last_layer=True,
                 hidden_dim=self.head_hidden_ch)
         else:
             raise Exception("Expected head_type = 'dino' or 'mlp'. Received {0}".format(self.head_type))
-
-    @staticmethod
-    def init_backbone(
-            backbone_pretrained: bool,
-            backbone_in_ch: int,
-            backbone_out_ch: int,
-            backbone_type: str) -> torch.nn.Module:
-        if backbone_type == 'resnet18':
-            net = torchvision.models.resnet18(pretrained=backbone_pretrained)
-        elif backbone_type == 'resnet34':
-            net = torchvision.models.resnet34(pretrained=backbone_pretrained)
-        elif backbone_type == 'resnet50':
-            net = torchvision.models.resnet50(pretrained=backbone_pretrained)
-        else:
-            raise Exception("backbone_type not recognized. Received ->", backbone_type)
-
-        last_conv_channels = list(net.children())[-1].in_features
-        first_conv_out_channels = list(net.children())[0].out_channels
-
-        # This use AvgPoll2D only
-        new_net = torch.nn.Sequential(
-            torch.nn.Conv2d(
-                backbone_in_ch,
-                first_conv_out_channels,
-                kernel_size=(7, 7),
-                stride=(2, 2),
-                padding=(3, 3),
-                bias=False,
-            ),
-            *list(net.children())[1:-1],  # note that I am excluding the last_fc_layer
-            torch.nn.Conv2d(last_conv_channels, backbone_out_ch, kernel_size=(1, 1)),
-        )
-        return new_net
 
     def forward(self, x):
         """ x is either a torch.Tensor or a list of torch.Tensor of possibly different resolutions.
@@ -273,7 +217,7 @@ class MultiResolutionNet(torch.nn.Module):
         """
         # convert to list
         if not isinstance(x, list):
-            output = self.backbone(x)  # output is of size (b, c, 1, 1)
+            output = self.backbone(x)  # output is of size (b, c)
         else:
             idx_crops = torch.cumsum(torch.unique_consecutive(
                 torch.tensor([inp.shape[-1] for inp in x]),
@@ -292,11 +236,10 @@ class MultiResolutionNet(torch.nn.Module):
                 start_idx = end_idx
 
         # Run the head forward on the concatenated features.
-        output = output.flatten(start_dim=1)   # shape: (b, c), i.e. remove the last two singleton dimension
         return self.head(output), output
 
 
-class DinoModel(BenchmarkModel):
+class DinoModel(BaseBenchmarkModel):
     """
     See
     https://pytorch-lightning.readthedocs.io/en/stable/starter/style_guide.html  and
@@ -310,14 +253,12 @@ class DinoModel(BenchmarkModel):
             self,
             # architecture
             backbone_type: str,
-            backbone_pretrained: bool,
             image_in_ch: int,
-            backbone_out_ch: int,
             head_type: str,
             head_hidden_ch: int,
-            head_out_ch: int,
             head_bottleneck_ch: int,
             head_use_bn: bool,
+            head_out_ch: int,
             # teacher centering
             center_momentum: float,
             # optimizer
@@ -325,6 +266,7 @@ class DinoModel(BenchmarkModel):
             # scheduler
             warm_up_epochs: int,
             warm_down_epochs: int,
+            max_epochs: int,
             min_learning_rate: float,
             max_learning_rate: float,
             min_weight_decay: float,
@@ -342,6 +284,7 @@ class DinoModel(BenchmarkModel):
             param_momentum_final: float = 0.996,
             param_momentum_epochs_end: int = 1000,
             **kwargs,
+
             ):
         super(DinoModel, self).__init__(val_iomin_threshold=val_iomin_threshold)
 
@@ -352,9 +295,7 @@ class DinoModel(BenchmarkModel):
         # architecture
         self.student = MultiResolutionNet(
             backbone_type=backbone_type,
-            backbone_pretrained=backbone_pretrained,
             backbone_in_ch=image_in_ch,
-            backbone_out_ch=backbone_out_ch,
             head_type=head_type,
             head_hidden_ch=head_hidden_ch,
             head_bottleneck_ch=head_bottleneck_ch,
@@ -365,9 +306,7 @@ class DinoModel(BenchmarkModel):
         # this is creating a separate teacher object with the same weights as the student object
         self.teacher = MultiResolutionNet(
             backbone_type=backbone_type,
-            backbone_pretrained=backbone_pretrained,
             backbone_in_ch=image_in_ch,
-            backbone_out_ch=backbone_out_ch,
             head_type=head_type,
             head_hidden_ch=head_hidden_ch,
             head_bottleneck_ch=head_bottleneck_ch,
@@ -409,48 +348,13 @@ class DinoModel(BenchmarkModel):
         self.optimizer_type = optimizer_type
 
         # scheduler
+        assert warm_up_epochs + warm_down_epochs <= max_epochs
         self.learning_rate_fn = linear_warmup_and_cosine_protocol(
             f_values=(min_learning_rate, max_learning_rate, min_learning_rate),
-            x_milestones=(0, warm_up_epochs, warm_up_epochs, warm_up_epochs + warm_down_epochs))
+            x_milestones=(0, warm_up_epochs, max_epochs - warm_down_epochs, max_epochs))
         self.weight_decay_fn = linear_warmup_and_cosine_protocol(
             f_values=(min_weight_decay, min_weight_decay, max_weight_decay),
-            x_milestones=(0, warm_up_epochs, warm_up_epochs, warm_up_epochs + warm_down_epochs))
-
-        # default metadata to regress/classify is None
-        self._get_metadata_to_classify = lambda x: dict()
-        self._get_metadata_to_regress = lambda x: dict()
-
-    def get_metadata_to_regress(self, metadata) -> dict:
-        try:
-            return self.trainer.datamodule.get_metadata_to_regress(metadata)
-        except AttributeError:
-            return self._get_metadata_to_regress(metadata)
-
-    def get_metadata_to_classify(self, metadata) -> dict:
-        try:
-            return self.trainer.datamodule.get_metadata_to_classify(metadata)
-        except AttributeError:
-            return self._get_metadata_to_classify(metadata)
-
-    @property
-    def n_global_crops(self):
-        return self.trainer.datamodule.n_global_crops
-
-    @property
-    def n_local_crops(self):
-        return self.trainer.datamodule.n_local_crops
-
-    @property
-    def trsfm_train_local(self):
-        return self.trainer.datamodule.trsfm_train_local
-
-    @property
-    def trsfm_train_global(self):
-        return self.trainer.datamodule.trsfm_train_global
-
-    @property
-    def trsfm_test(self):
-        return self.trainer.datamodule.trsfm_test
+            x_milestones=(0, warm_up_epochs, max_epochs - warm_down_epochs, max_epochs))
 
     @classmethod
     def add_specific_args(cls, parent_parser):
@@ -465,8 +369,6 @@ class DinoModel(BenchmarkModel):
         parser.add_argument("--image_in_ch", type=int, default=3, help="number of channels in the input images")
         parser.add_argument("--backbone_type", type=str, default="resnet34", help="backbone type",
                             choices=['resnet18', 'resnet34', 'resnet50'])
-        parser.add_argument("--backbone_pretrained", type=smart_bool, default=True, help="Use a pretrained backbone")
-        parser.add_argument("--backbone_out_ch", type=int, default=512, help="backbone out channels")
         parser.add_argument("--head_type", type=str, default="mlp", help="head type",
                             choices=['mlp', 'dino'])
         parser.add_argument("--head_hidden_ch", type=int, default=2048, help="head hidden channels")
@@ -506,14 +408,17 @@ class DinoModel(BenchmarkModel):
                             Ignored if set_temperature_using_ipr_init = True")
 
         # scheduler
+        parser.add_argument("--max_epochs", type=int, default=1000, help="maximum number of training epochs")
         parser.add_argument("--warm_up_epochs", default=100, type=int,
                             help="Number of epochs for the linear learning-rate warm up.")
-        parser.add_argument("--warm_down_epochs", default=1000, type=int,
+        parser.add_argument("--warm_down_epochs", default=500, type=int,
                             help="Number of epochs for the cosine decay.")
+
         parser.add_argument('--min_learning_rate', type=float, default=1e-5,
                             help="Target LR at the end of cosine protocol (smallest LR used during training).")
         parser.add_argument("--max_learning_rate", type=float, default=5e-4,
                             help="learning rate at the end of linear ramp (largest LR used during training).")
+
         parser.add_argument('--min_weight_decay', type=float, default=0.04,
                             help="Minimum value of the weight decay. It is used during the linear ramp.")
         parser.add_argument('--max_weight_decay', type=float, default=0.4,
@@ -527,70 +432,14 @@ class DinoModel(BenchmarkModel):
         args = parser.parse_args(args=[])
         return args.__dict__
 
-    def __log_example_images__(self, which_loaders: str, n_examples: int = 10, n_cols: int = 5):
-        if which_loaders == "val":
-            loaders = self.trainer.datamodule.val_dataloader()
-            log_name = "val_imgs"
-        elif which_loaders == "train":
-            loaders = self.trainer.datamodule.train_dataloader()
-            log_name = "train_imgs"
-        elif which_loaders == "predict":
-            loaders = self.trainer.datamodule.predict_dataloader()
-            log_name = "predict_imgs"
-        else:
-            raise Exception("Invalid value for which_loaders. Expected 'val' or 'train' or 'predict'. \
-            Received={0}".format(which_loaders))
+    def forward(self, x) -> (torch.Tensor, torch.Tensor):
+        z, y = self.teacher(x)
+        return y
 
-        if not isinstance(loaders, Sequence):
-            loaders = [loaders]
-
-        for idx_dataloader, loader in enumerate(loaders):
-            indeces = torch.randperm(n=loader.dataset.__len__())[:n_examples]
-            list_imgs, _, _ = loader.load(index=indeces)
-            list_imgs = list_imgs[:n_examples]
-
-            tmp_ref = self.trsfm_test(list_imgs)
-            tmp_ref_plot = show_raw_all_channels(tmp_ref, n_col=n_cols, show_colorbar=True)
-            self.logger.run[log_name + "/ref_" + str(idx_dataloader)].log(File.as_image(tmp_ref_plot))
-
-            if which_loaders == 'train':
-                tmp_global = self.trsfm_train_global(list_imgs)
-                tmp_global_plot = show_raw_all_channels(tmp_global, n_col=n_cols, show_colorbar=True)
-                self.logger.run[log_name+"/global"].log(File.as_image(tmp_global_plot))
-
-                tmp_local = self.trsfm_train_local(list_imgs)
-                tmp_local_plot = show_raw_all_channels(tmp_local, n_col=n_cols, show_colorbar=True)
-                self.logger.run[log_name + "/local"].log(File.as_image(tmp_local_plot))
-
-    def on_predict_start(self) -> None:
-        if self.global_rank == 0:
-            self.__log_example_images__(n_examples=10, n_cols=5, which_loaders="predict")
-
-    def on_train_start(self) -> None:
-        if self.global_rank == 0:
-            self.__log_example_images__(n_examples=10, n_cols=5, which_loaders="train")
-            # path_test = os_join(self.trainer.datamodule.data_dir, "train_dataset.pt")
-            # path_train = os_join(self.trainer.datamodule.data_dir, "train_dataset.pt")
-            # self.logger.run["dataset/test"].upload(path_test)
-            # self.logger.run["dataset/train"].upload(path_train)
-
-    def forward(self, x, student_or_teacher: str = 'teacher') -> (torch.Tensor, torch.Tensor):
-        if student_or_teacher == 'student':
-            return self.student(x)
-        elif student_or_teacher == 'teacher':
-            return self.teacher(x)
-        else:
-            raise Exception("Invalid_value for student_or_teacher={0}".format(student_or_teacher))
-
-    def compute_features(self, x):
-        #  Should I use the teacher or the student network? -> teacher
-        #  Should I use the features before or after the projection head? -> before
-        with torch.no_grad():
-            assert isinstance(x, torch.Tensor) and len(x.shape) == 4
-            self.eval()
-            z, y = self.teacher(x)
-            self.train()
-            return y
+    def shared_step(self, x):
+        # step common to train_step and validation_step
+        z, y = self.teacher(x)
+        return z, y
 
     def training_step(self, batch, batch_idx) -> torch.Tensor:
 
@@ -616,9 +465,9 @@ class DinoModel(BenchmarkModel):
                 list_of_minibatches.append(self.trsfm_train_local(list_imgs))
 
             # forward for teacher is inside the no-grad context
-            z_t, y_t = self(list_of_minibatches[:self.n_global_crops], student_or_teacher='teacher')
+            z_t, y_t = self.shared_step(list_of_minibatches[:self.n_global_crops])
         # forward for student is outside the no-grad context
-        z_s, y_s = self(list_of_minibatches, student_or_teacher='student')
+        z_s, y_s = self.student(list_of_minibatches)
 
         with torch.no_grad():
             if self.global_step == 0 and self.set_temperature_using_ipr_init:
@@ -738,47 +587,6 @@ class DinoModel(BenchmarkModel):
                  on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
         self.log('ipr_population_s', ipr_population_s,
                  on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
-
-    def validation_step(self, batch, batch_idx, dataloader_idx: int = -1) -> Dict[str, torch.Tensor]:
-        list_imgs: List[torch.sparse.Tensor]
-        list_labels: List[int]
-        list_metadata: List[MetadataCropperDataset]
-        list_imgs, list_labels, list_metadata = batch
-
-        # Compute the embeddings
-        img = self.trsfm_test(list_imgs)
-        z_t, y_t = self(img, student_or_teacher='teacher')
-        z_s, y_s = self(img, student_or_teacher='student')
-
-        # Collect the xywh for the patches in the validation
-        w, h = img.shape[-2:]
-        patch_x = torch.tensor([metadata.loc_x for metadata in list_metadata], dtype=z_t.dtype, device=z_t.device)
-        patch_y = torch.tensor([metadata.loc_y for metadata in list_metadata], dtype=z_t.dtype, device=z_t.device)
-        patch_w = w * torch.ones_like(patch_x)
-        patch_h = h * torch.ones_like(patch_x)
-        patches_xywh = torch.stack([patch_x, patch_y, patch_w, patch_h], dim=-1)
-
-        # Create the validation dictionary. Note that all the entries are torch.Tensors
-        val_dict = {
-            "features_student_bbone": y_s,
-            "features_teacher_bbone": y_t,
-            "features_student_head": z_s,
-            "features_teacher_head": z_t,
-            "patches_xywh": patches_xywh
-        }
-
-        # Add to this dictionary the things I want to classify and regress
-        dict_classify = concatenate_list_of_dict([self.get_metadata_to_classify(metadata)
-                                                  for metadata in list_metadata])
-        for k, v in dict_classify.items():
-            val_dict["classify_"+k] = torch.tensor(v, device=self.device)
-
-        dict_regress = concatenate_list_of_dict([self.get_metadata_to_regress(metadata)
-                                                 for metadata in list_metadata])
-        for k, v in dict_regress.items():
-            val_dict["regress_" + k] = torch.tensor(v, device=self.device)
-
-        return val_dict
 
     def __update_temperatures__(self, output_t, output_s, ipr_t, ipr_s):
 

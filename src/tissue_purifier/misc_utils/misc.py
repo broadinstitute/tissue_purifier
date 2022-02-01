@@ -364,15 +364,18 @@ class SmartUmap(UMAP):
     def _compute_std_mean(self, data) -> (torch.Tensor, torch.Tensor):
         if self.preprocess_strategy == 'z_score':
             std, mean = torch.std_mean(data, dim=-2, unbiased=True, keepdim=True)
-            return std, mean
+            # because Relu activation it is possible that std=0
+            mask = (std == 0.0)
+            std[mask] = 1.0
         elif self.preprocess_strategy == 'center':
             mean = torch.mean(data, dim=-2, keepdim=True)
             std = torch.ones_like(mean)
-            return std, mean
-        elif self.preprocess_strategy == 'raw':
+        else:
+            # this is the case self.preprocess_strategy == 'raw'
             mean = torch.zeros_like(data[0, :])
             std = torch.ones_like(mean)
-            return std, mean
+
+        return std, mean
 
     def fit(self, data, y=None) -> "SmartUmap":
         assert y is None
@@ -503,15 +506,18 @@ class SmartPca:
     def _compute_std_mean(self, data) -> (torch.Tensor, torch.Tensor):
         if self.preprocess_strategy == 'z_score':
             std, mean = torch.std_mean(data, dim=-2, unbiased=True, keepdim=True)
-            return std, mean
+            # because Relu activation it is possible that std=0
+            mask = (std == 0.0)
+            std[mask] = 1.0
         elif self.preprocess_strategy == 'center':
             mean = torch.mean(data, dim=-2, keepdim=True)
             std = torch.ones_like(mean)
-            return std, mean
-        elif self.preprocess_strategy == 'raw':
+        else:
+            # this is the case self.preprocess_strategy == 'raw'
             mean = torch.zeros_like(data[0, :])
             std = torch.ones_like(mean)
-            return std, mean
+
+        return std, mean
 
     def _apply_scaling(self, data):
         self._mean = self._mean.to(device=data.device, dtype=data.dtype)
@@ -541,6 +547,10 @@ class SmartPca:
         data_new = self._apply_scaling(data_new)
 
         n, p = data_new.shape
+        # In case some of the inputs are not finite. This should never happen
+        mask = torch.isfinite(data_new)
+        data_new[~mask] = 0.0
+
         q = min(p, n)
         if p <= 2500:
             # Use the covariance method, i.e. p x p matrix
@@ -549,7 +559,13 @@ class SmartPca:
             eps = 1E-4 * torch.randn(p, dtype=cov.dtype, device=cov.device)
             cov += torch.diag(eps)
             assert cov.shape == torch.Size([p, p])
-            U, S, _ = torch.linalg.svd(cov, full_matrices=True)
+
+            try:
+                U, S, _ = torch.svd(cov)
+            except:   # torch.svd may have convergence issues for GPU and CPU.
+                U_np, S_np, _ = scipy.linalg.svd(cov.detach().cpu().numpy(), lapack_driver="gesdd")  # works
+                U = torch.from_numpy(U_np).to(dtype=cov.dtype, device=cov.device)
+                S = torch.from_numpy(S_np).to(dtype=cov.dtype, device=cov.device)
             self._eigen_cov_matrix = S[:q]  # shape (q)
             self._V = U[:, :q]  # shape (p, q)
         else:
