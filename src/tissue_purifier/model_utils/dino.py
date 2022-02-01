@@ -94,7 +94,7 @@ def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
 
 
 class DINOHead(torch.nn.Module):
-    def __init__(self, in_dim, hidden_dim, out_dim, use_bn=False, norm_last_layer=True):
+    def __init__(self, in_dim: int, hidden_dim: List[int], out_dim: int, use_bn=False, norm_last_layer=True):
         super().__init__()
         assert len(hidden_dim) >= 1
         sizes = [in_dim] + hidden_dim + [out_dim]
