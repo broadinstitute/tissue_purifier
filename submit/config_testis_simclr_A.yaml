@@ -26,7 +26,6 @@ val_iomin_threshold: 0.0
 
 # architecture
 backbone_type: resnet18
-head_bottleneck_ch: 256  # used only if head_type == dino
 head_hidden_chs:
 - 256
 - 256
@@ -56,8 +55,9 @@ n_global_crops: 1
 n_local_crops: 0
 global_size: 96
 local_size: 64
-dropout_range:
+dropouts:
 - 0.1
+- 0.2
 - 0.3
 global_scale:
 - 0.8
@@ -70,4 +70,4 @@ occlusion_fraction:
 - 0.3
 rasterize_sigma:
 - 0.5
-- 2.0
+- 1.0
