@@ -3,7 +3,6 @@ from typing import Sequence, List, Any, Dict
 import torch
 from argparse import ArgumentParser
 from torch.nn import functional as F
-import torchvision
 import numpy
 import math
 
@@ -94,56 +93,23 @@ def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
 
 
-class MLPHead(torch.nn.Module):
-    def __init__(self, in_dim, out_dim, hidden_dim, use_bn=False, norm_last_layer=True):
+class DINOHead(torch.nn.Module):
+    def __init__(self, in_dim, hidden_dim, out_dim, use_bn=False, norm_last_layer=True):
         super().__init__()
+        assert len(hidden_dim) >= 1
+        sizes = [in_dim] + hidden_dim + [out_dim]
+
         layers = []
-        if use_bn:
-            layers.append(torch.nn.Linear(in_dim, hidden_dim, bias=False))
-            layers.append(torch.nn.BatchNorm1d(hidden_dim))
-        else:
-            layers.append(torch.nn.Linear(in_dim, hidden_dim, bias=True))
-        layers.append(torch.nn.GELU())
+        for i in range(len(sizes) - 2):
+            if use_bn:
+                layers.append(torch.nn.Linear(sizes[i], sizes[i + 1], bias=False))
+                layers.append(torch.nn.BatchNorm1d(sizes[i + 1]))
+            else:
+                layers.append(torch.nn.Linear(sizes[i], sizes[i + 1], bias=True))
+            layers.append(torch.nn.GELU())
         self.mlp = torch.nn.Sequential(*layers)
         self.apply(self._init_weights)
-        self.last_layer = torch.nn.utils.weight_norm(torch.nn.Linear(hidden_dim, out_dim, bias=False))
-        self.last_layer.weight_g.data.fill_(1)
-        if norm_last_layer:
-            self.last_layer.weight_g.requires_grad = False
-
-    def _init_weights(self, m):
-        if isinstance(m, torch.nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, torch.nn.Linear) and m.bias is not None:
-                torch.nn.init.constant_(m.bias, 0)
-
-    def forward(self, x):
-        x = self.mlp(x)
-        x = F.normalize(x, dim=-1, p=2)
-        x = self.last_layer(x)
-        return x
-
-
-class DINOHead(torch.nn.Module):
-    def __init__(self, in_dim, out_dim, use_bn=False, norm_last_layer=True, n_layers=3, hidden_dim=2048, bottleneck_dim=256):
-        super().__init__()
-        n_layers = max(n_layers, 1)
-        if n_layers == 1:
-            self.mlp = torch.nn.Linear(in_dim, bottleneck_dim)
-        else:
-            layers = [torch.nn.Linear(in_dim, hidden_dim)]
-            if use_bn:
-                layers.append(torch.nn.BatchNorm1d(hidden_dim))
-            layers.append(torch.nn.GELU())
-            for _ in range(n_layers - 2):
-                layers.append(torch.nn.Linear(hidden_dim, hidden_dim))
-                if use_bn:
-                    layers.append(torch.nn.BatchNorm1d(hidden_dim))
-                layers.append(torch.nn.GELU())
-            layers.append(torch.nn.Linear(hidden_dim, bottleneck_dim))
-            self.mlp = torch.nn.Sequential(*layers)
-        self.apply(self._init_weights)
-        self.last_layer = torch.nn.utils.weight_norm(torch.nn.Linear(bottleneck_dim, out_dim, bias=False))
+        self.last_layer = torch.nn.utils.weight_norm(torch.nn.Linear(sizes[-2], sizes[-1], bias=False))
         self.last_layer.weight_g.data.fill_(1)
         if norm_last_layer:
             self.last_layer.weight_g.requires_grad = False
@@ -169,45 +135,39 @@ class MultiResolutionNet(torch.nn.Module):
     def __init__(self,
                  backbone_type: str,
                  backbone_in_ch: int,
-                 head_type: str,
-                 head_hidden_ch: int,
-                 head_bottleneck_ch: int,
+                 head_hidden_chs: List[int],
                  head_out_ch: int,
                  head_use_bn: bool):
         super().__init__()
-        self.backbone_type = backbone_type
-        self.backbone_in_ch = backbone_in_ch
-        self.head_type = head_type
-        self.head_hidden_ch = head_hidden_ch
-        self.head_bottleneck_ch = head_bottleneck_ch
-        self.head_out_ch = head_out_ch
-        self.head_use_bn = head_use_bn
 
         self.backbone = make_resnet_backbone(
-            backbone_in_ch=self.backbone_in_ch,
-            backbone_type=self.backbone_type)
+            backbone_in_ch=backbone_in_ch,
+            backbone_type=backbone_type)
         in_tmp = torch.zeros((1, self.backbone_in_ch, 32, 32))
         out_tmp = self.backbone(in_tmp)
         head_ch_in = out_tmp.shape[1]
 
-        if self.head_type == 'dino':
-            self.head = DINOHead(
-                in_dim=head_ch_in,
-                out_dim=self.head_out_ch,
-                use_bn=self.head_use_bn,
-                norm_last_layer=True,
-                n_layers=3,
-                hidden_dim=self.head_hidden_ch,
-                bottleneck_dim=self.head_bottleneck_ch)
-        elif self.head_type == 'mlp':
-            self.head = MLPHead(
-                in_dim=head_ch_in,
-                out_dim=self.head_out_ch,
-                use_bn=self.head_use_bn,
-                norm_last_layer=True,
-                hidden_dim=self.head_hidden_ch)
-        else:
-            raise Exception("Expected head_type = 'dino' or 'mlp'. Received {0}".format(self.head_type))
+        self.head = DINOHead(
+            in_dim=head_ch_in,
+            hidden_dim=head_hidden_chs,
+            out_dim=head_out_ch,
+            use_bn=head_use_bn,
+            norm_last_layer=True)
+
+    @staticmethod
+    def init_projection(
+            ch_in: int,
+            ch_out: int,
+            ch_hidden: List[int]=None):
+
+        sizes = [ch_in] + ch_hidden + [ch_out]
+        layers = []
+        for i in range(len(sizes) - 2):
+            layers.append(torch.nn.Linear(sizes[i], sizes[i + 1], bias=False))
+            layers.append(torch.nn.BatchNorm1d(sizes[i + 1]))
+            layers.append(torch.nn.ReLU(inplace=True))
+        layers.append(torch.nn.Linear(sizes[-2], sizes[-1], bias=False))
+        return torch.nn.Sequential(*layers)
 
     def forward(self, x):
         """ x is either a torch.Tensor or a list of torch.Tensor of possibly different resolutions.
@@ -252,11 +212,9 @@ class DinoModel(BenchmarkModelMixin):
     def __init__(
             self,
             # architecture
-            backbone_type: str,
             image_in_ch: int,
-            head_type: str,
-            head_hidden_ch: int,
-            head_bottleneck_ch: int,
+            backbone_type: str,
+            head_hidden_chs: List[int],
             head_use_bn: bool,
             head_out_ch: int,
             # teacher centering
@@ -296,9 +254,7 @@ class DinoModel(BenchmarkModelMixin):
         self.student = MultiResolutionNet(
             backbone_type=backbone_type,
             backbone_in_ch=image_in_ch,
-            head_type=head_type,
-            head_hidden_ch=head_hidden_ch,
-            head_bottleneck_ch=head_bottleneck_ch,
+            head_hidden_chs=head_hidden_chs,
             head_out_ch=head_out_ch,
             head_use_bn=head_use_bn,
         )
@@ -307,9 +263,7 @@ class DinoModel(BenchmarkModelMixin):
         self.teacher = MultiResolutionNet(
             backbone_type=backbone_type,
             backbone_in_ch=image_in_ch,
-            head_type=head_type,
-            head_hidden_ch=head_hidden_ch,
-            head_bottleneck_ch=head_bottleneck_ch,
+            head_hidden_chs=head_hidden_chs,
             head_out_ch=head_out_ch,
             head_use_bn=head_use_bn,
         )
@@ -369,11 +323,8 @@ class DinoModel(BenchmarkModelMixin):
         parser.add_argument("--image_in_ch", type=int, default=3, help="number of channels in the input images")
         parser.add_argument("--backbone_type", type=str, default="resnet34", help="backbone type",
                             choices=['resnet18', 'resnet34', 'resnet50'])
-        parser.add_argument("--head_type", type=str, default="mlp", help="head type",
-                            choices=['mlp', 'dino'])
-        parser.add_argument("--head_hidden_ch", type=int, default=2048, help="head hidden channels")
-        parser.add_argument("--head_bottleneck_ch", type=int, default=256, help="head bottleneck channels")
-        parser.add_argument("--head_out_ch", type=int, default=256, help="head output channels")
+        parser.add_argument("--head_hidden_chs", type=int, nargs='+', default=[256, 512], help="head hidden channels")
+        parser.add_argument("--head_out_ch", type=int, default=512, help="head output channels")
         parser.add_argument("--head_use_bn", type=smart_bool, default=True,
                             help="use batch normalization layers in the DINOHead")
 
