@@ -2,6 +2,7 @@ from typing import List, Any, Dict, Tuple
 import torch
 from argparse import ArgumentParser
 
+from pytorch_lightning.utilities.distributed import sync_ddp_if_available
 from torch.nn import functional as F
 from neptune.new.types import File
 from tissue_purifier.data_utils.dataset import MetadataCropperDataset
@@ -408,17 +409,8 @@ class VaeModel(BaseBenchmarkModel):
 
             # update the beta_vae if necessary
             if grad_due_to_mse_tmp is not None and grad_due_to_kl_tmp is not None:
-                world_grad_due_to_mse, world_grad_due_to_kl = self.all_gather([grad_due_to_mse_tmp, grad_due_to_kl_tmp])
-                if len(world_grad_due_to_mse.shape) == 1+len(grad_due_to_mse_tmp.shape):
-                    grad_due_to_mse = world_grad_due_to_mse.mean(dim=0)
-                    grad_due_to_kl = world_grad_due_to_kl.mean(dim=0)
-                else:
-                    grad_due_to_mse = world_grad_due_to_mse
-                    grad_due_to_kl = world_grad_due_to_kl
-
-                # print("grad_due_to_mse_tmp.shape", grad_due_to_mse_tmp.shape)
-                # print("world_grad_due_to_mse.shape", world_grad_due_to_mse.shape)
-                # print("grad_due_to_mse.shape", grad_due_to_mse.shape)
+                grad_due_to_mse = sync_ddp_if_available(grad_due_to_mse_tmp, group=None, reduce_op='mean')
+                grad_due_to_kl = sync_ddp_if_available(grad_due_to_kl_tmp, group=None, reduce_op='mean')
 
                 c11 = torch.dot(grad_due_to_kl, grad_due_to_kl) / self.beta_vae**2
                 c22 = torch.dot(grad_due_to_mse, grad_due_to_mse) / (1.0 - self.beta_vae)**2
