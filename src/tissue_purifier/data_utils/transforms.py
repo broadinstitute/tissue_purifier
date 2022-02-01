@@ -98,24 +98,24 @@ class RandomHFlip(torch.nn.Module):
 class DropoutSparseTensor(torch.nn.Module):
     """ Perform dropout on a sparse tensor. """
 
-    def __init__(self, p: float, dropout_rates: Union[float, Iterable[float]]):
+    def __init__(self, p: float, dropouts: Union[float, Iterable[float]]):
         """
         Args:
             p: the probability of applying dropout.
-            dropout_rates: the dropout rate will be chosen uniformly from one of this values
+            dropouts: the probabilities of dropping out entry from the sparse tensor
         """
         super().__init__()
         self.p = p
-        if isinstance(dropout_rates, float):
-            self.dropouts = tuple(dropout_rates)
-        elif isinstance(dropout_rates, Iterable):
-            self.dropouts = tuple(dropout_rates)
+        if isinstance(dropouts, float):
+            self.dropouts = (dropouts,)
+        elif isinstance(dropouts, Iterable):
+            self.dropouts = tuple(dropouts)
         else:
             raise Exception("Expected float or iterable. Received {0}".format(type(dropout_rates)))
 
-        assert min(dropout_rates) > 0.0, \
+        assert min(dropouts) > 0.0, \
             "The minimum value of dropout rates should be > 0.0. If you want dropout = 0 set p=0.0"
-        assert max(dropout_rates) < 1.0, \
+        assert max(dropouts) < 1.0, \
             "The maximum value of dropout rates should be < 1.0"
 
         self.dropouts_len = len(self.dropouts)
@@ -133,11 +133,11 @@ class DropoutSparseTensor(torch.nn.Module):
             return sp_tensor
         else:
             index = torch.randint(low=0, high=self.dropouts_len, size=[1]).item()
-            dropout_rate = self.dropouts[index]
+            success_probability = 1.0 - self.dropouts[index]
 
             values = sp_tensor.values()
             values_new = torch.distributions.binomial.Binomial(total_count=values.float(),
-                                                               probs=1.0-dropout_rate,  # prob of surviving dropout
+                                                               probs=success_probability,
                                                                validate_args=False).sample().int()
             mask_filter = (values_new > 0)
 
