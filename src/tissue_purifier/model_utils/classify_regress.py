@@ -994,6 +994,13 @@ def classify_and_regress(
             _df_tmp = pandas.DataFrame(_tmp_dict, index=numpy.arange(rkf.get_n_splits()))
         elif n_splits == 1 and n_repeats == 1:
             regressor.fit(_X, _y)
+
+            # DEBUG
+            y_pred = regressor.predict(_X)
+            mask_y_pred = numpy.isfinite(y_pred)
+            print("Y_pred is not finite ->", y_pred[~mask_y_pred])
+            print("corresponding Y_true ->", _y[~mask_y_pred])
+
             _tmp_dict = {
                 "x_key": x_key,
                 "y_key": y_key,
