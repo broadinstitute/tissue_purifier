@@ -6,13 +6,13 @@ from pytorch_lightning.utilities.distributed import sync_ddp_if_available
 
 from neptune.new.types import File
 from tissue_purifier.model_utils.resnet_backbone import make_resnet_backbone
-from tissue_purifier.model_utils.base_benchmark_model import BaseBenchmarkModel
+from tissue_purifier.model_utils.benckmark_mixin import BenchmarkModelMixin
 from tissue_purifier.plot_utils.plot_misc import show_corr_matrix
 from tissue_purifier.misc_utils.misc import LARS
 from tissue_purifier.misc_utils.misc import linear_warmup_and_cosine_protocol
 
 
-class BarlowModel(BaseBenchmarkModel):
+class BarlowModel(BenchmarkModelMixin):
     """
     See
     official: https://github.com/facebookresearch/barlowtwins

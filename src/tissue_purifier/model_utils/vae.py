@@ -9,7 +9,7 @@ from tissue_purifier.data_utils.dataset import MetadataCropperDataset
 from tissue_purifier.plot_utils.plot_images import show_batch
 from tissue_purifier.misc_utils.dict_util import concatenate_list_of_dict
 from tissue_purifier.misc_utils.misc import linear_warmup_and_cosine_protocol
-from tissue_purifier.model_utils.base_benchmark_model import BaseBenchmarkModel
+from tissue_purifier.model_utils.benckmark_mixin import BenchmarkModelMixin
 from tissue_purifier.model_utils.resnet_backbone import (
     make_vae_decoder_backbone_from_scratch,
     make_vae_decoder_backbone_from_resnet,
@@ -144,7 +144,7 @@ class ConvolutionalVae(torch.nn.Module):
         return {'x_rec': x_rec, 'x_in': x, 'mu': dict_encoder['mu'], 'log_var': dict_encoder['log_var']}
 
 
-class VaeModel(BaseBenchmarkModel):
+class VaeModel(BenchmarkModelMixin):
     def __init__(
             self,
 
@@ -317,8 +317,10 @@ class VaeModel(BaseBenchmarkModel):
             'kl_loss': kl_loss,
         }
 
-    def shared_step(self, img_in) -> Dict[str, torch.Tensor]:
-        return self.vae(img_in)
+    def shared_step(self, x):
+        # return mu twice so that it is interpreted as backbone and head features
+        mu = self(x)
+        return mu, mu
 
     def forward(self, x) -> torch.Tensor:
         # this is the stuff that returns the embeddings "
@@ -345,7 +347,7 @@ class VaeModel(BaseBenchmarkModel):
                 "img.shape {0} vs image_size {1}".format(img_in.shape[-1], self.image_size)
 
         # does the encoding-decoding
-        dict_vae = self.shared_step(img_in)
+        dict_vae = self.vae(img_in)
         loss_dict = self.compute_losses(
             x_in=dict_vae['x_in'],
             x_rec=dict_vae['x_rec'],
@@ -456,33 +458,17 @@ class VaeModel(BaseBenchmarkModel):
             tmp = beta_momentum * self.beta_vae + (1.0 - beta_momentum) * ideal_beta
             self.beta_vae = tmp.clamp(min=1.0E-5, max=1.0 - 1.0E-5)
 
-    def validation_step(self, batch, batch_idx, dataloader_idx: int = -1) -> Dict[str, torch.Tensor]:
-        """ Vae is a bit different from backbone/projection head models therefore I am overwriting this """
-        list_imgs: List[torch.sparse.Tensor]
-        list_labels: List[int]
-        list_metadata: List[MetadataCropperDataset]
-        list_imgs, list_labels, list_metadata = batch
+    def validation_step(self, batch, batch_idx, dataloader_idx: int = -1):
 
-        # Compute the embeddings
-        img_in = self.trsfm_test(list_imgs)
-        dict_vae = self.shared_step(img_in)
-        loss_dict = self.compute_losses(
-            x_in=dict_vae['x_in'],
-            x_rec=dict_vae['x_rec'],
-            mu=dict_vae['mu'],
-            log_var=dict_vae['log_var']
-        )
-        loss = self.beta_vae * loss_dict["kl_loss"] + (1.0 - self.beta_vae) * loss_dict["mse_loss"]
-
-        batch_size = len(list_imgs)
-        self.log('val_loss', loss, on_step=False, on_epoch=True, rank_zero_only=True,
-                 batch_size=batch_size)
-        self.log('val_mse_loss', loss_dict["mse_loss"], on_step=False, on_epoch=True, rank_zero_only=True,
-                 batch_size=batch_size)
-        self.log('val_kl_loss', loss_dict["kl_loss"], on_step=False, on_epoch=True, rank_zero_only=True,
-                 batch_size=batch_size)
-
+        # Log an example of the reconstructed images
         if self.global_rank == 0 and batch_idx == 0:
+            list_imgs: List[torch.sparse.Tensor]
+            list_labels: List[int]
+            list_metadata: List[MetadataCropperDataset]
+            list_imgs, list_labels, list_metadata = batch
+
+            img_in = self.trsfm_test(list_imgs)
+            dict_vae = self.vae(img_in)
 
             img_out = dict_vae['x_rec'].clone().detach().float()  # make sure this is in full precision for plotting
             one_ch_tmp_out_plot = show_batch(img_out[0].unsqueeze(dim=-3), n_col=5,
@@ -502,34 +488,8 @@ class VaeModel(BaseBenchmarkModel):
                 self.logger.run["rec/input_imgs/all_ch"].log(File.as_image(all_ch_tmp_in_plot))
                 self.already_loaded_input_val_images = True
 
-        # Collect the xywh for the patches in the validation
-        w, h = img_in.shape[-2:]
-        patch_x = torch.tensor([metadata.loc_x for metadata in list_metadata],
-                               dtype=img_in.dtype, device=img_in.device)
-        patch_y = torch.tensor([metadata.loc_y for metadata in list_metadata],
-                               dtype=img_in.dtype, device=img_in.device)
-        patch_w = w * torch.ones_like(patch_x)
-        patch_h = h * torch.ones_like(patch_x)
-        patches_xywh = torch.stack([patch_x, patch_y, patch_w, patch_h], dim=-1)
-
-        # Create the validation dictionary. Note that all the entries are torch.Tensors
-        val_dict = {
-            "features_mu": dict_vae['mu'],
-            "patches_xywh": patches_xywh
-        }
-
-        # Add to this dictionary the things I want to classify and regress
-        dict_classify = concatenate_list_of_dict([self.get_metadata_to_classify(metadata)
-                                                  for metadata in list_metadata])
-        for k, v in dict_classify.items():
-            val_dict["classify_"+k] = torch.tensor(v, device=self.device)
-
-        dict_regress = concatenate_list_of_dict([self.get_metadata_to_regress(metadata)
-                                                 for metadata in list_metadata])
-        for k, v in dict_regress.items():
-            val_dict["regress_" + k] = torch.tensor(v, device=self.device)
-
-        return val_dict
+        # call the super.validation_step
+        super(VaeModel, self).validation_step(batch, batch_idx, dataloader_idx)
 
     def configure_optimizers(self):
         # the learning_rate and weight_decay are very large. They are just placeholder.

@@ -127,12 +127,12 @@ def linear_classification(world_dict: dict):
     return df_mean, df_std
 
 
-class BaseBenchmarkModel(LightningModule):
+class BenchmarkModelMixin(LightningModule):
     """
     Common part to VAE, Dino, Barlow, SimClr with the routine to evaluate the embeddings
     """
     def __init__(self, val_iomin_threshold: float):
-        super(BaseBenchmarkModel, self).__init__()
+        super(BenchmarkModelMixin, self).__init__()
         self.val_iomin_threshold = val_iomin_threshold
 
     def get_metadata_to_regress(self, metadata) -> dict:
@@ -322,6 +322,7 @@ class BaseBenchmarkModel(LightningModule):
                 print("printed the embeddings")
 
                 # knn classification/regression
+                print("starting knn classification/regression")
                 df_mean_knn, df_std_knn = knn_classification(world_dict, self.val_iomin_threshold)
                 # print("df_mean_knn ->", df_mean_knn)
 
@@ -338,6 +339,7 @@ class BaseBenchmarkModel(LightningModule):
                             self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
 
                 # linear classification/regression
+                print("starting linear classification/regression")
                 df_mean_linear, df_std_linear = linear_classification(world_dict)
                 # print("df_mean_linear ->", df_mean_linear)
 

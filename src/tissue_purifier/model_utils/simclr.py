@@ -2,12 +2,10 @@ from typing import List, Dict, Any
 
 import torch
 from argparse import ArgumentParser
-import torchvision
 from torch.nn import functional as F
 
 from tissue_purifier.model_utils.resnet_backbone import make_resnet_backbone
-from tissue_purifier.model_utils.base_benchmark_model import BaseBenchmarkModel
-from tissue_purifier.plot_utils.plot_misc import show_corr_matrix
+from tissue_purifier.model_utils.benckmark_mixin import BenchmarkModelMixin
 from tissue_purifier.misc_utils.misc import LARS
 from tissue_purifier.misc_utils.misc import linear_warmup_and_cosine_protocol
 
@@ -72,7 +70,7 @@ class NTXentLoss(torch.nn.Module):
         return loss
 
 
-class SimclrModel(BaseBenchmarkModel):
+class SimclrModel(BenchmarkModelMixin):
     """
     See
     https://pytorch-lightning.readthedocs.io/en/stable/starter/style_guide.html  and

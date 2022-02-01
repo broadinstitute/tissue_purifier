@@ -8,7 +8,7 @@ import numpy
 import math
 
 from tissue_purifier.model_utils.resnet_backbone import make_resnet_backbone
-from tissue_purifier.model_utils.base_benchmark_model import BaseBenchmarkModel
+from tissue_purifier.model_utils.benckmark_mixin import BenchmarkModelMixin
 from tissue_purifier.misc_utils.misc import LARS
 from tissue_purifier.misc_utils.misc import (
     smart_bool,
@@ -239,7 +239,7 @@ class MultiResolutionNet(torch.nn.Module):
         return self.head(output), output
 
 
-class DinoModel(BaseBenchmarkModel):
+class DinoModel(BenchmarkModelMixin):
     """
     See
     https://pytorch-lightning.readthedocs.io/en/stable/starter/style_guide.html  and
@@ -432,7 +432,7 @@ class DinoModel(BaseBenchmarkModel):
         args = parser.parse_args(args=[])
         return args.__dict__
 
-    def forward(self, x) -> (torch.Tensor, torch.Tensor):
+    def forward(self, x) -> torch.Tensor:
         z, y = self.teacher(x)
         return y
 
