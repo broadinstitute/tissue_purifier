@@ -1,0 +1,77 @@
+# general
+random_seed: 1
+neptune_project: cellarium/tissue-purifier
+batch_size_per_gpu: 128
+check_val_every_n_epoch: 10
+checkpoint_interval_minutes: 25
+model: barlow
+data_dir: ./slide_seq_testis
+dataset: slide_seq_testis
+num_workers: -1
+max_time_minutes: 600
+gradient_clip_algorithm: value
+gradient_clip_val: 0.0
+overfit_batches: 0
+initialization_type: scratch
+training: true
+logging: true
+precision: 16
+predict: false
+profiler: passthrough
+detect_anomaly: false
+deterministic: false
+
+# validation
+val_iomin_threshold: 0.0
+
+# architecture
+backbone_type: resnet18
+backbone_pretrained: true
+head_hidden_chs:
+  - 512
+  - 512
+head_out_ch: 512
+
+# loss
+lambda_off_diagonal: 5.0E-3
+
+# optimizers
+optimizer_type: adam
+min_learning_rate: 1.0E-5
+max_learning_rate: 1.0E-3
+min_weight_decay: 1.5E-6
+max_weight_decay: 1.5E-6
+warm_up_epochs: 10
+warm_down_epochs: 100
+max_epochs: 1000
+
+# dataset
+n_crops_for_tissue_test: 600
+n_crops_for_tissue_train: 600
+n_element_min_for_crop: 100
+load_count_matrix: false
+n_neighbours_moran: 6
+pixel_size: 4.0
+image_in_ch: 9
+
+# augmentations
+n_global_crops: 1
+n_local_crops: 1
+global_size: 96
+local_size: 96
+dropout_rates:
+- 0.1
+- 0.2
+- 0.3
+global_scale:
+- 0.8
+- 1.0
+local_scale:
+- 0.8
+- 1.0
+occlusion_fraction:
+- 0.1
+- 0.3
+rasterize_sigma:
+- 1.0
+- 1.5
