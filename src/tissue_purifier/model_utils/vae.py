@@ -19,7 +19,7 @@ from tissue_purifier.model_utils.resnet_backbone import (
 
 class ConvolutionalVae(torch.nn.Module):
     def __init__(self,
-                 vae_type: str,
+                 backbone_type: str,
                  in_size: int,
                  in_channels: int,
                  latent_dim: int,
@@ -30,25 +30,25 @@ class ConvolutionalVae(torch.nn.Module):
 
         assert (in_size % 32) == 0, "The input size must be a multiple of 32. Received {0}".format(in_size)
 
-        assert vae_type in ('vanilla', 'resnet18', 'resnet34', 'resnet50'), \
-            "Invalid vae_type. Received {0}".format(vae_type)
+        assert backbone_type in ('vanilla', 'resnet18', 'resnet34', 'resnet50'), \
+            "Invalid vae_type. Received {0}".format(backbone_type)
         x_fake = torch.zeros((2, in_channels, in_size, in_size))
 
         # encoder
-        print("making encoder", vae_type)
+        print("making encoder", backbone_type)
         self.latent_dim = latent_dim
-        if vae_type == 'vanilla':
+        if backbone_type == 'vanilla':
             self.encoder_backbone = make_vae_encoder_backbone_from_scratch(
                 in_channels=in_channels,
                 hidden_dims=hidden_dims
             )
-        elif vae_type.startswith("resnet"):
+        elif backbone_type.startswith("resnet"):
             self.encoder_backbone = make_vae_encoder_backbone_from_resnet(
                 in_channels=in_channels,
-                resnet_type=vae_type
+                resnet_type=backbone_type
             )
         else:
-            raise Exception("Invalid vae_type. Received {0}".format(vae_type))
+            raise Exception("Invalid vae_type. Received {0}".format(backbone_type))
 
         x_latent = self.encoder_backbone(x_fake)
         small_ch = x_latent.shape[-3]
@@ -60,15 +60,15 @@ class ConvolutionalVae(torch.nn.Module):
         self.decoder_input = torch.nn.Linear(latent_dim, small_ch * self.small_size * self.small_size)
 
         z_to_decode = torch.zeros((2, small_ch, self.small_size, self.small_size))
-        if vae_type == 'vanilla':
+        if backbone_type == 'vanilla':
             tmp_list = list(hidden_dims)
             tmp_list.reverse()
             reverse_hidden_dims = tuple(tmp_list)
             self.decoder_backbone = make_vae_decoder_backbone_from_scratch(hidden_dims=reverse_hidden_dims)
-        elif vae_type.startswith("resnet"):
-            self.decoder_backbone = make_vae_decoder_backbone_from_resnet(resnet_type=vae_type)
+        elif backbone_type.startswith("resnet"):
+            self.decoder_backbone = make_vae_decoder_backbone_from_resnet(resnet_type=backbone_type)
         else:
-            raise Exception("Invalid vae_type. Received {0}".format(vae_type))
+            raise Exception("Invalid vae_type. Received {0}".format(backbone_type))
 
         x_tmp = self.decoder_backbone(z_to_decode)
         ch_tmp = x_tmp.shape[-3]
@@ -149,7 +149,7 @@ class VaeModel(BenchmarkModelMixin):
             self,
 
             # architecture
-            vae_type: str,
+            backbone_type: str,
             image_size: int,
             image_in_ch: int,
             latent_dim: int,
@@ -206,7 +206,7 @@ class VaeModel(BenchmarkModelMixin):
 
         self.image_size = image_size
         self.vae = ConvolutionalVae(
-            vae_type=vae_type,
+            backbone_type=backbone_type,
             in_size=image_size,
             in_channels=image_in_ch,
             latent_dim=latent_dim,
@@ -256,7 +256,7 @@ class VaeModel(BenchmarkModelMixin):
                             help="Algorithm to use for gradient clipping.")
 
         # architecture
-        parser.add_argument("--vae_type", type=str, default="resnet18",
+        parser.add_argument("--backbone_type", type=str, default="resnet18",
                             choices=["vanilla", "resnet18", "resnet34", "resnet50"],
                             help="The backbone architecture of the VAE")
         parser.add_argument("--image_size", type=int, default=64,
