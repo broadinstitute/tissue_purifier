@@ -147,7 +147,6 @@ class ConvolutionalVae(torch.nn.Module):
 class VaeModel(BenchmarkModelMixin):
     def __init__(
             self,
-
             # architecture
             backbone_type: str,
             global_size: int,
@@ -356,6 +355,8 @@ class VaeModel(BenchmarkModelMixin):
             mu=dict_vae['mu'],
             log_var=dict_vae['log_var']
         )
+        assert torch.all(torch.isfinite(dict_vae['mu']))
+        assert torch.all(torch.isfinite(dict_vae['x_rec']))
 
         # Manual optimization
         opt.zero_grad()
