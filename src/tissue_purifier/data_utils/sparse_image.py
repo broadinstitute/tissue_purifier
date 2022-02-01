@@ -526,10 +526,9 @@ class SparseImage:
                 (N_patches), (N_patches, ch), (N_patches, w, h) or (N_patches, ch, w, h) respectively.
             overwrite: bool, in case of collision between keys this variable controls when to overwrite the values in
                 the image_properties_dict.
-
-FROM HERE
-            strategy: str, either 'average' (default) or 'nearest'. How are the patch property used
-
+            strategy: str, either 'average' (default) or 'closest'. If 'average' the value of each pixel in the image
+                is obtained by averaging the contribution of all patches which contain that pixel. If 'nearest' each
+                pixel takes the value from the patch which center is closets to the pixel.
             verbose: bool, if true print intermediate messages
         """
 
@@ -563,7 +562,7 @@ FROM HERE
                 print("The key {0} is already present in image_properties_dict. \
                         This value will be overwritten".format(k))
 
-        # Here is where the actual calculation start
+        # Here is where the actual calculation starts
         for k in keys_to_transfer:
             if verbose:
                 print("working on ->", k)
@@ -596,19 +595,38 @@ FROM HERE
             w_all, h_all = self.shape[-2:]
             tmp_result = torch.zeros((ch, w_all, h_all), device=patch_quantity.device, dtype=patch_quantity.dtype)
             tmp_counter = torch.zeros((w_all, h_all), device=patch_quantity.device, dtype=torch.int)
+            tmp_distance = torch.ones((w_all, h_all), device=patch_quantity.device, dtype=torch.float) * numpy.inf
             for n, xywh in enumerate(patch_xywh):
                 x, y, w, h = xywh.unbind(dim=0)
-                tmp_counter[x:x + w, y:y + h] += 1
-                tmp_result[:, x:x + w, y:y + h] += patch_quantity[n]
+                if strategy == 'average':
+                    tmp_counter[x:x+w, y:y+h] += 1
+                    tmp_result[:, x:x+w, y:y+h] += patch_quantity[n]
+                elif strategy == 'closest':
+                    dw_from_center = torch.linspace(start=-0.5 * (w - 1), end=0.5 * (w - 1), steps=w)
+                    dh_from_center = torch.linspace(start=-0.5 * (h - 1), end=0.5 * (h - 1), steps=h)
+                    d2_from_center = dw_from_center[:, None].pow(2) + dh_from_center[None, :].pow(2)
+                    mask = (d2_from_center < tmp_distance[x:x + w, y:y + h])  # shape (w, h)
 
-            self.image_properties_dict[k] = tmp_result / tmp_counter.clamp(min=1.0)
+                    # If the current patch has a smaller distance. Overwrite patch_quantity and tmp_distance
+                    tmp_result[:, x:x+w, y:y+h] = \
+                        torch.where(mask[None], patch_quantity[n], tmp_result[:, x:x+w, y:y+h])
+                    tmp_distance[x:x+w, y:y+h] = torch.min(d2_from_center, tmp_distance[x:x+w, y:y+h])
+                else:
+                    raise ValueError("strategy can only be 'average' or 'closest'. Received {0}".format(strategy))
+
+            if strategy == 'average':
+                self.image_properties_dict[k] = tmp_result / tmp_counter.clamp(min=1.0)
+            elif strategy == 'closest':
+                self.image_properties_dict[k] = tmp_result
+            else:
+                raise ValueError("strategy can only be 'average' or 'closest'. Received {0}".format(strategy))
 
     def image_property_to_spot_property(
             self,
             keys: List[str],
             overwrite: bool = False,
             verbose: bool = False,
-            interpolation_method: str = "nearest"):
+            strategy: str = "closest"):
         """
         Evaluate the image_properties_dict[keys] at the spots location (either cell or genes).
         Store the results in the spot_properties_dict
@@ -618,15 +636,15 @@ FROM HERE
             overwrite: bool, in case of collision between the keys this variable controls
                 when the value will be overwritten.
             verbose: bool, if true intermediate messages are displayed.
-            interpolation_method: str, either 'bilinear' or 'nearest'.
+            strategy: str, either 'closest' (default) or 'bilinear'.
         """
 
-        def _interpolation(data_to_interpolate, x_float, y_float, method):
-            if method == 'nearest':
+        def _interpolation(data_to_interpolate, x_float, y_float, _strategy):
+            if _strategy == 'closest':
                 ix_long, iy_long = torch.round(x_float).long(), torch.round(y_float).long()
                 return data_to_interpolate[..., ix_long, iy_long]
 
-            elif method == 'bilinear':
+            elif _strategy == 'bilinear':
 
                 x1 = torch.floor(x_float).long()
                 x2 = torch.ceil(x_float).long()
@@ -651,8 +669,8 @@ FROM HERE
         assert set(keys).issubset(set(self.image_properties_dict.keys())), \
             "Some keys are not present in self.image_properties_dict"
 
-        assert interpolation_method == 'bilinear' or interpolation_method == 'nearest', "Invalid interpolation_method \
-        Expected 'bilinear' or 'nearest'. Received {0}. ".format(interpolation_method)
+        assert strategy == 'bilinear' or strategy == 'closest', "Invalid interpolation_method \
+        Expected 'bilinear' or 'closest'. Received {0}. ".format(strategy)
 
         destination_keys = self._spot_properties_dict.keys()
         for k in keys:
@@ -677,7 +695,7 @@ FROM HERE
             y_raw = torch.from_numpy(self.y_raw).float()
             x_pixel, y_pixel = self.raw_to_pixel(x_raw=x_raw, y_raw=y_raw)
             interpolated_values = _interpolation(
-                image_quantity, x_pixel, y_pixel, interpolation_method).cpu()
+                image_quantity, x_pixel, y_pixel, strategy).cpu()
 
             assert len(interpolated_values.shape) == 2
             self._spot_properties_dict[k] = interpolated_values.permute(dims=(1, 0))
