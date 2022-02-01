@@ -68,7 +68,7 @@ def test_classifier(x_type, y_type):
 @pytest.mark.parametrize("x_type", ["torch", "numpy"])
 @pytest.mark.parametrize("y_type", ["torch", "numpy", "list"])
 def test_noisy_classifier(x_type, y_type, hard_bootstrapping):
-    max_iter = 5
+    max_epochs = 5
     n, d = 10, 3
     X = torch.randn(n, d)
     y = torch.randint(low=3, high=5, size=[n])
@@ -80,7 +80,7 @@ def test_noisy_classifier(x_type, y_type, hard_bootstrapping):
         y = y.cpu().tolist()
 
     classifier = PlClassifier(
-        max_iter=max_iter,
+        max_epochs=max_epochs,
         noisy_labels=True,
         bootstrap_epoch_start=3,
         lambda_reg=1.0,

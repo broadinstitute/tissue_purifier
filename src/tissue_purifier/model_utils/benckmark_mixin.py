@@ -98,12 +98,6 @@ def classify_and_regress(
             return numpy.array(x)
 
     def _do_regression(_X, _y, x_key, y_key):
-        print("regression", x_key, y_key)
-        mask_x = numpy.isfinite(_X)
-        mask_y = numpy.isfinite(_y)
-        assert numpy.all(mask_x), "ON entry {0} is not finite. {1}".format(x_key, _X[~mask_x])
-        assert numpy.all(mask_y), "ON entry {0} is not finite. {1}".format(y_key, _y[~mask_y])
-
         _X, _y = _manual_shuffle(_X, _y)
         _tmp_dict = {}
 
@@ -120,13 +114,6 @@ def classify_and_regress(
             _df_tmp = pandas.DataFrame(_tmp_dict, index=numpy.arange(rkf.get_n_splits()))
         elif n_splits == 1 and n_repeats == 1:
             regressor.fit(_X, _y)
-
-            # DEBUG
-            y_pred = regressor.predict(_X)
-            mask_y_pred = numpy.isfinite(y_pred)
-            print("Y_pred is not finite ->", y_pred[~mask_y_pred])
-            print("corresponding Y_true ->", _y[~mask_y_pred])
-
             _tmp_dict = {
                 "x_key": x_key,
                 "y_key": y_key,
@@ -139,12 +126,6 @@ def classify_and_regress(
         return _df_tmp
 
     def _do_classification(_X, _y, x_key, y_key):
-        print("classification", x_key, y_key)
-        mask_x = numpy.isfinite(_X)
-        mask_y = numpy.isfinite(_y)
-        assert numpy.all(mask_x), "ON entry {0} is not finite. {1}".format(x_key, _X[~mask_x])
-        assert numpy.all(mask_y), "ON entry {0} is not finite. {1}".format(y_key, _y[~mask_y])
-
         _X, _y = _manual_shuffle(_X, _y)
         _tmp_dict = {}
 
@@ -541,7 +522,7 @@ class BenchmarkModelMixin(LightningModule):
 
                 # linear classification/regression
                 print("starting linear classification/regression")
-                df_mean_linear, df_std_linear = linear_classification_regression(world_dict)
+                df_mean_linear, df_std_linear = linear_classification_regression(world_dict, self.val_iomin_threshold)
                 # print("df_mean_linear ->", df_mean_linear)
 
                 for row in df_mean_linear.itertuples():
