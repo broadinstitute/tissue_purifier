@@ -271,7 +271,7 @@ class DinoModel(BenchmarkModelMixin):
         for p in self.teacher.parameters():
             p.requires_grad = False
 
-        self.dim_out = self.teacher.head_out_ch
+        self.dim_out = head_out_ch
         self.register_buffer("center_teacher", torch.zeros(self.dim_out, requires_grad=False).float())
         self.register_buffer("population_t", torch.zeros(self.dim_out, requires_grad=False).float())
         self.register_buffer("population_s", torch.zeros(self.dim_out, requires_grad=False).float())
