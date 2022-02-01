@@ -489,7 +489,7 @@ class VaeModel(BenchmarkModelMixin):
                 self.already_loaded_input_val_images = True
 
         # call the super.validation_step
-        super(VaeModel, self).validation_step(batch, batch_idx, dataloader_idx)
+        return super(VaeModel, self).validation_step(batch, batch_idx, dataloader_idx)
 
     def configure_optimizers(self):
         # the learning_rate and weight_decay are very large. They are just placeholder.
