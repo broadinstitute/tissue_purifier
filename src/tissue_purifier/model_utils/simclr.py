@@ -215,7 +215,6 @@ class SimclrModel(BaseBenchmarkModel):
             img1 = self.trsfm_train_global(list_imgs)
             img2 = self.trsfm_train_global(list_imgs)
 
-
         z1, y1 = self.shared_step(img1)
         z2, y2 = self.shared_step(img2)
 

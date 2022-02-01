@@ -2,7 +2,6 @@ from typing import Sequence, List, Any, Dict
 
 import torch
 from argparse import ArgumentParser
-import torchvision
 from pytorch_lightning.utilities.distributed import sync_ddp_if_available
 
 from neptune.new.types import File

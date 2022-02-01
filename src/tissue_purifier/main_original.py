@@ -71,8 +71,8 @@ def initialization(
     else:
         raise Exception("Invalid model value. Received {0}".format(args_dict["model"]))
 
-
     if initialization_type in {'resume'}:
+        # use ckpt_file for everything
         pl_model = PlModel.load_from_checkpoint(checkpoint_path=ckpt_file)
         # TODO: I am having trouble using the same run_id
         neptune_run_id = None  # pl_model.neptune_run_id

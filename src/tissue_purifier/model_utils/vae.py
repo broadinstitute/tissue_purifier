@@ -37,9 +37,15 @@ class ConvolutionalVae(torch.nn.Module):
         print("making encoder", vae_type)
         self.latent_dim = latent_dim
         if vae_type == 'vanilla':
-            self.encoder_backbone = make_vae_encoder_backbone_from_scratch(in_channels=in_channels, hidden_dims=hidden_dims)
+            self.encoder_backbone = make_vae_encoder_backbone_from_scratch(
+                in_channels=in_channels,
+                hidden_dims=hidden_dims
+            )
         elif vae_type.startswith("resnet"):
-            self.encoder_backbone = make_vae_encoder_backbone_from_resnet(in_channels=in_channels, resnet_type=vae_type)
+            self.encoder_backbone = make_vae_encoder_backbone_from_resnet(
+                in_channels=in_channels,
+                resnet_type=vae_type
+            )
         else:
             raise Exception("Invalid vae_type. Received {0}".format(vae_type))
 
