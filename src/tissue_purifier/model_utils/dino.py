@@ -143,7 +143,7 @@ class MultiResolutionNet(torch.nn.Module):
         self.backbone = make_resnet_backbone(
             backbone_in_ch=backbone_in_ch,
             backbone_type=backbone_type)
-        in_tmp = torch.zeros((1, self.backbone_in_ch, 32, 32))
+        in_tmp = torch.zeros((1, backbone_in_ch, 32, 32))
         out_tmp = self.backbone(in_tmp)
         head_ch_in = out_tmp.shape[1]
 

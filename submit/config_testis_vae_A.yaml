@@ -2,8 +2,8 @@
 random_seed: 11
 neptune_project: cellarium/tissue-purifier
 batch_size_per_gpu: 64
-check_val_every_n_epoch: 10
-checkpoint_interval_minutes: 5
+check_val_every_n_epoch: 1
+checkpoint_interval_minutes: 25
 model: vae
 data_dir: ./slide_seq_testis
 dataset: slide_seq_testis
@@ -25,10 +25,10 @@ deterministic: false
 val_iomin_threshold: 0.0
 
 # architecture
-backbone_type: resnet18
+backbone_type: resnet18  # resnet18, resnet34, resnet50, vanilla
 latent_dim: 1024
 decoder_output_activation: identity
-encoder_hidden_dims:
+encoder_hidden_dims:  # used only if backbone type is vanilla
 - 1
 - 2
 - 3
@@ -61,8 +61,9 @@ n_global_crops: 1
 n_local_crops: 0
 global_size: 96
 local_size: 64
-dropout_range:
+dropouts:
 - 0.1
+- 0.2
 - 0.3
 global_scale:
 - 0.8
@@ -75,4 +76,4 @@ occlusion_fraction:
 - 0.3
 rasterize_sigma:
 - 0.5
-- 2.0
+- 1.0
