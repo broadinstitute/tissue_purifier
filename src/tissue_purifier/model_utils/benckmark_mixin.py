@@ -1,15 +1,19 @@
 import numpy
 import torch
-from typing import Dict, List, Sequence
+import pandas
+from typing import Dict, List, Sequence, Union
 from neptune.new.types import File
 from pytorch_lightning import LightningModule
+
+from sklearn.base import is_regressor, is_classifier
+from sklearn.metrics import r2_score, accuracy_score
+from sklearn.model_selection import RepeatedStratifiedKFold, RepeatedKFold
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.linear_model import RidgeClassifierCV, RidgeCV
 
 from tissue_purifier.data_utils.dataset import MetadataCropperDataset
 from tissue_purifier.plot_utils.plot_images import show_raw_all_channels
 from tissue_purifier.plot_utils.plot_embeddings import plot_embeddings
-from tissue_purifier.model_utils.classify_regress import classify_and_regress
 from tissue_purifier.misc_utils.nms import NonMaxSuppression
 from tissue_purifier.misc_utils.dict_util import (
     concatenate_list_of_dict,
@@ -20,13 +24,196 @@ from tissue_purifier.misc_utils.misc import (
     SmartUmap)
 
 
-def knn_classification(world_dict: dict, val_iomin_threshold: float):
+def classify_and_regress(
+        input_dict: dict,
+        feature_keys: List[str],
+        regress_keys: List[str] = None,
+        classify_keys: List[str] = None,
+        regressor: "sklearn_like_regressor" = None,
+        classifier: "sklearn_like_classifier" = None,
+        n_splits: int = 5,
+        n_repeats: int = 1,
+        verbose: bool = False) -> [pandas.DataFrame, pandas.DataFrame]:
     """
-    Make subdictionary with non-overlapping patches.
-    """
-    assert {"patches_xywh", "classify_tissue_label"}.issubset(world_dict.keys())
+    Train a Classifier and a Regressor to use some featutes to predict other features.
 
-    # Classification
+    Args:
+        input_dict: dict with both the feature to use and the one to predict
+        regressor: the regressor to train
+        classifier: the classifier to train
+        feature_keys: keys corresponding to the independent variables
+        regress_keys: keys corresponding to the variables to regress
+        classify_keys: keys corresponding to the variables to classify
+        n_splits: int, number of splits for RepeatedKFold (regressor) or RepeatedStratifiedKFold (classifier).
+            If n_splits is 5 (defaults) then train_test_split is 80% - 20%.
+        n_repeats: int, number of repeats for RepeatedKFold (regressor) or RepeatedStratifiedKFold (classifier).
+            The total number of trained model is n_plists * n_repeats.
+        verbose: bool, if true print some intermediate statements
+
+    Returns:
+        A ddataframe. Each row is a different X,y combination with the metrics describing the quality of the
+        regression/classification.
+    """
+    if regress_keys is not None:
+        assert is_regressor(regressor) or regressor.is_regressor, "Please pass in a regressor"
+
+    if classify_keys is not None:
+        assert is_classifier(classifier) or classifier.is_classifier, "Please pass in a classifier"
+
+    assert isinstance(n_splits, int) and isinstance(n_repeats, int) and n_splits >= 1 and n_repeats >= 1, \
+        "Error. n_splits = {0} and n_repeats = {1} must be integers >= 1.".format(n_splits, n_repeats)
+    assert n_splits > 1 or (n_splits == 1 and n_repeats == 1), \
+        "Misconfiguration error. It does not make sense to have n_splits == 1 and n_repeats != 1"
+
+    assert isinstance(feature_keys, list), \
+        "Feature_keys need to be a list. Received {0}".format(type(feature_keys))
+    assert regress_keys is None or isinstance(regress_keys, list), \
+        "Regress_keys need to be a list. Received {0}".format(type(regress_keys))
+    assert classify_keys is None or isinstance(classify_keys, list), \
+        "Classify_keys need to be a list. Received {0}".format(type(classify_keys))
+
+    assert set(feature_keys).issubset(input_dict.keys()), \
+        "Feature keys are not present in input dictionary."
+    assert regress_keys is None or set(regress_keys).issubset(set(input_dict.keys())), \
+        "Regress keys are not present in input dictionary."
+    assert classify_keys is None or set(classify_keys).issubset(set(input_dict.keys())), \
+        "Classify keys are not present in input dictionary."
+
+    def _manual_shuffle(_X, _y):
+        assert _X.shape[0] == _y.shape[0]
+        random_index = numpy.random.permutation(_y.shape[0])
+        return _X[random_index], _y[random_index]
+
+    def _preprocess_to_numpy(x, len_shape: int):
+        """ convert the features into a 2D numpy tensor (n, p) and the targets into a 1D numpy tensor (n) """
+        assert isinstance(len_shape, int) and (len_shape == 1 or len_shape == 2)
+        if isinstance(x, torch.Tensor):
+            x = x.flatten(end_dim=-len_shape)
+            assert len(x.shape) == len_shape
+            return x.cpu().numpy()
+        elif isinstance(x, numpy.ndarray):
+            assert len(x.shape) == len_shape
+            return x
+        elif isinstance(x, list):
+            assert len_shape == 1
+            return numpy.array(x)
+
+    def _do_regression(_X, _y, x_key, y_key):
+        print("regression", x_key, y_key)
+        mask_x = numpy.isfinite(_X)
+        mask_y = numpy.isfinite(_y)
+        assert numpy.all(mask_x), "ON entry {0} is not finite. {1}".format(x_key, _X[~mask_x])
+        assert numpy.all(mask_y), "ON entry {0} is not finite. {1}".format(y_key, _y[~mask_y])
+
+        _X, _y = _manual_shuffle(_X, _y)
+        _tmp_dict = {}
+
+        if n_splits > 1:
+            rkf = RepeatedKFold(n_splits=n_splits, n_repeats=n_repeats)
+            for train_index, test_index in rkf.split(_X, _y):
+                _X_train, _X_test, _y_train, _y_test = _X[train_index], _X[test_index], _y[train_index], _y[test_index]
+                regressor.fit(_X_train, _y_train)
+
+                _tmp_dict["x_key"] = _tmp_dict.get("x_key", []) + [x_key]
+                _tmp_dict["y_key"] = _tmp_dict.get("y_key", []) + [y_key]
+                _tmp_dict["r2_train"] = _tmp_dict.get("r2_train", []) + [regressor.score(_X_train, _y_train)]
+                _tmp_dict["r2_test"] = _tmp_dict.get("r2_test", []) + [regressor.score(_X_test, _y_test)]
+            _df_tmp = pandas.DataFrame(_tmp_dict, index=numpy.arange(rkf.get_n_splits()))
+        elif n_splits == 1 and n_repeats == 1:
+            regressor.fit(_X, _y)
+
+            # DEBUG
+            y_pred = regressor.predict(_X)
+            mask_y_pred = numpy.isfinite(y_pred)
+            print("Y_pred is not finite ->", y_pred[~mask_y_pred])
+            print("corresponding Y_true ->", _y[~mask_y_pred])
+
+            _tmp_dict = {
+                "x_key": x_key,
+                "y_key": y_key,
+                "r2": regressor.score(_X, _y)
+            }
+            _df_tmp = pandas.DataFrame(_tmp_dict, index=[0])
+        else:
+            raise Exception("Does not make sense to have n_splits = {0} and n_repeats = {1}".format(n_splits,
+                                                                                                    n_repeats))
+        return _df_tmp
+
+    def _do_classification(_X, _y, x_key, y_key):
+        print("classification", x_key, y_key)
+        mask_x = numpy.isfinite(_X)
+        mask_y = numpy.isfinite(_y)
+        assert numpy.all(mask_x), "ON entry {0} is not finite. {1}".format(x_key, _X[~mask_x])
+        assert numpy.all(mask_y), "ON entry {0} is not finite. {1}".format(y_key, _y[~mask_y])
+
+        _X, _y = _manual_shuffle(_X, _y)
+        _tmp_dict = {}
+
+        if n_splits > 1:
+
+            rkf = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats)
+            for train_index, test_index in rkf.split(_X, _y):
+                _X_train, _X_test, _y_train, _y_test = _X[train_index], _X[test_index], _y[train_index], _y[test_index]
+                classifier.fit(_X_train, _y_train)
+
+                _tmp_dict["x_key"] = _tmp_dict.get("x_key", []) + [x_key]
+                _tmp_dict["y_key"] = _tmp_dict.get("y_key", []) + [y_key]
+                _tmp_dict["accuracy_train"] = _tmp_dict.get("accuracy_test", []) + [classifier.score(_X_train, _y_train)]
+                _tmp_dict["accuracy_test"] = _tmp_dict.get("accuracy_test", []) + [classifier.score(_X_test, _y_test)]
+            _df_tmp = pandas.DataFrame(_tmp_dict, index=numpy.arange(rkf.get_n_splits()))
+
+        elif n_splits == 1 and n_repeats == 1:
+            classifier.fit(_X, _y)
+            _tmp_dict = {
+                "x_key": x_key,
+                "y_key": y_key,
+                "accuracy": classifier.score(_X, _y)
+            }
+            _df_tmp = pandas.DataFrame(_tmp_dict, index=[0])
+        else:
+            raise Exception("Does not make sense to have n_splits = {0} and n_repeats = {1}".format(n_splits,
+                                                                                                    n_repeats))
+        return _df_tmp
+
+    # loop over everything to make the predictions
+    df = None
+    for feature_key in feature_keys:
+        X_all = _preprocess_to_numpy(input_dict[feature_key], len_shape=2)
+
+        if classify_keys is not None:
+            for kc in classify_keys:
+                if verbose:
+                    print("{0} classify {1}".format(feature_key, kc))
+                y_all = _preprocess_to_numpy(input_dict[kc], len_shape=1)
+                tmp_df = _do_classification(X_all, y_all, x_key=feature_key, y_key=kc)
+                df = tmp_df if df is None else df.merge(tmp_df, how='outer')
+
+        if regress_keys is not None:
+            for kr in regress_keys:
+                if verbose:
+                    print("{0} regress {1}".format(feature_key, kr))
+                y_all = _preprocess_to_numpy(input_dict[kr], len_shape=1)
+                tmp_df = _do_regression(X_all, y_all, x_key=feature_key, y_key=kr)
+                df = tmp_df if df is None else df.merge(tmp_df, how='outer')
+
+    return df
+
+
+def knn_classification_regression(world_dict: dict, val_iomin_threshold: float):
+
+    # compute the patch_to_patch overlap just one at the beginning
+    assert {"patches_xywh", "classify_tissue_label"}.issubset(world_dict.keys())
+    patches = world_dict["patches_xywh"]
+    initial_score = torch.rand_like(patches[:, 0].float())
+    tissue_ids = world_dict["classify_tissue_label"]
+    nms_mask_n, overlap_nn = NonMaxSuppression.compute_nm_mask(
+        score=initial_score,
+        ids=tissue_ids,
+        patches_xywh=patches,
+        iom_threshold=val_iomin_threshold)
+    binarized_overlap_nn = (overlap_nn > val_iomin_threshold).float()
+
+    # figure out the keys for the features, regression and classification
     feature_keys, regress_keys, classify_keys = [], [], []
     for key in world_dict.keys():
         if key.startswith("regress"):
@@ -36,12 +223,12 @@ def knn_classification(world_dict: dict, val_iomin_threshold: float):
         elif key.startswith("pca_") or key.startswith("umap_") or key.startswith("feature"):
             feature_keys.append(key)
 
-    # KNN
+    # define regressor and classifier
     def exclude_self(d):
-        assert len(d.shape) == 1, "d.shape = {0}".format(d.shape)
+        # This has shape: d.shape = (n_points, n_neighbours)
+        # This function relies on the fact that the distances are sorted in increasing order
         w = numpy.ones_like(d)
-        index = numpy.argmin(d)
-        w[index] = 0.0
+        w[:, 0] = 0.0
         return w
 
     kn_kargs = {
@@ -54,23 +241,12 @@ def knn_classification(world_dict: dict, val_iomin_threshold: float):
 
     # loop over subset made of non-overlapping patches
     df_tot = None
-
-    # compute the patch_to_patch overlap just one at the beginning
-    patches = world_dict["patches_xywh"]
-    initial_score = torch.rand_like(patches[:, 0].float())
-    tissue_ids = world_dict["classify_tissue_label"]
-    nms_mask_n, overlap_nn = NonMaxSuppression.compute_nm_mask(
-        score=initial_score,
-        ids=tissue_ids,
-        patches_xywh=patches,
-        iom_threshold=val_iomin_threshold)
-    binarized_overlap_nn = (overlap_nn > val_iomin_threshold).float()
-
     for n in range(20):
         # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
         nms_mask_n = NonMaxSuppression._perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
                                                               score_n=torch.rand_like(initial_score),
                                                               possible_n=torch.ones_like(initial_score).bool())
+        print("# non-overlapping patches->", nms_mask_n.sum())
         world_dict_subset = subset_dict(input_dict=world_dict, mask=nms_mask_n)
 
         df_tmp = classify_and_regress(
@@ -92,8 +268,21 @@ def knn_classification(world_dict: dict, val_iomin_threshold: float):
     return df_mean, df_std
 
 
-def linear_classification(world_dict: dict):
-    # Classification/regression
+def linear_classification_regression(world_dict: dict, val_iomin_threshold: float):
+
+    # compute the patch_to_patch overlap just one at the beginning
+    assert {"patches_xywh", "classify_tissue_label"}.issubset(world_dict.keys())
+    patches = world_dict["patches_xywh"]
+    initial_score = torch.rand_like(patches[:, 0].float())
+    tissue_ids = world_dict["classify_tissue_label"]
+    nms_mask_n, overlap_nn = NonMaxSuppression.compute_nm_mask(
+        score=initial_score,
+        ids=tissue_ids,
+        patches_xywh=patches,
+        iom_threshold=val_iomin_threshold)
+    binarized_overlap_nn = (overlap_nn > val_iomin_threshold).float()
+
+    # figure out the keys for the features, regression and classification
     feature_keys, regress_keys, classify_keys = [], [], []
     for key in world_dict.keys():
         if key.startswith("regress"):
@@ -103,6 +292,7 @@ def linear_classification(world_dict: dict):
         elif key.startswith("pca_") or key.startswith("umap_") or key.startswith("feature"):
             feature_keys.append(key)
 
+    # define regressor and classifier
     ridge_kargs = {
         "alphas": (1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0),
     }
@@ -111,17 +301,27 @@ def linear_classification(world_dict: dict):
     classifier = RidgeClassifierCV(**ridge_kargs)
 
     # loop over subset made of non-overlapping patches
-    df_tot = classify_and_regress(
-        input_dict=world_dict,
-        feature_keys=feature_keys,
-        regress_keys=regress_keys,
-        classify_keys=classify_keys,
-        regressor=regressor,
-        classifier=classifier,
-        n_repeats=5,
-        n_splits=5,
-        verbose=False,
-    )
+    df_tot = None
+    for n in range(20):
+        # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
+        nms_mask_n = NonMaxSuppression._perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
+                                                              score_n=torch.rand_like(initial_score),
+                                                              possible_n=torch.ones_like(initial_score).bool())
+        print("# non-overlapping patches->", nms_mask_n.sum())
+        world_dict_subset = subset_dict(input_dict=world_dict, mask=nms_mask_n)
+
+        df_tmp = classify_and_regress(
+            input_dict=world_dict_subset,
+            feature_keys=feature_keys,
+            regress_keys=regress_keys,
+            classify_keys=classify_keys,
+            regressor=regressor,
+            classifier=classifier,
+            n_repeats=1,
+            n_splits=5,
+            verbose=False,
+        )
+        df_tot = df_tmp if df_tot is None else df_tot.merge(df_tmp, how='outer')
 
     df_tot["combined_key"] = df_tot["x_key"] + "_" + df_tot["y_key"]
     df_mean = df_tot.groupby("combined_key").mean()
@@ -325,7 +525,7 @@ class BenchmarkModelMixin(LightningModule):
 
                 # knn classification/regression
                 print("starting knn classification/regression")
-                df_mean_knn, df_std_knn = knn_classification(world_dict, self.val_iomin_threshold)
+                df_mean_knn, df_std_knn = knn_classification_regression(world_dict, self.val_iomin_threshold)
                 # print("df_mean_knn ->", df_mean_knn)
 
                 for row in df_mean_knn.itertuples():
@@ -342,7 +542,7 @@ class BenchmarkModelMixin(LightningModule):
 
                 # linear classification/regression
                 print("starting linear classification/regression")
-                df_mean_linear, df_std_linear = linear_classification(world_dict)
+                df_mean_linear, df_std_linear = linear_classification_regression(world_dict)
                 # print("df_mean_linear ->", df_mean_linear)
 
                 for row in df_mean_linear.itertuples():

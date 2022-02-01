@@ -6,13 +6,8 @@ from abc import ABC
 from pytorch_lightning import LightningModule
 from pytorch_lightning.trainer import Trainer
 from sklearn.metrics import r2_score, accuracy_score
-from sklearn.model_selection import RepeatedStratifiedKFold, RepeatedKFold
-from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
-from sklearn.linear_model import RidgeClassifierCV, RidgeCV
-from sklearn.base import is_regressor, is_classifier
 from tissue_purifier.misc_utils.misc import linear_warmup_and_cosine_protocol
 from tissue_purifier.model_utils.beta_mixture_1d import BetaMixture1D
-import pandas
 
 
 def make_mlp_torch(
@@ -71,7 +66,8 @@ class PlMlpBase(LightningModule):
             min_weight_decay: float,
             max_weight_decay: float,
             warm_up_epochs: int,
-            warm_down_epochs: int
+            warm_down_epochs: int,
+            max_epochs: int
     ):
         super().__init__()
         # loss
@@ -95,12 +91,13 @@ class PlMlpBase(LightningModule):
         self.alpha = alpha
 
         # protocoll
+        assert warm_up_epochs + warm_down_epochs <= max_epochs
         self.learning_rate_fn = linear_warmup_and_cosine_protocol(
             f_values=(min_learning_rate, max_learning_rate, min_learning_rate),
-            x_milestones=(0, warm_up_epochs, warm_up_epochs, warm_up_epochs + warm_down_epochs))
+            x_milestones=(0, warm_up_epochs, max_epochs - warm_down_epochs, max_epochs))
         self.weight_decay_fn = linear_warmup_and_cosine_protocol(
             f_values=(min_weight_decay, min_weight_decay, max_weight_decay),
-            x_milestones=(0, warm_up_epochs, warm_up_epochs, warm_up_epochs + warm_down_epochs))
+            x_milestones=(0, warm_up_epochs, max_epochs - warm_down_epochs, max_epochs))
 
         # hidden quantities
         self.loss_ = None
@@ -211,10 +208,12 @@ class PlNoisyBase(LightningModule):
             # protocoll
             warm_up_epochs: int,
             warm_down_epochs: int,
+            max_epochs: int,
             min_learning_rate: float,
             max_learning_rate: float,
             min_weight_decay: float,
             max_weight_decay: float,
+
             # loss
     ):
         """
@@ -234,6 +233,7 @@ class PlNoisyBase(LightningModule):
                 the corrected labels are a weighted sum of a delta-function and the network probability.
             warm_up_epochs: epochs during which to linearly increase learning rate (at the beginning of training)
             warm_down_epochs: epochs during which to anneal learning rate with cosine protocoll (at the end of training)
+            max_epochs: total number of epochs
             min_learning_rate: minimum learning rate (at the very beginning and end of training)
             max_learning_rate: maximum learning rate (after linear ramp)
             min_weight_decay: minimum weight decay (during the entirety of the linear ramp)
@@ -265,12 +265,13 @@ class PlNoisyBase(LightningModule):
         self.alpha = alpha
 
         # protocol
+        assert warm_up_epochs + warm_down_epochs <= max_epochs
         self.learning_rate_fn = linear_warmup_and_cosine_protocol(
             f_values=(min_learning_rate, max_learning_rate, min_learning_rate),
-            x_milestones=(0, warm_up_epochs, warm_up_epochs, warm_up_epochs + warm_down_epochs))
+            x_milestones=(0, warm_up_epochs, max_epochs - warm_down_epochs, max_epochs))
         self.weight_decay_fn = linear_warmup_and_cosine_protocol(
             f_values=(min_weight_decay, min_weight_decay, max_weight_decay),
-            x_milestones=(0, warm_up_epochs, warm_up_epochs, warm_up_epochs + warm_down_epochs))
+            x_milestones=(0, warm_up_epochs, max_epochs - warm_down_epochs, max_epochs))
 
         # BetaMixture business
         self.bmm_model = BetaMixture1D(max_iters=50)
@@ -449,7 +450,7 @@ class PlNoisyBase(LightningModule):
 
         # rescale those values from dimensionless to dimensionfull
         delta_loss = (max_perc - min_perc).cpu().numpy()
-        min_loss =  min_perc.cpu().numpy()
+        min_loss = min_perc.cpu().numpy()
         fitted_means = min_loss + delta_loss * alphas / (alphas + betas)
         self.bmm_fitted_mean0_curve_.append(fitted_means[0])
         self.bmm_fitted_mean1_curve_.append(fitted_means[1])
@@ -486,7 +487,7 @@ class PlNoisyBase(LightningModule):
 
 
 class BaseEstimator(ABC):
-    """ This is a ABC which implementes an interface similar to scikit-learn for classification and regression. """
+    """ This is a ABC which implements an interface similar to scikit-learn for classification and regression. """
 
     def __init__(
             self,
@@ -495,7 +496,6 @@ class BaseEstimator(ABC):
             hidden_activation: str = 'relu',
             # training
             batch_size: int = 256,
-            max_iter: int = 200,
             # optimizers
             solver: str = 'adam',
             alpha: float = 0.99,
@@ -504,6 +504,7 @@ class BaseEstimator(ABC):
             # protocoll
             warm_up_epochs: int = 0,
             warm_down_epochs: int = 0,
+            max_epochs: int = 200,
             min_learning_rate: float = 1.0E-4,
             max_learning_rate: float = 1.0E-3,
             min_weight_decay: float = 1.0E-4,
@@ -525,14 +526,14 @@ class BaseEstimator(ABC):
         # optimizer stuff
         self.solver = solver
         self.batch_size = batch_size
-        self.max_iter = max_iter
         self.betas = betas
         self.alpha = alpha
         self.momentum = momentum
 
         # protocoll
+        self.max_epochs = max_epochs
         self.warm_up_epochs = warm_up_epochs
-        self.warm_down_epochs = warm_down_epochs if warm_down_epochs > 0 else max_iter  # defaults to cosine annealing
+        self.warm_down_epochs = warm_down_epochs
         self.min_learning_rate = min_learning_rate
         self.max_learning_rate = max_learning_rate
         self.min_weight_decay = min_weight_decay
@@ -549,7 +550,7 @@ class BaseEstimator(ABC):
             gpus=1 if torch.cuda.device_count() > 0 else None,
             check_val_every_n_epoch=-1,
             num_sanity_val_steps=0,
-            max_epochs=self.max_iter,
+            max_epochs=self.max_epochs,
             num_processes=1,
             accelerator=None)
 
@@ -658,12 +659,13 @@ class PlRegressor(BaseEstimator):
             momentum=self.momentum,
             alpha=self.alpha,
             # protocoll
+            max_epochs=self.max_epochs,
+            warm_up_epochs=self.warm_up_epochs,
+            warm_down_epochs=self.warm_down_epochs,
             min_learning_rate=self.min_learning_rate,
             max_learning_rate=self.max_learning_rate,
             min_weight_decay=self.min_weight_decay,
             max_weight_decay=self.max_weight_decay,
-            warm_up_epochs=self.warm_up_epochs,
-            warm_down_epochs=self.warm_down_epochs
         )
 
     def fit(self, X, y):
@@ -788,6 +790,7 @@ class PlClassifier(BaseEstimator):
                 hard_bootstrapping=self.hard_bootstrapping,
                 bootstrap_epoch_start=self.bootstrap_epoch_start,
                 # protocoll
+                max_epochs=self.max_epochs,
                 warm_up_epochs=self.warm_up_epochs,
                 warm_down_epochs=self.warm_down_epochs,
                 min_learning_rate=self.min_learning_rate,
@@ -808,6 +811,7 @@ class PlClassifier(BaseEstimator):
                 momentum=self.momentum,
                 alpha=self.alpha,
                 # protocoll
+                max_epochs=self.max_epochs,
                 warm_up_epochs=self.warm_up_epochs,
                 warm_down_epochs=self.warm_down_epochs,
                 min_learning_rate=self.min_learning_rate,
@@ -895,179 +899,3 @@ class PlClassifier(BaseEstimator):
         raw_logit_all = self.get_all_logits(X)
         prob = torch.nn.functional.log_softmax(raw_logit_all, dim=-1)
         return prob.cpu().numpy()
-
-
-def classify_and_regress(
-        input_dict: dict,
-        feature_keys: List[str],
-        regress_keys: List[str] = None,
-        classify_keys: List[str] = None,
-        regressor: Union[KNeighborsRegressor, RidgeCV, PlRegressor] = None,
-        classifier: Union[KNeighborsClassifier, RidgeClassifierCV, PlClassifier] = None,
-        n_splits: int = 5,
-        n_repeats: int = 1,
-        verbose: bool = False) -> [pandas.DataFrame, pandas.DataFrame]:
-    """
-    Train a Classifier and a Regressor to use some featutes to predict other features.
-
-    Args:
-        input_dict: dict with both the feature to use and the one to predict
-        regressor: the regressor to train
-        classifier: the classifier to train
-        feature_keys: keys corresponding to the independent variables
-        regress_keys: keys corresponding to the variables to regress
-        classify_keys: keys corresponding to the variables to classify
-        n_splits: int, number of splits for RepeatedKFold (regressor) or RepeatedStratifiedKFold (classifier).
-            If n_splits is 5 (defaults) then train_test_split is 80% - 20%.
-        n_repeats: int, number of repeats for RepeatedKFold (regressor) or RepeatedStratifiedKFold (classifier).
-            The total number of trained model is n_plists * n_repeats.
-        verbose: bool, if true print some intermediate statements
-
-    Returns:
-        A ddataframe. Each row is a different X,y combination with the metrics describing the quality of the
-        regression/classification.
-    """
-    if regress_keys is not None:
-        assert is_regressor(regressor) or regressor.is_regressor, "Please pass in a regressor"
-
-    if classify_keys is not None:
-        assert is_classifier(classifier) or classifier.is_classifier, "Please pass in a classifier"
-
-    assert isinstance(n_splits, int) and isinstance(n_repeats, int) and n_splits >= 1 and n_repeats >= 1, \
-        "Error. n_splits = {0} and n_repeats = {1} must be integers >= 1.".format(n_splits, n_repeats)
-    assert n_splits > 1 or (n_splits == 1 and n_repeats == 1), \
-        "Misconfiguration error. It does not make sense to have n_splits == 1 and n_repeats != 1"
-
-    assert isinstance(feature_keys, list), \
-        "Feature_keys need to be a list. Received {0}".format(type(feature_keys))
-    assert regress_keys is None or isinstance(regress_keys, list), \
-        "Regress_keys need to be a list. Received {0}".format(type(regress_keys))
-    assert classify_keys is None or isinstance(classify_keys, list), \
-        "Classify_keys need to be a list. Received {0}".format(type(classify_keys))
-
-    assert set(feature_keys).issubset(input_dict.keys()), \
-        "Feature keys are not present in input dictionary."
-    assert regress_keys is None or set(regress_keys).issubset(set(input_dict.keys())), \
-        "Regress keys are not present in input dictionary."
-    assert classify_keys is None or set(classify_keys).issubset(set(input_dict.keys())), \
-        "Classify keys are not present in input dictionary."
-
-    def _manual_shuffle(_X, _y):
-        assert _X.shape[0] == _y.shape[0]
-        random_index = numpy.random.permutation(_y.shape[0])
-        return _X[random_index], _y[random_index]
-
-    def _preprocess_to_numpy(x, len_shape: int):
-        """ convert the features into a 2D numpy tensor (n, p) and the targets into a 1D numpy tensor (n) """
-        assert isinstance(len_shape, int) and (len_shape == 1 or len_shape == 2)
-        if isinstance(x, torch.Tensor):
-            x = x.flatten(end_dim=-len_shape)
-            assert len(x.shape) == len_shape
-            return x.cpu().numpy()
-        elif isinstance(x, numpy.ndarray):
-            assert len(x.shape) == len_shape
-            return x
-        elif isinstance(x, list):
-            assert len_shape == 1
-            return numpy.array(x)
-
-    def _do_regression(_X, _y, x_key, y_key):
-        print("regression", x_key, y_key)
-        mask_x = numpy.isfinite(_X)
-        mask_y = numpy.isfinite(_y)
-        assert numpy.all(mask_x), "ON entry {0} is not finite. {1}".format(x_key, _X[~mask_x])
-        assert numpy.all(mask_y), "ON entry {0} is not finite. {1}".format(y_key, _y[~mask_y])
-
-        _X, _y = _manual_shuffle(_X, _y)
-        _tmp_dict = {}
-
-        if n_splits > 1:
-            rkf = RepeatedKFold(n_splits=n_splits, n_repeats=n_repeats)
-            for train_index, test_index in rkf.split(_X, _y):
-                _X_train, _X_test, _y_train, _y_test = _X[train_index], _X[test_index], _y[train_index], _y[test_index]
-                regressor.fit(_X_train, _y_train)
-
-                _tmp_dict["x_key"] = _tmp_dict.get("x_key", []) + [x_key]
-                _tmp_dict["y_key"] = _tmp_dict.get("y_key", []) + [y_key]
-                _tmp_dict["r2_train"] = _tmp_dict.get("r2_train", []) + [regressor.score(_X_train, _y_train)]
-                _tmp_dict["r2_test"] = _tmp_dict.get("r2_test", []) + [regressor.score(_X_test, _y_test)]
-            _df_tmp = pandas.DataFrame(_tmp_dict, index=numpy.arange(rkf.get_n_splits()))
-        elif n_splits == 1 and n_repeats == 1:
-            regressor.fit(_X, _y)
-
-            # DEBUG
-            y_pred = regressor.predict(_X)
-            mask_y_pred = numpy.isfinite(y_pred)
-            print("Y_pred is not finite ->", y_pred[~mask_y_pred])
-            print("corresponding Y_true ->", _y[~mask_y_pred])
-
-            _tmp_dict = {
-                "x_key": x_key,
-                "y_key": y_key,
-                "r2": regressor.score(_X, _y)
-            }
-            _df_tmp = pandas.DataFrame(_tmp_dict, index=[0])
-        else:
-            raise Exception("Does not make sense to have n_splits = {0} and n_repeats = {1}".format(n_splits,
-                                                                                                    n_repeats))
-        return _df_tmp
-
-    def _do_classification(_X, _y, x_key, y_key):
-        print("classification", x_key, y_key)
-        mask_x = numpy.isfinite(_X)
-        mask_y = numpy.isfinite(_y)
-        assert numpy.all(mask_x), "ON entry {0} is not finite. {1}".format(x_key, _X[~mask_x])
-        assert numpy.all(mask_y), "ON entry {0} is not finite. {1}".format(y_key, _y[~mask_y])
-
-        _X, _y = _manual_shuffle(_X, _y)
-        _tmp_dict = {}
-
-        if n_splits > 1:
-
-            rkf = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats)
-            for train_index, test_index in rkf.split(_X, _y):
-                _X_train, _X_test, _y_train, _y_test = _X[train_index], _X[test_index], _y[train_index], _y[test_index]
-                classifier.fit(_X_train, _y_train)
-
-                _tmp_dict["x_key"] = _tmp_dict.get("x_key", []) + [x_key]
-                _tmp_dict["y_key"] = _tmp_dict.get("y_key", []) + [y_key]
-                _tmp_dict["accuracy_train"] = _tmp_dict.get("accuracy_test", []) + [classifier.score(_X_train, _y_train)]
-                _tmp_dict["accuracy_test"] = _tmp_dict.get("accuracy_test", []) + [classifier.score(_X_test, _y_test)]
-            _df_tmp = pandas.DataFrame(_tmp_dict, index=numpy.arange(rkf.get_n_splits()))
-
-        elif n_splits == 1 and n_repeats == 1:
-            classifier.fit(_X, _y)
-            _tmp_dict = {
-                "x_key": x_key,
-                "y_key": y_key,
-                "accuracy": classifier.score(_X, _y)
-            }
-            _df_tmp = pandas.DataFrame(_tmp_dict, index=[0])
-        else:
-            raise Exception("Does not make sense to have n_splits = {0} and n_repeats = {1}".format(n_splits,
-                                                                                                    n_repeats))
-        return _df_tmp
-
-    # loop over everything to make the predictions
-    df = None
-    for feature_key in feature_keys:
-        X_all = _preprocess_to_numpy(input_dict[feature_key], len_shape=2)
-
-        if classify_keys is not None:
-            for kc in classify_keys:
-                if verbose:
-                    print("{0} classify {1}".format(feature_key, kc))
-                y_all = _preprocess_to_numpy(input_dict[kc], len_shape=1)
-                tmp_df = _do_classification(X_all, y_all, x_key=feature_key, y_key=kc)
-                df = tmp_df if df is None else df.merge(tmp_df, how='outer')
-
-        if regress_keys is not None:
-            for kr in regress_keys:
-                if verbose:
-                    print("{0} regress {1}".format(feature_key, kr))
-                y_all = _preprocess_to_numpy(input_dict[kr], len_shape=1)
-                tmp_df = _do_regression(X_all, y_all, x_key=feature_key, y_key=kr)
-                df = tmp_df if df is None else df.merge(tmp_df, how='outer')
-
-    return df
-
