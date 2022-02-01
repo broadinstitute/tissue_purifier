@@ -150,7 +150,7 @@ class VaeModel(BenchmarkModelMixin):
 
             # architecture
             backbone_type: str,
-            image_size: int,
+            global_size: int,
             image_in_ch: int,
             latent_dim: int,
             encoder_hidden_dims: Tuple[int],
@@ -204,10 +204,10 @@ class VaeModel(BenchmarkModelMixin):
         else:
             raise Exception("invalid decoder_output_activation. Received {0}".format(decoder_output_activation))
 
-        self.image_size = image_size
+        self.image_size = global_size
         self.vae = ConvolutionalVae(
             backbone_type=backbone_type,
-            in_size=image_size,
+            in_size=self.image_size,
             in_channels=image_in_ch,
             latent_dim=latent_dim,
             hidden_dims=tuple(encoder_hidden_dims),
@@ -259,7 +259,7 @@ class VaeModel(BenchmarkModelMixin):
         parser.add_argument("--backbone_type", type=str, default="resnet18",
                             choices=["vanilla", "resnet18", "resnet34", "resnet50"],
                             help="The backbone architecture of the VAE")
-        parser.add_argument("--image_size", type=int, default=64,
+        parser.add_argument("--global_size", type=int, default=64,
                             help="size in pixel of the input image. Must be a multiple of 32")
         parser.add_argument("--image_in_ch", type=int, default=3, help="number of channels of the input image")
         parser.add_argument("--latent_dim", type=int, default=128, help="number of latent dimensions")
