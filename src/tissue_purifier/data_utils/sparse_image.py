@@ -470,12 +470,8 @@ class SparseImage:
                 all_patches.append(patches.detach().cpu())
 
             for f_name, analyzer in zip(feature_names, patch_analyzers):
-                try:
-                    # trying using the method "compute_features"
-                    tmp = analyzer.compute_features(patches)
-                except AttributeError as e:
-                    # defaults to call the __call__ method
-                    tmp = analyzer(patches)
+                # defaults to call the __call__ method
+                tmp = analyzer(patches)
 
                 # make sure the output is in the form of a list
                 if not isinstance(tmp, list):
@@ -517,7 +513,8 @@ class SparseImage:
             self,
             keys_to_transfer: List[str],
             overwrite: bool = False,
-            verbose: bool = False):
+            verbose: bool = False,
+            strategy: str = "average"):
         """
         Collect the properties computed separately for each patch and stored in patch_properties_dict to create
         an image properties which will be stored in image_properties_dict with the same name.
@@ -529,6 +526,10 @@ class SparseImage:
                 (N_patches), (N_patches, ch), (N_patches, w, h) or (N_patches, ch, w, h) respectively.
             overwrite: bool, in case of collision between keys this variable controls when to overwrite the values in
                 the image_properties_dict.
+
+FROM HERE
+            strategy: str, either 'average' (default) or 'nearest'. How are the patch property used
+
             verbose: bool, if true print intermediate messages
         """
 
