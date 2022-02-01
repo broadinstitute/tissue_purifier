@@ -972,6 +972,12 @@ def classify_and_regress(
             return numpy.array(x)
 
     def _do_regression(_X, _y, x_key, y_key):
+        print("regression", x_key, y_key)
+        mask_x = numpy.isfinite(_X)
+        mask_y = numpy.isfinite(_y)
+        assert numpy.all(mask_x), "ON entry {0} is not finite. {1}".format(x_key, _X[~mask_x])
+        assert numpy.all(mask_y), "ON entry {0} is not finite. {1}".format(y_key, _y[~mask_y])
+
         _X, _y = _manual_shuffle(_X, _y)
         _tmp_dict = {}
 
@@ -1000,6 +1006,12 @@ def classify_and_regress(
         return _df_tmp
 
     def _do_classification(_X, _y, x_key, y_key):
+        print("classification", x_key, y_key)
+        mask_x = numpy.isfinite(_X)
+        mask_y = numpy.isfinite(_y)
+        assert numpy.all(mask_x), "ON entry {0} is not finite. {1}".format(x_key, _X[~mask_x])
+        assert numpy.all(mask_y), "ON entry {0} is not finite. {1}".format(y_key, _y[~mask_y])
+
         _X, _y = _manual_shuffle(_X, _y)
         _tmp_dict = {}
 
@@ -1033,14 +1045,12 @@ def classify_and_regress(
     df = None
     for feature_key in feature_keys:
         X_all = _preprocess_to_numpy(input_dict[feature_key], len_shape=2)
-        assert numpy.all(numpy.isfinite(X_all)), "ON entry {0} is not finite".format(feature_key)
 
         if classify_keys is not None:
             for kc in classify_keys:
                 if verbose:
                     print("{0} classify {1}".format(feature_key, kc))
                 y_all = _preprocess_to_numpy(input_dict[kc], len_shape=1)
-                assert numpy.all(numpy.isfinite(y_all)), "ON entry {0} is not finite".format(kc)
                 tmp_df = _do_classification(X_all, y_all, x_key=feature_key, y_key=kc)
                 df = tmp_df if df is None else df.merge(tmp_df, how='outer')
 
@@ -1049,7 +1059,6 @@ def classify_and_regress(
                 if verbose:
                     print("{0} regress {1}".format(feature_key, kr))
                 y_all = _preprocess_to_numpy(input_dict[kr], len_shape=1)
-                assert numpy.all(numpy.isfinite(y_all)), "ON entry {0} is not finite".format(kr)
                 tmp_df = _do_regression(X_all, y_all, x_key=feature_key, y_key=kr)
                 df = tmp_df if df is None else df.merge(tmp_df, how='outer')
 

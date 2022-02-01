@@ -355,8 +355,8 @@ class VaeModel(BenchmarkModelMixin):
             mu=dict_vae['mu'],
             log_var=dict_vae['log_var']
         )
-        assert torch.all(torch.isfinite(dict_vae['mu']))
-        assert torch.all(torch.isfinite(dict_vae['x_rec']))
+        assert torch.all(torch.isfinite(dict_vae['mu'])), "In training step. mu in NOT finite"
+        assert torch.all(torch.isfinite(dict_vae['x_rec'])), "In training step. x_rec is NOT finite"
 
         # Manual optimization
         opt.zero_grad()
