@@ -14,8 +14,6 @@ from tissue_purifier.misc_utils.misc import linear_warmup_and_cosine_protocol
 from tissue_purifier.model_utils.beta_mixture_1d import BetaMixture1D
 import pandas
 
-import scanpy as sc
-sc.pp.regress_out
 
 def make_mlp_torch(
         input_dim: int,
@@ -1035,12 +1033,14 @@ def classify_and_regress(
     df = None
     for feature_key in feature_keys:
         X_all = _preprocess_to_numpy(input_dict[feature_key], len_shape=2)
+        assert numpy.all(numpy.isfinite(X_all)), "ON entry {0} is not finite".format(feature_key)
 
         if classify_keys is not None:
             for kc in classify_keys:
                 if verbose:
                     print("{0} classify {1}".format(feature_key, kc))
                 y_all = _preprocess_to_numpy(input_dict[kc], len_shape=1)
+                assert numpy.all(numpy.isfinite(y_all)), "ON entry {0} is not finite".format(kc)
                 tmp_df = _do_classification(X_all, y_all, x_key=feature_key, y_key=kc)
                 df = tmp_df if df is None else df.merge(tmp_df, how='outer')
 
@@ -1049,6 +1049,7 @@ def classify_and_regress(
                 if verbose:
                     print("{0} regress {1}".format(feature_key, kr))
                 y_all = _preprocess_to_numpy(input_dict[kr], len_shape=1)
+                assert numpy.all(numpy.isfinite(y_all)), "ON entry {0} is not finite".format(kr)
                 tmp_df = _do_regression(X_all, y_all, x_key=feature_key, y_key=kr)
                 df = tmp_df if df is None else df.merge(tmp_df, how='outer')
 
