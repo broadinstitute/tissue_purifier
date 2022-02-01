@@ -38,8 +38,10 @@ def knn_classification(world_dict: dict, val_iomin_threshold: float):
 
     # KNN
     def exclude_self(d):
+        assert len(d.shape) == 1, "d.shape = {0}".format(d.shape)
         w = numpy.ones_like(d)
-        w[d == 0.0] = 0.0
+        index = numpy.argmin(d)
+        w[index] = 0.0
         return w
 
     kn_kargs = {
