@@ -39,14 +39,25 @@ def test_pca(n, p):
     assert (pca.explained_variance_ratio_[nq] > q)
 
 
-@pytest.mark.parametrize("n, q, p", [[20, 2, 200], [20, 2, 3000]])
-def test_pca_vs_scikit(n, q, p, capsys):
+@pytest.mark.parametrize("n, p", [[20, 200], [20, 3000]])
+def test_pca_vs_scikit(n, p, capsys):
     """ Compare myPCA vs scikit-learn PCA"""
     # n = sample
-    # q = low dimension (a bit larger than true rank), i.e. output of PCA
     # p = features
-    k = 2  # true rank
 
+    def _compute_corr(x, y):
+        if isinstance(x, numpy.ndarray):
+            x = torch.from_numpy(x)
+        if isinstance(y, numpy.ndarray):
+            y = torch.from_numpy(y)
+
+        x_std, x_mu = torch.std_mean(x, dim=-2)
+        y_std, y_mu = torch.std_mean(y, dim=-2)
+        cov = torch.mean((x - x_mu) * (y - y_mu), dim=-2)
+        corr = cov / (x_std * y_std)
+        return corr
+
+    k = 2  # true rank of the data
     if torch.cuda.is_available():
         U_true = torch.randn((n, k), device=torch.device('cuda'))
         S_true = torch.randn(k, device=torch.device('cuda')).exp()
@@ -70,6 +81,9 @@ def test_pca_vs_scikit(n, q, p, capsys):
     # plt.scatter(U_true[:, 0], U_true[:, 1], c=color)
 
     data = U_true @ torch.diag(S_true) @ V_true
+    q = min(data.shape)
+
+    # My PCA
     pca = SmartPca(preprocess_strategy='raw')
     x1 = pca.fit_transform(data, n_components=q)
 
@@ -79,23 +93,10 @@ def test_pca_vs_scikit(n, q, p, capsys):
                      iterated_power='auto', random_state=0)
     x2 = pca_scikit.fit_transform(data.detach().cpu().numpy())
 
-    # check that the coordinates are correlated between myPCA and scikitPCA
-    x1_mean = numpy.mean(x1, axis=-2)
-    x2_mean = numpy.mean(x2, axis=-2)
-    cov = numpy.mean((x1-x1_mean)*(x2-x2_mean), axis=-2)
-    sigma1 = numpy.std(x1, ddof=1, axis=-2)
-    sigma2 = numpy.std(x2, ddof=1, axis=-2)
-    corr = cov / (sigma1 * sigma2)
-    corr_abs = numpy.abs(corr)
+    corr_abs_x = _compute_corr(x1, x2).abs()
+    assert torch.all(corr_abs_x[:k]) > 0.95
 
-    # check that the explained variance works
-    ex_var1 = pca.explained_variance_[:q].detach().cpu().numpy()
-    ex_var2 = pca_scikit.explained_variance_
-    variance_error = numpy.abs(ex_var1-ex_var2) / ex_var2
-
-    # with capsys.disabled():
-    #     print("corr ->", corr)
-    #     print("variance_error ->", variance_error)
-
-    assert numpy.all(variance_error < 0.1)
-    assert numpy.all(corr_abs > 0.9)
+    a = pca.explained_variance_.detach().cpu().numpy()
+    b = pca_scikit.explained_variance_
+    variance_error = numpy.abs(a-b) / b
+    assert numpy.all(variance_error[:k] < 0.01)

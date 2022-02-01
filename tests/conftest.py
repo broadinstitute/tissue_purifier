@@ -12,6 +12,7 @@ from tissue_purifier.model_utils.logger import NeptuneLoggerCkpt
 from pytorch_lightning.trainer import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.plugins import DDPPlugin
+from tissue_purifier.data_utils.dataset import MetadataCropperDataset
 
 
 def _random_string_generator(str_size, allowed_chars=None):
@@ -22,11 +23,21 @@ def _random_string_generator(str_size, allowed_chars=None):
 
 @pytest.fixture
 def dummy_dino_dm():
-    return DummyDM()
+    config = {
+        'batch_size_per_gpu': 10,
+        'n_crops_for_tissue_test': 10,
+        'n_crops_for_tissue_train': 10,
+        'n_element_min_for_crop': 1,
+        'global_size': 64,
+        'global_scale': (0.75, 1.0),
+        'local_size': 32,
+        'local_scale': (0.5, 0.75),
+    }
+    return DummyDM(**config)
 
 
 @pytest.fixture
-def neptune_logger():
+def neptune_logger_async():
     return NeptuneLoggerCkpt(
         project="cellarium/tissue-purifier",
         run=None,
@@ -38,29 +49,51 @@ def neptune_logger():
 
 
 @pytest.fixture
-def trainer(neptune_logger):
-    ckpt_train_interval = ModelCheckpoint(
-        filename="pytest_ckpt-{epoch}",  # the extension .ckpt will be added automatically
-        save_weights_only=False,
-        save_on_train_epoch_end=True,
-        save_last=True,
-        every_n_epochs=1,
+def neptune_logger_offline():
+    return NeptuneLoggerCkpt(
+        project="cellarium/tissue-purifier",
+        run=None,
+        log_model_checkpoints=True,
+        mode="offline",
+        tags=["pytest"],
+        fail_on_exception=True,
     )
 
+@pytest.fixture
+def trainer_with_logger(neptune_logger_async):
     return Trainer(
         weights_save_path="saved_ckpt",
-        num_nodes=1,  # uses a single machine possibly with many gpus,
+        num_nodes=1,
         gpus=0,
+        limit_train_batches=2,
+        limit_val_batches=2,
+        limit_test_batches=2,
+        limit_predict_batches=2,
+        logger=neptune_logger_async,
         check_val_every_n_epoch=1,
-        callbacks=[ckpt_train_interval],
-        strategy='ddp',
         accelerator='cpu',  # DDPPlugin(find_unused_parameters=True),
         num_sanity_val_steps=0,
-        # debugging
-        max_epochs=3,
-        logger=neptune_logger,
+        max_epochs=2,
         log_every_n_steps=1,
-        detect_anomaly=True,
+    )
+
+
+@pytest.fixture
+def trainer_no_logger(neptune_logger_offline):
+    return Trainer(
+        weights_save_path="saved_ckpt",
+        num_nodes=1,
+        gpus=0,
+        limit_train_batches=2,
+        limit_val_batches=2,
+        limit_test_batches=2,
+        limit_predict_batches=2,
+        logger=neptune_logger_offline,
+        check_val_every_n_epoch=1,
+        accelerator='cpu',  # DDPPlugin(find_unused_parameters=True),
+        num_sanity_val_steps=0,
+        max_epochs=2,
+        log_every_n_steps=1,
     )
 
 
