@@ -5,9 +5,9 @@ from argparse import ArgumentParser
 from pytorch_lightning.utilities.distributed import sync_ddp_if_available
 from torch.nn import functional as F
 from neptune.new.types import File
-from tissue_purifier.data_utils.dataset import MetadataCropperDataset
+
+from tissue_purifier.misc_utils.misc import LARS
 from tissue_purifier.plot_utils.plot_images import show_batch
-from tissue_purifier.misc_utils.dict_util import concatenate_list_of_dict
 from tissue_purifier.misc_utils.misc import linear_warmup_and_cosine_protocol
 from tissue_purifier.model_utils.benckmark_mixin import BenchmarkModelMixin
 from tissue_purifier.model_utils.resnet_backbone import (
@@ -332,12 +332,14 @@ class VaeModel(BenchmarkModelMixin):
         with torch.no_grad():
             # Update the optimizer parameters
             opt = self.optimizers()
-            assert isinstance(opt, torch.optim.Optimizer)
             lr = self.learning_rate_fn(self.current_epoch)
             wd = self.weight_decay_fn(self.current_epoch)
             for i, param_group in enumerate(opt.param_groups):
                 param_group["lr"] = lr
-                param_group["weight_decay"] = wd
+                if i == 0:  # only the first group is regularized
+                    param_group["weight_decay"] = wd
+                else:
+                    param_group["weight_decay"] = 0.0
 
             # this is data augmentation
             list_imgs = batch[0]
@@ -462,11 +464,7 @@ class VaeModel(BenchmarkModelMixin):
 
         # Log an example of the reconstructed images
         if self.global_rank == 0 and batch_idx == 0:
-            list_imgs: List[torch.sparse.Tensor]
-            list_labels: List[int]
-            list_metadata: List[MetadataCropperDataset]
-            list_imgs, list_labels, list_metadata = batch
-
+            list_imgs = batch[0]
             img_in = self.trsfm_test(list_imgs)
             dict_vae = self.vae(img_in)
 
@@ -494,15 +492,32 @@ class VaeModel(BenchmarkModelMixin):
     def configure_optimizers(self):
         # the learning_rate and weight_decay are very large. They are just placeholder.
         # The real value will be set by the scheduler
-        if self.optimizer_type == 'adam':
-            optimizer = torch.optim.Adam(
-                self.vae.parameters(),
-                lr=1000.0,
-                weight_decay=1000.0)
-        else:
-            raise NotImplementedError
+        regularized = []
+        not_regularized = []
+        for name, param in self.student.named_parameters():
+            if not param.requires_grad:
+                continue
+            # we do not regularize biases nor Norm parameters
+            if name.endswith(".bias") or len(param.shape) == 1:
+                not_regularized.append(param)
+            else:
+                regularized.append(param)
+        arg_for_optimizer = [{'params': regularized}, {'params': not_regularized, 'weight_decay': 0.0}]
 
-        return optimizer
+        # The real lr will be set in the training step
+        # The weight_decay for the regularized group will be set in the training step
+        if self.optimizer_type == 'adam':
+            return torch.optim.Adam(arg_for_optimizer, betas=(0.9, 0.999), lr=0.0)
+        elif self.optimizer_type == 'sgd':
+            return torch.optim.SGD(arg_for_optimizer, momentum=0.9, lr=0.0)
+        elif self.optimizer_type == 'rmsprop':
+            return torch.optim.RMSprop(arg_for_optimizer, alpha=0.99, lr=0.0)
+        elif self.optimizer_type == 'lars':
+            # for convnet with large batch_size
+            return LARS(arg_for_optimizer, momentum=0.9, lr=0.0)
+        else:
+            # do adamw
+            raise Exception("optimizer is misspecified")
 
     def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         """ Loading and resuming is handled automatically. Here I am dealing only with the special variables """
