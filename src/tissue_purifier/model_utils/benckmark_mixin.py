@@ -6,7 +6,6 @@ from neptune.new.types import File
 from pytorch_lightning import LightningModule
 
 from sklearn.base import is_regressor, is_classifier
-from sklearn.metrics import r2_score, accuracy_score
 from sklearn.model_selection import RepeatedStratifiedKFold, RepeatedKFold
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.linear_model import RidgeClassifierCV, RidgeCV

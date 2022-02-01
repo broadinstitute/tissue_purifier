@@ -7,7 +7,7 @@ def test_vae_construction(dummy_dino_dm, vae_type, trainer_no_logger, capsys):
     # construction Vae with params compatible with dummy_dm
     config = VaeModel.get_default_params()
     config['vae_type'] = vae_type
-    config["image_size"] = dummy_dino_dm.global_size
+    config["global_size"] = dummy_dino_dm.global_size
     config["image_in_ch"] = dummy_dino_dm.ch_in
     vae_model = VaeModel(**config)
     assert isinstance(vae_model, VaeModel)

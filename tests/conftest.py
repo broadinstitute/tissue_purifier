@@ -59,6 +59,7 @@ def neptune_logger_offline():
         fail_on_exception=True,
     )
 
+
 @pytest.fixture
 def trainer_with_logger(neptune_logger_async):
     return Trainer(
