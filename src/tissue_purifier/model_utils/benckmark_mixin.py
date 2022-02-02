@@ -392,9 +392,9 @@ class BenchmarkModelMixin(LightningModule):
         if self.global_rank == 0:
             self.__log_example_images__(n_examples=10, n_cols=5, which_loaders="predict")
 
-    def shared_step(self, x):
+    def head_and_backbone_embeddings_step(self, x) -> (torch.Tensor, torch.Tensor):
         # must be overwritten by child class
-        # step which get both z,y embeddings
+        # this generates both head and backbone embeddings
         raise NotImplementedError
 
     def validation_step(self, batch, batch_idx, dataloader_idx: int = -1) -> Dict[str, torch.Tensor]:
@@ -405,7 +405,7 @@ class BenchmarkModelMixin(LightningModule):
 
         # Compute the embeddings
         img = self.trsfm_test(list_imgs)
-        z, y = self.shared_step(img)
+        z, y = self.head_and_backbone_embeddings_step(img)
 
         # Collect the xywh for the patches in the validation
         w, h = img.shape[-2:]

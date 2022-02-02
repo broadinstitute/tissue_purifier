@@ -5,6 +5,7 @@ import numpy
 import torch
 from matplotlib.colors import Colormap
 from typing import List
+import matplotlib.pyplot as plt
 
 
 def plot_embeddings(
@@ -15,15 +16,17 @@ def plot_embeddings(
         n_col: int = 3,
         cmap: Colormap = 'inferno') -> "matplotlib.pyplot.figure":
     """
-    Takes a dictionary with embeddings and annotations and make some nice plots
+    Takes a dictionary with embeddings and multiple annotations and make a multi-panel figure with each panel showing
+    one annotation.
 
     Args:
         input_dictionary: dictionary with input data
-        embedding_key: str corresponding to the embeddings in input_dictionary
-        annotation_keys: List[str] corresponding to annotations in input_dictionary
-        sup_title:
-        n_col:
-        cmap:
+        embedding_key: str corresponding to the embeddings in input_dictionary.
+            Embedding have shape (n_sample, latent_dim). Only the first two latent dimensions will be used for plotting.
+        annotation_keys: List[str] corresponding to annotations in input_dictionary.
+        sup_title: the title (if any) for the figure
+        n_col: how many columns to have in the multi-panel figure
+        cmap: the color map to use for the continuous variable. The categorical variable will have a different cmap.
     """
 
     assert set(annotation_keys + [embedding_key]).issubset(input_dictionary.keys()), \
@@ -72,6 +75,9 @@ def plot_embeddings(
                     cmap=cmap)
     if sup_title:
         _ = fig.suptitle(sup_title)
+
+    # close figure and return
+    plt.close(fig)
     return fig
 
 

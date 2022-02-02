@@ -155,8 +155,8 @@ class BarlowModel(BenchmarkModelMixin):
         y = self.backbone(x)  # shape (batch, ch)
         return y
 
-    def shared_step(self, x):
-        # step common to train_step and validation_step
+    def head_and_backbone_embeddings_step(self, x):
+        # this generates both head and backbone embeddings
         y = self(x)  # shape: (batch, ch)
         z = self.projection(y)  # shape: (batch, latent)
         return z, y
@@ -169,12 +169,12 @@ class BarlowModel(BenchmarkModelMixin):
             x2 = self.trsfm_train_global(list_imgs)
 
         # forward is inside the no-grad context
-        z1, y1 = self.shared_step(x1)
-        z2, y2 = self.shared_step(x2)
+        z1, y1 = self.head_and_backbone_embeddings_step(x1)
+        z2, y2 = self.head_and_backbone_embeddings_step(x2)
 
         # empirical cross-correlation matrix
         # note that batch-norm are syncronized therefore mean and std are computed across all devices
-        corr_tmp = self.bn_final(z1).T @ self.bn_final(z2)
+        corr_tmp = self.bn_final(z1).T @ self.bn_final(z2)  # shape: (latent, latent)
         batch_size_per_gpu = z1.shape[0]
         batch_size_total = sync_ddp_if_available(z1.shape[0], group=None, reduce_op='sum')
         corr_sum = sync_ddp_if_available(corr_tmp, group=None, reduce_op='sum')  # sum across devices

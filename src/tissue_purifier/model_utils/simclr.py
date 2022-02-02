@@ -200,8 +200,8 @@ class SimclrModel(BenchmarkModelMixin):
         y = self.backbone(x)  # shape (batch, ch)
         return y
 
-    def shared_step(self, x):
-        # step common to train_step and validation_step
+    def head_and_backbone_embeddings_step(self, x):
+        # this generates both head and backbone embeddings
         y = self(x)  # shape: (batch, ch)
         z = self.projection(y)  # shape: (batch, latent)
         return z, y
@@ -213,8 +213,8 @@ class SimclrModel(BenchmarkModelMixin):
             img1 = self.trsfm_train_global(list_imgs)
             img2 = self.trsfm_train_global(list_imgs)
 
-        z1, y1 = self.shared_step(img1)
-        z2, y2 = self.shared_step(img2)
+        z1, y1 = self.head_and_backbone_embeddings_step(img1)
+        z2, y2 = self.head_and_backbone_embeddings_step(img2)
 
         world_z1, world_z2 = self.all_gather([z1, z2])
         z1_tot = world_z1.flatten(end_dim=-2)  # shape: (gpus * batch, latent)

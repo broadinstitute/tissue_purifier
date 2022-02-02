@@ -316,7 +316,8 @@ class VaeModel(BenchmarkModelMixin):
             'kl_loss': kl_loss,
         }
 
-    def shared_step(self, x):
+    def head_and_backbone_embeddings_step(self, x):
+        # this generates both head and backbone embeddings
         # return mu twice so that it is interpreted as backbone and head features
         mu = self(x)
         return mu, mu

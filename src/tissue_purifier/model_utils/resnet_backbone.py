@@ -8,6 +8,60 @@ from pl_bolts.models.autoencoders.components import DecoderBlock, ResNetDecoder,
 def make_resnet_backbone(
         backbone_in_ch: int,
         backbone_type: str) -> torch.nn.Module:
+    """ Simple wrapper """
+    return make_resnet_backbone_large_resolution(
+        backbone_in_ch=backbone_in_ch,
+        backbone_type=backbone_type,
+        pretrained=True)
+
+
+def make_resnet_backbone_large_resolution(
+        backbone_in_ch: int,
+        backbone_type: str,
+        pretrained: bool = True) -> torch.nn.Module:
+    """
+    This is based on torchvision standard implementation of resnet for large resolutions.
+    The spatial resolution is decreased by a factor of 16.
+    For example a 64x64 input is reduced to a 4x4 outputs (before torch.nn.AdaptiveAvgPool2d)
+    The input resolution must be a multiple of 16. The minimum resolution of the input is 32x32.
+    For example: 32, 48, 64, 80, 96, ...
+    """
+    if backbone_type == 'resnet18':
+        net = torchvision.models.resnet18(pretrained=pretrained)
+    elif backbone_type == 'resnet34':
+        net = torchvision.models.resnet34(pretrained=pretrained)
+    elif backbone_type == 'resnet50':
+        net = torchvision.models.resnet50(pretrained=pretrained)
+    else:
+        raise Exception("Invalid enc_dec_type. Received {0}".format(backbone_type))
+
+    first_conv_out_channels = list(net.children())[0].out_channels
+    new_net = torch.nn.Sequential(
+        torch.nn.Conv2d(
+            backbone_in_ch,
+            first_conv_out_channels,
+            kernel_size=(3, 3),
+            stride=(1, 1),
+            padding=(1, 1),
+            bias=False,
+        ),
+        *list(net.children())[1:-2],  # I am excluding the last (fc) layer and AveragePool2D
+        torch.nn.AdaptiveAvgPool2d(1),  # adding adaptive pooling
+        torch.nn.Flatten(start_dim=1)  # adding flattening
+    )
+    return new_net
+
+
+def make_resnet_backbone_tiny_resolution(
+        backbone_in_ch: int,
+        backbone_type: str) -> torch.nn.Module:
+    """
+    This is based on lightly reimplementation of resnet for small resolutions.
+    The spatial resolution is decreased by a factor of 8.
+    For example a 16x16 input is reduced to a 2x2 outputs (before torch.nn.AdaptiveAvgPool2d)
+    The input resolution must be a multiple of 8. The minimum resolution of the input is 16x16.
+    For example: 16, 24, 32, 40, 48, ...
+    """
 
     if backbone_type == 'resnet18':
         net = lightly.models.resnet.ResNetGenerator(name='resnet-18', num_classes=10)

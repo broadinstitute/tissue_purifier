@@ -387,8 +387,8 @@ class DinoModel(BenchmarkModelMixin):
         z, y = self.teacher(x)
         return y
 
-    def shared_step(self, x):
-        # step common to train_step and validation_step
+    def head_and_backbone_embeddings_step(self, x):
+        # this generates both head and backbone embeddings
         z, y = self.teacher(x)
         return z, y
 
@@ -416,7 +416,7 @@ class DinoModel(BenchmarkModelMixin):
                 list_of_minibatches.append(self.trsfm_train_local(list_imgs))
 
             # forward for teacher is inside the no-grad context
-            z_t, y_t = self.shared_step(list_of_minibatches[:self.n_global_crops])
+            z_t, y_t = self.head_and_backbone_embeddings_step(list_of_minibatches[:self.n_global_crops])
         # forward for student is outside the no-grad context
         z_s, y_s = self.student(list_of_minibatches)
 

@@ -137,7 +137,7 @@ def initialization(
         #   This is supposed to mimic a multi-gpu training on CPU for debugging purposes
         #   Unfortunately it hangs. Lightining removed the ddp_cpu. Investigate solution
         #   For now, I change parameter so that it runs a single-cpu training.
-        #   Can still be used for debug but not the ddp part.
+        #   Can still be used for debug but not the multi-gpu part.
         strategy = None  # 'ddp'
         accelerator = 'cpu'
         num_processes = 1  # 2
