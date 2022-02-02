@@ -184,7 +184,6 @@ class CropperDenseTensor(CropperTensor):
 
         elif strategy == 'tiling' or strategy == 'random':
 
-            # create two tensors (x_corner, y_corner) with the location of the bottom left corner of the crop
             w_img, h_img = tensor.shape[-2:]
             if strategy == 'tiling':
                 # generate a random starting point
@@ -204,6 +203,7 @@ class CropperDenseTensor(CropperTensor):
                     x_corner = x_corner[index_shuffle]
                     y_corner = y_corner[index_shuffle]
             elif strategy == 'random':
+                # create two tensors (x_corner, y_corner) with the location of the bottom left corner of the crop
                 x_corner = torch.randint(
                     low=0,
                     high=max(1, w_img - crop_size),
@@ -323,7 +323,7 @@ class CropperSparseTensor(CropperTensor):
         # if torch.cuda.is_available():
         #    sparse_tensor = sparse_tensor.cuda()
 
-        codes, x_pixel, y_pixel = sparse_tensor.indices()
+        codes, x_pixel, y_pixel = sparse_tensor.indices()  # each has shape (n_elements)
         values = sparse_tensor.values()
 
         ch, w_img, h_img = sparse_tensor.size()
@@ -369,9 +369,9 @@ class CropperSparseTensor(CropperTensor):
         element_mask = (x_pixel >= x_corner) * \
                        (x_pixel < x_corner + crop_size) * \
                        (y_pixel >= y_corner) * \
-                       (y_pixel < y_corner + crop_size)
+                       (y_pixel < y_corner + crop_size)  # shape: (n_crops * SAFETY_FACTOR, n_elements)
 
-        n_elements = (values * element_mask).sum(dim=-1)
+        n_elements = (values * element_mask).sum(dim=-1)  # shape (n_crops * SAFETY_FACTOR)
         valid_patch = criterium_fn(n_elements)
         n_valid_patches = valid_patch.sum().item()
         if n_valid_patches < n_crops:
@@ -463,13 +463,18 @@ class CropperDataset(Dataset):
         if self.cropper is None:
             self.duplicating_factor = 1
             self.n_crops = None
-        else:
-            if self.cropper.strategy == 'random':
-                self.duplicating_factor = self.cropper.n_crops
-                self.n_crops = 1
-            else:
-                self.duplicating_factor = 1
-                self.n_crops = self.cropper.n_crops
+        elif self.cropper.strategy == 'random':
+            # If n_crops >= batch_size then a single tissue generates all crops for the mini_batch.
+            # This result in a very imbalanced mini_batch.
+            # Here we implement a trick for generating more balanced mini_batches.
+            # We pretend to have more tissues and generate fewer crops from each tissue resulting in the same overall
+            # number of crops but a more diverse mini_batch.
+            # See __len__ and __getitem__ for how this trick is implemented.
+            tmp_n_crops = self.cropper.n_crops
+            while tmp_n_crops > 10 and tmp_n_crops % 2 == 0:
+                tmp_n_crops /= 2
+            self.n_crops = tmp_n_crops
+            self.duplicating_factor = int(self.cropper.n_crops // self.n_crops)
 
     def to(self, device: torch.device) -> "CropperDataset":
         """ Move the images to a particular device """
@@ -477,13 +482,15 @@ class CropperDataset(Dataset):
         return self
 
     def __len__(self):
+        # We pretend that the dataset contains extra samples.
+        # Note that the data_loader will generate random indices between 0 and this (inflated) length
         return len(self.imgs) * self.duplicating_factor
 
     def __getitem__(self, index: int) -> Union[
                                          Tuple[torch.Tensor, int, MetadataCropperDataset],
                                          List[Tuple[torch.Tensor, int, MetadataCropperDataset]]]:
-
-        new_index = index % len(self.imgs)
+        # Remap the index from the inflated interval to the original interval.
+        new_index = index % len(self.imgs)  # this is strictly in [0, len(self.imgs))
 
         if self.cropper is None:
             img = self.imgs[new_index]

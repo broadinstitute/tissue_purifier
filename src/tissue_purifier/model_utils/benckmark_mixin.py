@@ -192,6 +192,7 @@ def knn_classification_regression(world_dict: dict, val_iomin_threshold: float):
         patches_xywh=patches,
         iom_threshold=val_iomin_threshold)
     binarized_overlap_nn = (overlap_nn > val_iomin_threshold).float()
+    print("# non-overlapping patches->", nms_mask_n.sum())
 
     # figure out the keys for the features, regression and classification
     feature_keys, regress_keys, classify_keys = [], [], []
@@ -226,7 +227,6 @@ def knn_classification_regression(world_dict: dict, val_iomin_threshold: float):
         nms_mask_n = NonMaxSuppression._perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
                                                               score_n=torch.rand_like(initial_score),
                                                               possible_n=torch.ones_like(initial_score).bool())
-        print("# non-overlapping patches->", nms_mask_n.sum())
         world_dict_subset = subset_dict(input_dict=world_dict, mask=nms_mask_n)
 
         df_tmp = classify_and_regress(
@@ -261,6 +261,7 @@ def linear_classification_regression(world_dict: dict, val_iomin_threshold: floa
         patches_xywh=patches,
         iom_threshold=val_iomin_threshold)
     binarized_overlap_nn = (overlap_nn > val_iomin_threshold).float()
+    print("# non-overlapping patches->", nms_mask_n.sum())
 
     # figure out the keys for the features, regression and classification
     feature_keys, regress_keys, classify_keys = [], [], []
@@ -287,7 +288,6 @@ def linear_classification_regression(world_dict: dict, val_iomin_threshold: floa
         nms_mask_n = NonMaxSuppression._perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
                                                               score_n=torch.rand_like(initial_score),
                                                               possible_n=torch.ones_like(initial_score).bool())
-        print("# non-overlapping patches->", nms_mask_n.sum())
         world_dict_subset = subset_dict(input_dict=world_dict, mask=nms_mask_n)
 
         df_tmp = classify_and_regress(
