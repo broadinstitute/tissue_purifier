@@ -351,11 +351,16 @@ class DinoSparseDM(DinoDM):
         # print("Inside train_dataloader", device)
 
         assert isinstance(self.dataset_train, CropperDataset)
+        if self.dataset_train.n_crops_per_tissue is None:
+            batch_size_dataloader = self._batch_size_per_gpu
+        else:
+            batch_size_dataloader = max(1, self._batch_size_per_gpu // self.dataset_train.n_crops_per_tissue)
+
         dataloader_train = DataLoaderWithLoad(
             # move the dataset to GPU so that the cropping happens there
             dataset=self.dataset_train.to(device),
             # each sample generate n_crops therefore reduce batch_size
-            batch_size=max(1, int(self._batch_size_per_gpu // self.dataset_train.cropper.n_crops)),
+            batch_size=batch_size_dataloader,
             collate_fn=CollateFnListTuple(),
             # problem if this is larger than 0, see https://github.com/pytorch/pytorch/issues/20248
             num_workers=0,
@@ -370,14 +375,19 @@ class DinoSparseDM(DinoDM):
             device = self.trainer.model.device
         except AttributeError:
             device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        # print("Inside val_dataloader", device)
+
+        assert isinstance(self.dataset_test, CropperDataset)
+        if self.dataset_test.n_crops_per_tissue is None:
+            batch_size_dataloader = self._batch_size_per_gpu
+        else:
+            batch_size_dataloader = max(1, self._batch_size_per_gpu // self.dataset_train.n_crops_per_tissue)
 
         assert isinstance(self.dataset_test, CropperDataset)
         test_dataloader = DataLoaderWithLoad(
             # move the dataset to GPU so that the cropping happens there
             dataset=self.dataset_test.to(device),
             # each sample generate n_crops therefore reduce batch_size
-            batch_size=max(1, int(self._batch_size_per_gpu // self.dataset_test.cropper.n_crops)),
+            batch_size=batch_size_dataloader,
             collate_fn=CollateFnListTuple(),
             # problem if num_workers > 0, see https://github.com/pytorch/pytorch/issues/20248
             num_workers=0,

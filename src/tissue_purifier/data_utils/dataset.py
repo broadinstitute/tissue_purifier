@@ -61,13 +61,12 @@ class CropperTensor(torch.nn.Module):
             criterium_fn: Callable which returns true if it is a valid crop, return False otherwise
         """
         super().__init__()
-        self.crop_size = crop_size
-        self.strategy = strategy
-        self.stride = stride
-        self.n_crops = n_crops
-        self.random_order = random_order
-        self.criterium_fn = criterium_fn
-
+        self.crop_size_ = crop_size
+        self.strategy_ = strategy
+        self.stride_ = stride
+        self.n_crops_ = n_crops
+        self.random_order_ = random_order
+        self.criterium_fn_ = criterium_fn
         self._assert_params(crop_size, stride, n_crops, random_order, strategy, criterium_fn)
 
     @staticmethod
@@ -90,12 +89,12 @@ class CropperTensor(torch.nn.Module):
             criterium_fn: Callable = None) -> (List[torch.Tensor], List[int], List[int]):
 
         # All parameters default to the one used during initialization if they are not specified
-        crop_size = self.crop_size if crop_size is None else crop_size
-        strategy = self.strategy if strategy is None else strategy
-        stride = self.stride if stride is None else stride
-        n_crops = self.n_crops if n_crops is None else n_crops
-        random_order = self.random_order if random_order is None else random_order
-        criterium_fn = self.criterium_fn if criterium_fn is None else criterium_fn
+        crop_size = self.crop_size_ if crop_size is None else crop_size
+        strategy = self.strategy_ if strategy is None else strategy
+        stride = self.stride_ if stride is None else stride
+        n_crops = self.n_crops_ if n_crops is None else n_crops
+        random_order = self.random_order_ if random_order is None else random_order
+        criterium_fn = self.criterium_fn_ if criterium_fn is None else criterium_fn
 
         crops, x_locs, y_locs = self._crop(tensor, crop_size, strategy, stride, n_crops, random_order, criterium_fn)
         return crops, x_locs, y_locs
@@ -147,10 +146,10 @@ class CropperDenseTensor(CropperTensor):
 
     def __repr__(self):
         return self.__class__.__name__ + '(crop_size={0}, strategy={1}, stride={2}, random_order={3}, \
-        min_threshold_value={4}, min_threshold_fraction={5})'.format(self.crop_size,
-                                                                     self.strategy,
-                                                                     self.stride,
-                                                                     self.random_order,
+        min_threshold_value={4}, min_threshold_fraction={5})'.format(self.crop_size_,
+                                                                     self.strategy_,
+                                                                     self.stride_,
+                                                                     self.random_order_,
                                                                      self.min_threshold_value,
                                                                      self.min_threshold_fraction)
 
@@ -227,7 +226,7 @@ class CropperDenseTensor(CropperTensor):
             for ix, iy in zip(x_corner, y_corner):
                 tensor_tmp = torch.narrow(tensor, dim=-2, start=ix, length=crop_size)
                 crop = torch.narrow(tensor_tmp, dim=-1, start=iy, length=crop_size)
-                if self.criterium_fn(crop):
+                if self.criterium_fn_(crop):
                     crops.append(crop.clone())
                     x_locs.append(ix.item())
                     y_locs.append(iy.item())
@@ -258,10 +257,10 @@ class CropperSparseTensor(CropperTensor):
 
     def __repr__(self):
         return self.__class__.__name__ + '(crop_size={0}, strategy={1}, stride={2}, random_order={3}, \
-        n_element_min={4})'.format(self.crop_size,
-                                   self.strategy,
-                                   self.stride,
-                                   self.random_order,
+        n_element_min={4})'.format(self.crop_size_,
+                                   self.strategy_,
+                                   self.stride_,
+                                   self.random_order_,
                                    self.n_element_min)
 
     @staticmethod
@@ -462,19 +461,19 @@ class CropperDataset(Dataset):
         self.cropper = cropper
         if self.cropper is None:
             self.duplicating_factor = 1
-            self.n_crops = None
-        elif self.cropper.strategy == 'random':
+            self.n_crops_per_tissue = None
+        elif self.cropper.strategy_ == 'random':
             # If n_crops >= batch_size then a single tissue generates all crops for the mini_batch.
             # This result in a very imbalanced mini_batch.
             # Here we implement a trick for generating more balanced mini_batches.
             # We pretend to have more tissues and generate fewer crops from each tissue resulting in the same overall
             # number of crops but a more diverse mini_batch.
             # See __len__ and __getitem__ for how this trick is implemented.
-            tmp_n_crops = self.cropper.n_crops
+            tmp_n_crops = self.cropper.n_crops_
             while tmp_n_crops > 10 and tmp_n_crops % 2 == 0:
                 tmp_n_crops /= 2
-            self.n_crops = tmp_n_crops
-            self.duplicating_factor = int(self.cropper.n_crops // self.n_crops)
+            self.n_crops_per_tissue = tmp_n_crops
+            self.duplicating_factor = int(self.cropper.n_crops_ // self.n_crops)
 
     def to(self, device: torch.device) -> "CropperDataset":
         """ Move the images to a particular device """
@@ -483,12 +482,13 @@ class CropperDataset(Dataset):
 
     def __len__(self):
         # We pretend that the dataset contains extra samples.
-        # Note that the data_loader will generate random indices between 0 and this (inflated) length
+        # Note that the data_loader will generate RANDOM indices between 0 and this (inflated) length
         return len(self.imgs) * self.duplicating_factor
 
     def __getitem__(self, index: int) -> Union[
                                          Tuple[torch.Tensor, int, MetadataCropperDataset],
                                          List[Tuple[torch.Tensor, int, MetadataCropperDataset]]]:
+
         # Remap the index from the inflated interval to the original interval.
         new_index = index % len(self.imgs)  # this is strictly in [0, len(self.imgs))
 
@@ -500,7 +500,7 @@ class CropperDataset(Dataset):
 
         else:
             code_base = self.codes[new_index]
-            crop_list, loc_x_list, loc_y_list = self.cropper(self.imgs[new_index], n_crops=self.n_crops)
+            crop_list, loc_x_list, loc_y_list = self.cropper(self.imgs[new_index], n_crops=self.n_crops_per_tissue)
 
             metadata_base: MetadataCropperDataset = self.metadatas[new_index]
 
