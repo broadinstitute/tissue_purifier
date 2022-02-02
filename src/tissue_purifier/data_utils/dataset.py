@@ -473,7 +473,7 @@ class CropperDataset(Dataset):
             while tmp_n_crops > 10 and tmp_n_crops % 2 == 0:
                 tmp_n_crops /= 2
             self.n_crops_per_tissue = tmp_n_crops
-            self.duplicating_factor = int(self.cropper.n_crops_ // self.n_crops)
+            self.duplicating_factor = int(self.cropper.n_crops_ // self.n_crops_per_tissue)
 
     def to(self, device: torch.device) -> "CropperDataset":
         """ Move the images to a particular device """
