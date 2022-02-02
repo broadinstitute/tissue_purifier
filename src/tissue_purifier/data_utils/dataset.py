@@ -464,8 +464,8 @@ class CropperDataset(Dataset):
             self.n_crops_per_tissue = None
         elif self.cropper.strategy_ == 'random':
             # If n_crops >= batch_size then a single tissue generates all crops for the mini_batch.
-            # This result in a very imbalanced mini_batch.
-            # Here we implement a trick for generating more balanced mini_batches.
+            # This results in a very imbalanced mini_batch.
+            # Here, we implement a trick for generating more balanced mini_batches.
             # We pretend to have more tissues and generate fewer crops from each tissue resulting in the same overall
             # number of crops but a more diverse mini_batch.
             # See __len__ and __getitem__ for how this trick is implemented.
