@@ -354,7 +354,7 @@ class DinoSparseDM(DinoDM):
         if self.dataset_train.n_crops_per_tissue is None:
             batch_size_dataloader = self._batch_size_per_gpu
         else:
-            batch_size_dataloader = max(1, self._batch_size_per_gpu // self.dataset_train.n_crops_per_tissue)
+            batch_size_dataloader = max(1, int(self._batch_size_per_gpu // self.dataset_train.n_crops_per_tissue))
 
         dataloader_train = DataLoaderWithLoad(
             # move the dataset to GPU so that the cropping happens there
@@ -380,7 +380,7 @@ class DinoSparseDM(DinoDM):
         if self.dataset_test.n_crops_per_tissue is None:
             batch_size_dataloader = self._batch_size_per_gpu
         else:
-            batch_size_dataloader = max(1, self._batch_size_per_gpu // self.dataset_train.n_crops_per_tissue)
+            batch_size_dataloader = max(1, int(self._batch_size_per_gpu // self.dataset_train.n_crops_per_tissue))
 
         assert isinstance(self.dataset_test, CropperDataset)
         test_dataloader = DataLoaderWithLoad(
