@@ -424,7 +424,7 @@ class SparseImage:
             batch_size: int = 64,
             n_patches_max: int = 100,
             store_crops: bool = False,
-            store_crops_key: str = None,
+            store_crops_key: str = 'image_patches',
             overwrite: bool = False):
         """
         Split the sparse image into (possibly overlapping) patches.
