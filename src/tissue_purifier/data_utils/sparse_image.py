@@ -967,7 +967,7 @@ class SparseImage:
 
                 # squeeze if possible
                 if v_np.shape[-1] == 1:
-                    v_np = numpy.squeeze(v_np, axis=-1)
+                    v_np = v_np[:, 0]
 
                 if verbose:
                     print("working on {0} of shape {1}".format(k, v.shape))
