@@ -972,7 +972,7 @@ class SparseImage:
                 if verbose:
                     print("working on {0} of shape {1}".format(k, v.shape))
 
-                if len(v.shape) == 1:
+                if len(v_np.shape) == 1:
                     if k in adata.obs.keys() and overwrite:
                         print("adata.obs[{0}] will be overwritten. \
                         To change this behavior set overwrite to True".format(k))
