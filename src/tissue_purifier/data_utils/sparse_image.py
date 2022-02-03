@@ -301,7 +301,7 @@ class SparseImage:
 
         def _get_color_tensor(_cmap, _ch):
             if _cmap is None:
-                cm = cc.cm.glasbey_bw_minc_20_maxl_70
+                cm = cc.cm.glasbey_bw_minc_20
                 x = numpy.arange(_ch)
                 colors_np = cm(x)
             else:
