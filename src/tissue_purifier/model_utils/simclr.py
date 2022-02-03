@@ -212,15 +212,17 @@ class SimclrModel(BenchmarkModelMixin):
 
     def training_step_end(self, outputs: List[dict]):
         if isinstance(outputs, list) and isinstance(outputs[0], dict):
-            z1 = torch.cat([output['z1'] for output in outputs], dim=0)
-            z2 = torch.cat([output['z2'] for output in outputs], dim=0)
+            batch_shapes = [output['z1'].shape[0] for output in outputs]
+            world_z1 = torch.cat([output['z1'] for output in outputs], dim=0)
+            world_z2 = torch.cat([output['z2'] for output in outputs], dim=0)
         elif isinstance(outputs, dict):
-            z1 = outputs['z1']
-            z2 = outputs['z2']
+            batch_shapes = [outputs['z1'].shape[0]]
+            world_z1 = outputs['z1']
+            world_z2 = outputs['z2']
         else:
             raise Exception("ERROR. Expected dict or list[dict]. Received {0}".format(type(outputs)))
 
-        loss = self.nt_xent_loss(z1, z2)
+        loss = self.nt_xent_loss(world_z1, world_z2)
 
         # Update the optimizer parameters and log stuff
         with torch.no_grad():
@@ -234,14 +236,13 @@ class SimclrModel(BenchmarkModelMixin):
                     pg["weight_decay"] = 0.0
 
             # Finally I log interesting stuff
-            batch_size_per_gpu = z1.shape[0]
-            batch_size_total = world_z1.shape[0]
+            batch_size_total = numpy.array(batch_shapes).sum()
+            batch_size_per_gpu = numpy.array(batch_shapes).mean()
             self.log('train_loss', loss, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
             self.log('weight_decay', wd, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
             self.log('learning_rate', lr, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
             self.log('batch_size_per_gpu_train', batch_size_per_gpu, on_step=False, on_epoch=True, rank_zero_only=True)
             self.log('batch_size_total_train', batch_size_total, on_step=False, on_epoch=True, rank_zero_only=True)
-
         return loss
 
     def configure_optimizers(self) -> torch.optim.Optimizer:

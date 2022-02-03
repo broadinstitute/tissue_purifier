@@ -533,6 +533,7 @@ class SparseImage:
         if store_crops:
             self._patch_properties_dict[store_crops_key] = torch.cat(all_patches, dim=0).detach().cpu()
 
+        loss = self.nt_xent_loss(z1_tot, z2_tot)
         # Write the patches coordinates to the dictionary if they are new
         if patches_xywh is None:
             x_torch = torch.tensor(patches_x, dtype=torch.int).cpu()
