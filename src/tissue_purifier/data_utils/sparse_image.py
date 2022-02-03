@@ -273,10 +273,10 @@ class SparseImage:
     def to_rgb(self,
                spot_size: float = 1.0,
                cmap: matplotlib.colors.ListedColormap = cc.cm.glasbey_bw_minc_20_maxl_70,
-               figsize: Tuple = (8,8),
+               figsize: Tuple = (8, 8),
                show_colorbar: bool = True) -> (torch.Tensor, matplotlib.pyplot.Figure):
         """
-        Make a 3 channel RGB image
+        Make a 3 channel RGB image. Returns tensor and matplotlig figure.
 
         Args:
             spot_size: size of sigma of gaussian kernel for rendering the spots
@@ -329,6 +329,7 @@ class SparseImage:
         dist = in_range_max - in_range_min
         scale = 1.0 if dist == 0.0 else 1.0 / dist
         rgb_img.add_(other=in_range_min, alpha=-1.0).mul_(other=scale).clamp_(min=0.0, max=1.0)
+        rgb_img = rgb_img.detach().cpu()
 
         # make the figure
         fig, ax = plt.subplots(figsize=figsize)
@@ -345,8 +346,9 @@ class SparseImage:
             cbar = fig.colorbar(scalar_mappable, ticks=numpy.arange(ch), ax=ax)
             legend_colorbar = list(self._categories_to_codes.keys())
             cbar.ax.set_yticklabels(legend_colorbar)
+        plt.close()
 
-        return rgb_img.detach().cpu()
+        return rgb_img, fig
 
     def crops(
             self,
