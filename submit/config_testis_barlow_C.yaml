@@ -32,7 +32,7 @@ head_hidden_chs:
 head_out_ch: 2048
 
 # loss
-lambda_off_diagonal: 5E-4
+lambda_off_diagonal: 0.0
 
 # optimizers
 optimizer_type: sgd

@@ -32,14 +32,14 @@ head_hidden_chs:
 head_out_ch: 2048
 
 # loss
-lambda_off_diagonal: 5E-4
+lambda_off_diagonal: 0.0
 
 # optimizers
-optimizer_type: sgd
-min_learning_rate: 1.0E-4
+optimizer_type: adam
+min_learning_rate: 1.0E-3
 max_learning_rate: 1.0E-3
-max_weight_decay: 5E-4
-min_weight_decay: 5E-4
+max_weight_decay: 0.0
+min_weight_decay: 0.0
 warm_up_epochs: 50
 warm_down_epochs: 500
 max_epochs: 1000
@@ -72,5 +72,5 @@ occlusion_fraction:
 - 0.1
 - 0.3
 rasterize_sigma:
-- 0.5
-- 1.0
+- 1.5
+- 2.0

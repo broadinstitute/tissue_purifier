@@ -1,10 +1,10 @@
 # general
 random_seed: 11
 neptune_project: cellarium/tissue-purifier
-batch_size_per_gpu: 400
+batch_size_per_gpu: 160
 check_val_every_n_epoch: 20
 checkpoint_interval_minutes: 25
-model: barlow
+model: simclr
 data_dir: ./slide_seq_testis
 dataset: slide_seq_testis
 num_workers: -1
@@ -18,7 +18,7 @@ logging: true
 precision: 16
 predict: false
 profiler: passthrough
-detect_anomaly: false
+detect_anomaly: True
 deterministic: false
 
 # validation
@@ -27,20 +27,17 @@ val_iomin_threshold: 0.0
 # architecture
 backbone_type: resnet18
 head_hidden_chs:
-- 2048
-- 2048
-head_out_ch: 2048
-
-# loss
-lambda_off_diagonal: 5E-4
+- 512
+- 512
+head_out_ch: 128
 
 # optimizers
-optimizer_type: sgd
+optimizer_type: adam
 min_learning_rate: 1.0E-4
-max_learning_rate: 1.0E-3
-max_weight_decay: 5E-4
-min_weight_decay: 5E-4
-warm_up_epochs: 50
+max_learning_rate: 1.0E-4
+max_weight_decay: 0.0
+min_weight_decay: 0.0
+warm_up_epochs: 100
 warm_down_epochs: 500
 max_epochs: 1000
 
@@ -56,7 +53,7 @@ image_in_ch: 9
 # augmentations
 n_global_crops: 1
 n_local_crops: 0
-global_size: 96
+global_size: 224
 local_size: 64
 dropouts:
 - 0.1
@@ -72,5 +69,4 @@ occlusion_fraction:
 - 0.1
 - 0.3
 rasterize_sigma:
-- 0.5
 - 1.0
