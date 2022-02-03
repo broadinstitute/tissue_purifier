@@ -272,7 +272,7 @@ class SparseImage:
 
     def to_rgb(self,
                spot_size: float = 1.0,
-               cmap: matplotlib.colors.ListedColormap = cc.cm.glasbey_bw_minc_20_maxl_70,
+               cmap: matplotlib.colors.ListedColormap = 'tab20',
                figsize: Tuple = (8, 8),
                show_colorbar: bool = True,
                contrast: float = 1.0) -> (torch.Tensor, matplotlib.pyplot.Figure):
@@ -301,8 +301,8 @@ class SparseImage:
 
         def _get_color_tensor(_cmap, _ch):
             cm = plt.get_cmap(_cmap, _ch)
-            # x = numpy.linspace(0.0, 1.0, _ch)
-            x = numpy.arange(_ch)
+            x = numpy.linspace(0.0, 1.0, _ch)
+            # x = numpy.arange(_ch)
             colors_np = cm(x)
             color = torch.Tensor(colors_np)[:, :3]
             assert color.shape[0] == _ch
