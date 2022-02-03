@@ -336,7 +336,7 @@ class SparseImage:
         _ = ax.imshow(rgb_img.permute(1, 2, 0))
 
         if show_colorbar:
-            discrete_cmp = matplotlib.colors.ListedColormap(colors.numpy())
+            discrete_cmp = matplotlib.colors.ListedColormap(colors.cpu().numpy())
             normalizer = matplotlib.colors.BoundaryNorm(
                 boundaries=numpy.linspace(-0.5, ch - 0.5, ch + 1),
                 ncolors=ch,
