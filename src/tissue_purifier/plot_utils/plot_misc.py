@@ -289,8 +289,7 @@ def show_corr_matrix(data: torch.Tensor, show_colorbar: bool = True, sup_title: 
                     xticklabels=False,
                     yticklabels=False,
                     center=0.0,
-                    vmin=-1.0,
-                    vmax=1.0,
+                    robust=True,
                     cbar=show_colorbar,
                     ax=ax[0])
 
