@@ -301,7 +301,8 @@ class SparseImage:
 
         def _get_color_tensor(_cmap, _ch):
             cm = plt.get_cmap(_cmap, _ch)
-            x = numpy.linspace(0.0, 1.0, _ch)
+            # x = numpy.linspace(0.0, 1.0, _ch)
+            x = numpy.arange(_ch)
             colors_np = cm(x)
             color = torch.Tensor(colors_np)[:, :3]
             assert color.shape[0] == _ch
