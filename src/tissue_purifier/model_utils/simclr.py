@@ -208,12 +208,19 @@ class SimclrModel(BenchmarkModelMixin):
 
         z1, y1 = self.head_and_backbone_embeddings_step(img1)
         z2, y2 = self.head_and_backbone_embeddings_step(img2)
+        return {'z1': z1, 'z2': z2}
 
-        world_z1, world_z2 = self.all_gather([z1, z2], sync_grads=True)
-        z1_tot = world_z1.flatten(end_dim=-2)  # shape: (gpus * batch, latent)
-        z2_tot = world_z2.flatten(end_dim=-2)  # shape: (gpus * batch, latent)
+    def training_step_end(self, outputs: List[dict]):
+        if isinstance(outputs, list) and isinstance(outputs[0], dict):
+            z1 = torch.cat([output['z1'] for output in outputs], dim=0)
+            z2 = torch.cat([output['z2'] for output in outputs], dim=0)
+        elif isinstance(outputs, dict):
+            z1 = outputs['z1']
+            z2 = outputs['z2']
+        else:
+            raise Exception("ERROR. Expected dict or list[dict]. Received {0}".format(type(outputs)))
 
-        loss = self.nt_xent_loss(z1_tot, z2_tot)
+        loss = self.nt_xent_loss(z1, z2)
 
         # Update the optimizer parameters and log stuff
         with torch.no_grad():
