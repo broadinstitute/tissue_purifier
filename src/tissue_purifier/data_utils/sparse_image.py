@@ -466,9 +466,8 @@ class SparseImage:
                 print("The key {0} is already present in patch_properties_dict.")
                 print(" Set overwrite=True to overwrite its value. Nothing will be done.".format(k))
                 return
-            if k in destination_keys and overwrite:
-                print("The key {0} is already present in patch_properties_dict.")
-                print("This value will be overwritten".format(k))
+            elif k in destination_keys and overwrite:
+                print("The key {0} is already present in patch_properties_dict and it will be overwritten".format(k))
 
         patches_xywh = self._patch_properties_dict.get("patch_xywh", None)
         if patches_xywh is None:
@@ -586,7 +585,7 @@ class SparseImage:
 
         keys_after_transfer = keys_to_transfer if keys_after_transfer is None else keys_after_transfer
         assert (isinstance(keys_after_transfer, list) and len(keys_after_transfer) == len(keys_to_transfer)), \
-            " Error. keys_after_transfer must be a lsit of the same length as keys_to_transfer "
+            " Error. keys_after_transfer must be a list of the same length as keys_to_transfer "
 
         assert "patch_xywh" in self.patch_properties_dict.keys(), \
             " The spot_properties_dict does not have the patch_xywh keyword."
@@ -600,8 +599,8 @@ class SparseImage:
                         Nothing will be done.".format(k_new))
                 return
             elif k_new in keys_at_destination and overwrite:
-                print("The key {0} is already present in image_properties_dict. \
-                        This value will be overwritten".format(k_new))
+                print("The key {0} is already present in image_properties_dict and it will be overwritten".format(
+                    k_new))
 
         # Here is where the actual calculation starts
         for k_old, k_new in zip(keys_to_transfer, keys_after_transfer):
@@ -965,6 +964,10 @@ class SparseImage:
         for k, v in self._spot_properties_dict.items():
             if (k not in self._x_key) and (k not in self._y_key) and (k not in self._cat_key):
                 v_np = _to_numpy(v)
+
+                # squeeze if possible
+                if v_np.shape[-1] == 1:
+                    v_np = numpy.squeeze(v_np, axis=-1)
 
                 if verbose:
                     print("working on {0} of shape {1}".format(k, v.shape))
