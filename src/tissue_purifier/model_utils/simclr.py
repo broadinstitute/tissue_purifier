@@ -21,19 +21,12 @@ class NTXentLoss(torch.nn.Module):
 
     def forward(self,
                 out0: torch.Tensor,
-                out1: torch.Tensor,
-                verbose: bool = False,
-                ):
-        """Forward pass through Contrastive Cross-Entropy Loss.
+                out1: torch.Tensor):
+        """ Forward pass through Contrastive Cross-Entropy Loss.
 
             Args:
-                out0:
-                    Output projections of the first set of transformed images.
-                    Shape: (batch_size, embedding_size)
-                out1:
-                    Output projections of the second set of transformed images.
-                    Shape: (batch_size, embedding_size)
-                verbose: Print some information while running
+                out0: representation for the first set of transformed images. Shape: (batch_size, embedding_size)
+                out1: representation for the second set of transformed images. Shape: (batch_size, embedding_size)
 
             Returns:
                 Contrastive Cross Entropy Loss value.
@@ -43,7 +36,7 @@ class NTXentLoss(torch.nn.Module):
             >>> out_1 = torch.randn((batch, latent_dim))
             >>> out_2 = out1 + 0.1  # this mimic a very good encoding where pair images have close embeddings
             >>> ntx_loss = NTXentLoss()
-            >>> _ = ntx_loss(out_1, out_2, verbose=True)
+            >>> my_loss = ntx_loss(out_1, out_2)
         """
         device = out0.device
         batch_size, _ = out0.shape

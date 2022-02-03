@@ -272,16 +272,21 @@ class SparseImage:
 
     def to_rgb(self,
                spot_size: float = 1.0,
-               cmap: matplotlib.colors.ListedColormap = cc.cm.glasbey_bw_minc_20_maxl_70) -> torch.Tensor:
+               cmap: matplotlib.colors.ListedColormap = cc.cm.glasbey_bw_minc_20_maxl_70,
+               figsize: Tuple = (8,8),
+               show_colorbar: bool = True) -> (torch.Tensor, matplotlib.pyplot.Figure):
         """
         Make a 3 channel RGB image
 
         Args:
             spot_size: size of sigma of gaussian kernel for rendering the spots
             cmap: the colormap to use
+            figsize: the size of the figure
+            show_colorbar: If True show the colorbar
 
         Returns:
-            rgb: Tensor of size (3, width, height) with the rgb rendering of the image
+            A torch.Tensor of size (3, width, height) with the rgb rendering of the image
+            and a matplotlib figure.
         """
 
         def _make_kernel(_sigma: float):
@@ -324,6 +329,23 @@ class SparseImage:
         dist = in_range_max - in_range_min
         scale = 1.0 if dist == 0.0 else 1.0 / dist
         rgb_img.add_(other=in_range_min, alpha=-1.0).mul_(other=scale).clamp_(min=0.0, max=1.0)
+
+        # make the figure
+        fig, ax = plt.subplots(figsize=figsize)
+        _ = ax.imshow(rgb_img.permute(1, 2, 0))
+
+        if show_colorbar:
+            discrete_cmp = matplotlib.colors.ListedColormap(colors.numpy())
+            normalizer = matplotlib.colors.BoundaryNorm(
+                boundaries=numpy.linspace(-0.5, ch - 0.5, ch + 1),
+                ncolors=ch,
+                clip=True)
+
+            scalar_mappable = matplotlib.cm.ScalarMappable(norm=normalizer, cmap=discrete_cmp)
+            cbar = fig.colorbar(scalar_mappable, ticks=numpy.arange(ch), ax=ax)
+            legend_colorbar = list(self._categories_to_codes.keys())
+            cbar.ax.set_yticklabels(legend_colorbar)
+
         return rgb_img.detach().cpu()
 
     def crops(
