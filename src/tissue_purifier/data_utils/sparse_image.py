@@ -272,7 +272,7 @@ class SparseImage:
 
     def to_rgb(self,
                spot_size: float = 1.0,
-               cmap: matplotlib.colors.ListedColormap = 'tab20',
+               cmap: matplotlib.colors.ListedColormap = cc.cm.glasbey_bw_minc_20,
                figsize: Tuple = (8, 8),
                show_colorbar: bool = True,
                contrast: float = 1.0) -> (torch.Tensor, matplotlib.pyplot.Figure):
