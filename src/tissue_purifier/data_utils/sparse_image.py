@@ -467,15 +467,16 @@ class SparseImage:
                 print(" Set overwrite=True to overwrite its value. Nothing will be done.".format(k))
                 return
             if k in destination_keys and overwrite:
-                print("The key {0} is already present in patch_properties_dict. This value will be overwritten".format(k))
+                print("The key {0} is already present in patch_properties_dict.")
+                print("This value will be overwritten".format(k))
 
         patches_xywh = self._patch_properties_dict.get("patch_xywh", None)
         if patches_xywh is None:
             print("I will generate {0} new patches for this sparse image".format(n_patches_max))
         else:
             patches_xywh = patches_xywh.to(device=self.data.device, dtype=torch.long)
-            print("I will reuse the {0} patches previously generated for this sparse image".format(patches_xywh.shape[0]))
             n_patches_max = patches_xywh.shape[0]
+            print("I will reuse the {0} patches previously generated for this sparse image".format(n_patches_max))
 
         n_patches = 0
         patches_x, patches_y, patches_w, patches_h = [], [], [], []
@@ -533,7 +534,6 @@ class SparseImage:
         if store_crops:
             self._patch_properties_dict[store_crops_key] = torch.cat(all_patches, dim=0).detach().cpu()
 
-        loss = self.nt_xent_loss(z1_tot, z2_tot)
         # Write the patches coordinates to the dictionary if they are new
         if patches_xywh is None:
             x_torch = torch.tensor(patches_x, dtype=torch.int).cpu()
@@ -592,16 +592,16 @@ class SparseImage:
             " The spot_properties_dict does not have the patch_xywh keyword."
         patch_xywh = self.patch_properties_dict["patch_xywh"].to(device=self.device, dtype=torch.long)
 
-        destination_keys = self.image_properties_dict.keys()
-        for k_old in keys_to_transfer:
-            if k_old in destination_keys and not overwrite:
+        keys_at_destination = self.image_properties_dict.keys()
+        for k_new in keys_after_transfer:
+            if k_new in keys_at_destination and not overwrite:
                 print("The key {0} is already present in image_properties_dict. \
                         Set overwrite=True to overwrite its value. \
-                        Nothing will be done.".format(k_old))
+                        Nothing will be done.".format(k_new))
                 return
-            if k_old in destination_keys and overwrite:
+            elif k_new in keys_at_destination and overwrite:
                 print("The key {0} is already present in image_properties_dict. \
-                        This value will be overwritten".format(k_old))
+                        This value will be overwritten".format(k_new))
 
         # Here is where the actual calculation starts
         for k_old, k_new in zip(keys_to_transfer, keys_after_transfer):
@@ -709,27 +709,28 @@ class SparseImage:
 
                 return (w11 * f11 + w12 * f12 + w21 * f21 + w22 * f22) / den
 
-        assert isinstance(keys_to_transfer, list), "Error. keys must be a list. Received {0}".format(keys_to_transfer)
-        assert set(keys_to_transfer).issubset(set(self.image_properties_dict.keys())), \
-            "Some keys are not present in self.image_properties_dict"
-
         assert strategy == 'bilinear' or strategy == 'closest', "Invalid interpolation_method \
         Expected 'bilinear' or 'closest'. Received {0}. ".format(strategy)
+
+        assert isinstance(keys_to_transfer, list), \
+            "Error. keys_to_transfer must be a list. Received {0}".format(keys_to_transfer)
+        assert set(keys_to_transfer).issubset(set(self.image_properties_dict.keys())), \
+            "Some keys are not present in self.image_properties_dict"
 
         keys_after_transfer = keys_to_transfer if keys_after_transfer is None else keys_after_transfer
         assert isinstance(keys_after_transfer, list) and len(keys_after_transfer) == len(keys_to_transfer), \
             " Error. keys_after_transfer must be a lsit of the same length as keys_to_transfer "
 
-        destination_keys = self._spot_properties_dict.keys()
-        for k_old in keys_to_transfer:
-            if k_old in destination_keys and not overwrite:
+        keys_at_destination = self.spot_properties_dict.keys()
+        for k_new in keys_after_transfer:
+            if k_new in keys_at_destination and not overwrite:
                 print("The key {0} is already present in spot_properties_dict. \
                         Set overwrite=True to overwrite its value. \
-                        Nothing will be done.".format(k_old))
+                        Nothing will be done.".format(k_new))
                 return
-            if k_old in destination_keys and overwrite:
+            elif k_new in keys_at_destination and overwrite:
                 print("The key {0} is already present in spot_properties_dict. \
-                        This value will be overwritten".format(k_old))
+                        This value will be overwritten".format(k_new))
 
         for k_old, k_new in zip(keys_to_transfer, keys_after_transfer):
             if verbose:
@@ -746,7 +747,7 @@ class SparseImage:
                 image_quantity, x_pixel, y_pixel, strategy).cpu()
 
             assert len(interpolated_values.shape) == 2
-            self._spot_properties_dict[k_new] = interpolated_values.permute(dims=(1, 0))
+            self.spot_properties_dict[k_new] = interpolated_values.permute(dims=(1, 0))
 
     def get_state_dict(self, include_anndata: bool = True):
         """ Return the dictionary with the state of the system """
