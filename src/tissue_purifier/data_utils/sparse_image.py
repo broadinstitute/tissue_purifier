@@ -546,18 +546,21 @@ class SparseImage:
     def patch_property_to_image_property(
             self,
             keys_to_transfer: List[str],
+            keys_after_transfer: List[str] = None,
             overwrite: bool = False,
             verbose: bool = False,
             strategy: str = "average"):
         """
         Collect the properties computed separately for each patch and stored in patch_properties_dict to create
-        an image properties which will be stored in image_properties_dict with the same name.
+        an image properties which will be stored in image_properties_dict with the appropriate name.
 
         Args:
             keys_to_transfer: keys of the quantity to transfer from patch_properties_dict to image_properties_dict.
                 The patch_quantity can be: a scalar, a vector, a scalar field or a vector field.
                 This corresponds to patch_quantity having shapes:
                 (N_patches), (N_patches, ch), (N_patches, w, h) or (N_patches, ch, w, h) respectively.
+            keys_after_transfer: keys in the image_properties_dict after transfer.
+                If None, the keys in the image_properties_dict will be identical to :attr:'keys_to_transfer'.
             overwrite: bool, in case of collision between keys this variable controls when to overwrite the values in
                 the image_properties_dict.
             strategy: str, either 'average' (default) or 'closest'. If 'average' the value of each pixel in the image
@@ -581,30 +584,34 @@ class SparseImage:
         assert set(keys_to_transfer).issubset(self.patch_properties_dict.keys()), \
             "Some keys are not present in self.patch_properties_dict."
 
+        keys_after_transfer = keys_to_transfer if keys_after_transfer is None else keys_after_transfer
+        assert (isinstance(keys_after_transfer, list) and len(keys_after_transfer) == len(keys_to_transfer)), \
+            " Error. keys_after_transfer must be a lsit of the same length as keys_to_transfer "
+
         assert "patch_xywh" in self.patch_properties_dict.keys(), \
             " The spot_properties_dict does not have the patch_xywh keyword."
         patch_xywh = self.patch_properties_dict["patch_xywh"].to(device=self.device, dtype=torch.long)
 
         destination_keys = self.image_properties_dict.keys()
-        for k in keys_to_transfer:
-            if k in destination_keys and not overwrite:
+        for k_old in keys_to_transfer:
+            if k_old in destination_keys and not overwrite:
                 print("The key {0} is already present in image_properties_dict. \
                         Set overwrite=True to overwrite its value. \
-                        Nothing will be done.".format(k))
+                        Nothing will be done.".format(k_old))
                 return
-            if k in destination_keys and overwrite:
+            if k_old in destination_keys and overwrite:
                 print("The key {0} is already present in image_properties_dict. \
-                        This value will be overwritten".format(k))
+                        This value will be overwritten".format(k_old))
 
         # Here is where the actual calculation starts
-        for k in keys_to_transfer:
+        for k_old, k_new in zip(keys_to_transfer, keys_after_transfer):
             if verbose:
-                print("working on ->", k)
-            patch_quantity = _to_torch(self.patch_properties_dict[k])
+                print("working on ->", k_old)
+            patch_quantity = _to_torch(self.patch_properties_dict[k_old])
 
             assert patch_quantity.shape[0] == patch_xywh.shape[0], \
                 "patch_quantity {0} and patch_xywh must have the same leading dimension. \
-                Received {1} and {2}".format(k, patch_quantity.shape, patch_xywh.shape)
+                Received {1} and {2}".format(k_old, patch_quantity.shape, patch_xywh.shape)
 
             len_shape = len(patch_quantity.shape)
             if len_shape == 1:
@@ -624,7 +631,7 @@ class SparseImage:
                 ch = patch_quantity.shape[-3]
             else:
                 raise Exception("Can not interpret the dimension of the path_property {0} of \
-                shape {1}".format(k, patch_quantity.shape))
+                shape {1}".format(k_old, patch_quantity.shape))
 
             w_all, h_all = self.shape[-2:]
             tmp_result = torch.zeros((ch, w_all, h_all), device=patch_quantity.device, dtype=patch_quantity.dtype)
@@ -649,24 +656,27 @@ class SparseImage:
                     raise ValueError("strategy can only be 'average' or 'closest'. Received {0}".format(strategy))
 
             if strategy == 'average':
-                self.image_properties_dict[k] = tmp_result / tmp_counter.clamp(min=1.0)
+                self.image_properties_dict[k_new] = tmp_result / tmp_counter.clamp(min=1.0)
             elif strategy == 'closest':
-                self.image_properties_dict[k] = tmp_result
+                self.image_properties_dict[k_new] = tmp_result
             else:
                 raise ValueError("strategy can only be 'average' or 'closest'. Received {0}".format(strategy))
 
     def image_property_to_spot_property(
             self,
-            keys: List[str],
+            keys_to_transfer: List[str],
+            keys_after_transfer: List[str] = None,
             overwrite: bool = False,
             verbose: bool = False,
             strategy: str = "closest"):
         """
         Evaluate the image_properties_dict[keys] at the spots location (either cell or genes).
-        Store the results in the spot_properties_dict
+        Store the results in the spot_properties_dict with the appropriate names.
 
         Args:
-            keys: the keys of the quantity to transfer from image_properties_dict to the spot_properties_dict.
+            keys_to_transfer: the keys of the quantity to transfer from image_properties_dict to spot_properties_dict.
+            keys_after_transfer: keys in the spot_properties_dict after transfer.
+                If None, the keys in the spot_properties_dict will be identical to :attr:'keys_to_transfer'.
             overwrite: bool, in case of collision between the keys this variable controls
                 when the value will be overwritten.
             verbose: bool, if true intermediate messages are displayed.
@@ -699,28 +709,32 @@ class SparseImage:
 
                 return (w11 * f11 + w12 * f12 + w21 * f21 + w22 * f22) / den
 
-        assert isinstance(keys, list), "Error. keys must be a list. Received {0}".format(keys)
-        assert set(keys).issubset(set(self.image_properties_dict.keys())), \
+        assert isinstance(keys_to_transfer, list), "Error. keys must be a list. Received {0}".format(keys_to_transfer)
+        assert set(keys_to_transfer).issubset(set(self.image_properties_dict.keys())), \
             "Some keys are not present in self.image_properties_dict"
 
         assert strategy == 'bilinear' or strategy == 'closest', "Invalid interpolation_method \
         Expected 'bilinear' or 'closest'. Received {0}. ".format(strategy)
 
+        keys_after_transfer = keys_to_transfer if keys_after_transfer is None else keys_after_transfer
+        assert isinstance(keys_after_transfer, list) and len(keys_after_transfer) == len(keys_to_transfer), \
+            " Error. keys_after_transfer must be a lsit of the same length as keys_to_transfer "
+
         destination_keys = self._spot_properties_dict.keys()
-        for k in keys:
-            if k in destination_keys and not overwrite:
+        for k_old in keys_to_transfer:
+            if k_old in destination_keys and not overwrite:
                 print("The key {0} is already present in spot_properties_dict. \
                         Set overwrite=True to overwrite its value. \
-                        Nothing will be done.".format(k))
+                        Nothing will be done.".format(k_old))
                 return
-            if k in destination_keys and overwrite:
+            if k_old in destination_keys and overwrite:
                 print("The key {0} is already present in spot_properties_dict. \
-                        This value will be overwritten".format(k))
+                        This value will be overwritten".format(k_old))
 
-        for k in keys:
+        for k_old, k_new in zip(keys_to_transfer, keys_after_transfer):
             if verbose:
-                print("working on ->", k)
-            image_quantity = self.image_properties_dict[k]
+                print("working on ->", k_old)
+            image_quantity = self.image_properties_dict[k_old]
 
             assert isinstance(image_quantity, torch.Tensor)
             assert len(image_quantity.shape) == 3 and image_quantity.shape[-2:] == self.shape[-2:]
@@ -732,7 +746,7 @@ class SparseImage:
                 image_quantity, x_pixel, y_pixel, strategy).cpu()
 
             assert len(interpolated_values.shape) == 2
-            self._spot_properties_dict[k] = interpolated_values.permute(dims=(1, 0))
+            self._spot_properties_dict[k_new] = interpolated_values.permute(dims=(1, 0))
 
     def get_state_dict(self, include_anndata: bool = True):
         """ Return the dictionary with the state of the system """

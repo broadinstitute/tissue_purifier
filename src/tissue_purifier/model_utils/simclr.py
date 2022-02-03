@@ -236,8 +236,8 @@ class SimclrModel(BenchmarkModelMixin):
                     pg["weight_decay"] = 0.0
 
             # Finally I log interesting stuff
-            batch_size_total = numpy.array(batch_shapes).sum()
-            batch_size_per_gpu = numpy.array(batch_shapes).mean()
+            batch_size_total = torch.tensor(batch_shapes).sum()
+            batch_size_per_gpu = torch.tensor(batch_shapes).mean()
             self.log('train_loss', loss, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
             self.log('weight_decay', wd, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
             self.log('learning_rate', lr, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
