@@ -274,7 +274,8 @@ class SparseImage:
                spot_size: float = 1.0,
                cmap: matplotlib.colors.ListedColormap = cc.cm.glasbey_bw_minc_20_maxl_70,
                figsize: Tuple = (8, 8),
-               show_colorbar: bool = True) -> (torch.Tensor, matplotlib.pyplot.Figure):
+               show_colorbar: bool = True,
+               contrast: float = 1.0) -> (torch.Tensor, matplotlib.pyplot.Figure):
         """
         Make a 3 channel RGB image. Returns tensor and matplotlig figure.
 
@@ -283,6 +284,7 @@ class SparseImage:
             cmap: the colormap to use
             figsize: the size of the figure
             show_colorbar: If True show the colorbar
+            contrast: change to increase/decrease the contrast in the figure. It does not affect the returned tensor.
 
         Returns:
             A torch.Tensor of size (3, width, height) with the rgb rendering of the image
@@ -333,7 +335,7 @@ class SparseImage:
 
         # make the figure
         fig, ax = plt.subplots(figsize=figsize)
-        _ = ax.imshow(rgb_img.permute(1, 2, 0))
+        _ = ax.imshow((rgb_img.permute(1, 2, 0)*contrast).clamp(min=0.0, max=1.0))
 
         if show_colorbar:
             discrete_cmp = matplotlib.colors.ListedColormap(colors.cpu().numpy())
