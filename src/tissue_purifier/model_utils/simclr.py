@@ -209,7 +209,7 @@ class SimclrModel(BenchmarkModelMixin):
         z1, y1 = self.head_and_backbone_embeddings_step(img1)
         z2, y2 = self.head_and_backbone_embeddings_step(img2)
 
-        world_z1, world_z2 = self.all_gather([z1, z2])
+        world_z1, world_z2 = self.all_gather([z1, z2], sync_grads=True)
         z1_tot = world_z1.flatten(end_dim=-2)  # shape: (gpus * batch, latent)
         z2_tot = world_z2.flatten(end_dim=-2)  # shape: (gpus * batch, latent)
 
