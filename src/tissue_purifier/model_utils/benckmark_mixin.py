@@ -1,7 +1,7 @@
 import numpy
 import torch
 import pandas
-from typing import Dict, List, Sequence, Union
+from typing import Dict, List, Sequence
 from neptune.new.types import File
 from pytorch_lightning import LightningModule
 
@@ -450,7 +450,7 @@ class BenchmarkModelMixin(LightningModule):
             print("rank {0} dataloader_idx {1}".format(self.global_rank, loader_idx))
 
             # gather dictionaries from the other processes and flatten the extra dimension.
-            world_dict = self.all_gather(total_dict)
+            world_dict = self.all_gather(total_dict, sync_grads=False)
             all_keys = list(world_dict.keys())
             for key in all_keys:
                 if len(world_dict[key].shape) == 1 + len(total_dict[key].shape):

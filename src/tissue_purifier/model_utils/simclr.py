@@ -38,28 +38,25 @@ class NTXentLoss(torch.nn.Module):
             >>> ntx_loss = NTXentLoss()
             >>> my_loss = ntx_loss(out_1, out_2)
         """
-        device = out0.device
-        batch_size, _ = out0.shape
-
         # normalize the output to length 1
-        out0 = F.normalize(out0, dim=1)  # shape: batch_size, latent_dim
-        out1 = F.normalize(out1, dim=1)  # shape: batch_size, latent_dim
-
-        # use other samples from batch as negatives
-        output = torch.cat((out0, out1), dim=0)  # shape: 2*batch_size, latent_dim
+        out0 = F.normalize(out0, p=2, dim=1)  # shape: batch_size, latent_dim
+        out1 = F.normalize(out1, p=2, dim=1)  # shape: batch_size, latent_dim
+        batch_size = out0.shape[0]
 
         # the logits are the similarity matrix divided by the temperature
-        logits = torch.einsum('nc,mc->nm', output, output) / self.temperature  # shape: 2*batch_size, 2*batch_size
+        output = torch.cat((out0, out1), dim=0)  # shape: 2*batch_size, latent_dim
+        logits = (output @ output.t()) / self.temperature  # shape: 2*batch_size, 2*batch_size
 
-        # We need to removed the similarities of samples to themselves
-        logits = logits[~torch.eye(2*batch_size, dtype=torch.bool,
-                                   device=out0.device)].view(2*batch_size, -1)  # shape: 2*batch_size, 2*batch_size - 1
+        # We need to remove the similarities of samples to themselves
+        mask_diag = torch.eye(2*batch_size, dtype=torch.bool, device=out0.device)
+        logits = logits[~mask_diag].view(2*batch_size, -1)  # shape: 2*batch_size, 2*batch_size - 1
 
         # The labels point from a sample in out_i to its equivalent in out_(1-i)
-        target = torch.arange(batch_size, device=device, dtype=torch.long)  # shape: batch_size
+        target = torch.arange(batch_size, device=out0.device, dtype=torch.long)  # shape: batch_size
         target = torch.cat([target + batch_size - 1, target])  # shape: 2*batch_size
 
-        loss = self.cross_entropy(logits, target)  # shape: 2*batch_size before reduction, after reduction is a scalar
+        # compute loss
+        loss = self.cross_entropy(logits, target)  # shape: after reduction is a scalar
         return loss
 
 
@@ -208,19 +205,9 @@ class SimclrModel(BenchmarkModelMixin):
 
         z1, y1 = self.head_and_backbone_embeddings_step(img1)
         z2, y2 = self.head_and_backbone_embeddings_step(img2)
-        return {'z1': z1, 'z2': z2}
 
-    def training_step_end(self, outputs: List[dict]):
-        if isinstance(outputs, list) and isinstance(outputs[0], dict):
-            batch_shapes = [output['z1'].shape[0] for output in outputs]
-            world_z1 = torch.cat([output['z1'] for output in outputs], dim=0)
-            world_z2 = torch.cat([output['z2'] for output in outputs], dim=0)
-        elif isinstance(outputs, dict):
-            batch_shapes = [outputs['z1'].shape[0]]
-            world_z1 = outputs['z1']
-            world_z2 = outputs['z2']
-        else:
-            raise Exception("ERROR. Expected dict or list[dict]. Received {0}".format(type(outputs)))
+        world_z1 = self.all_gather(z1, sync_grads=True).flatten(end_dim=-2)  # shape: world*batch_size, latent_dim
+        world_z2 = self.all_gather(z2, sync_grads=True).flatten(end_dim=-2)  # shape: world*batch_size, latent_dim
 
         loss = self.nt_xent_loss(world_z1, world_z2)
 
@@ -237,8 +224,8 @@ class SimclrModel(BenchmarkModelMixin):
 
             # Finally I log interesting stuff
 
-            batch_size_total = torch.tensor(batch_shapes).float().sum()
-            batch_size_per_gpu = batch_size_total / len(batch_shapes)
+            batch_size_total = world_z1.shape[0]
+            batch_size_per_gpu = z1.shape[0]
             self.log('train_loss', loss, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
             self.log('weight_decay', wd, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
             self.log('learning_rate', lr, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)

@@ -2,7 +2,7 @@ from typing import Sequence, List, Any, Dict
 
 import torch
 from argparse import ArgumentParser
-from pytorch_lightning.utilities.distributed import sync_ddp_if_available
+from pytorch_lightning.utilities.distributed import sync_ddp_if_available  # wrapper around torch.distributed.all_reduce
 
 from neptune.new.types import File
 from tissue_purifier.model_utils.resnet_backbone import make_resnet_backbone

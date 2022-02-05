@@ -406,11 +406,7 @@ class VaeModel(BenchmarkModelMixin):
                      on_step=False, on_epoch=True, rank_zero_only=True, batch_size=batch_size)
 
             # batch_size
-            tmp_local_batch_size = torch.tensor(len(list_imgs), device=self.device, dtype=torch.float)
-            world_batch_size = self.all_gather(tmp_local_batch_size)
-            self.log('batch_size_per_gpu_train', world_batch_size.float().mean(),
-                     on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
-            self.log('batch_size_total_train', world_batch_size.float().sum(),
+            self.log('batch_size_per_gpu_train', len(list_imgs),
                      on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
 
             # update the beta_vae if necessary

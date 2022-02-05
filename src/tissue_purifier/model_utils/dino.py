@@ -465,7 +465,7 @@ class DinoModel(BenchmarkModelMixin):
                    tmp_population_t, tmp_population_s,
                    tmp_empirical_center_teacher,
                    tmp_local_batch_size]
-            world_tmp = self.all_gather(tmp)
+            world_tmp = self.all_gather(tmp, sync_grads=False)
             w_ent_t, w_ent_s, w_ipr_t, w_ipr_s, w_pop_t, w_pop_s, w_center_t, w_batch_size = world_tmp
 
             # update the population over a mini-batch
@@ -552,7 +552,7 @@ class DinoModel(BenchmarkModelMixin):
             desired_ipr=ipr_s)
 
         w_ideal_temp_teacher, w_ideal_temp_student = self.all_gather(
-            [ideal_temp_teacher_tmp, ideal_temp_student_tmp])
+            [ideal_temp_teacher_tmp, ideal_temp_student_tmp], sync_grads=False)
 
         if len(w_ideal_temp_student.shape) == 1 + len(ideal_temp_student_tmp.shape):
             ideal_temp_teacher = w_ideal_temp_teacher.mean(dim=0).clamp(min=1.0E-5, max=1.0E5)

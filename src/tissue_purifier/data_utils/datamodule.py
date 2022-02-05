@@ -158,6 +158,7 @@ class DinoSparseDM(DinoDM):
                  n_global_crops: int = 2,
                  global_scale: Tuple[float] = (0.8, 1.0),
                  local_scale: Tuple[float] = (0.5, 0.8),
+                 global_intensity: Tuple[float, float] = (0.8, 1.2),
                  n_element_min_for_crop: int = 200,
                  dropouts: Tuple[float] = (0.1, 0.2, 0.3),
                  rasterize_sigmas: Tuple[float] = (0.5, 1.0, 1.5, 2.0),
@@ -175,6 +176,7 @@ class DinoSparseDM(DinoDM):
             n_global_crops: number of local crops
             global_scale: in RandomResizedCrop the scale of global crops will be drawn uniformly between these values
             local_scale: in RandomResizedCrop the scale of global crops will be drawn uniformly between these values
+            global_intensity: all channels will be multiplied by a number in this range
             n_element_min_for_crop: minimum number of beads/cell in a crop
             dropouts: Possible values of the dropout. Should be > 0.0
             rasterize_sigmas: Possible values of the sigma of the gaussian kernel used for rasterization.
@@ -194,6 +196,7 @@ class DinoSparseDM(DinoDM):
         # specify the transform
         self._global_scale = global_scale
         self._local_scale = local_scale
+        self._global_intensity = global_intensity
         self._dropouts = dropouts
         self._rasterize_sigmas = rasterize_sigmas
         self._occlusion_fraction = occlusion_fraction
@@ -220,6 +223,8 @@ class DinoSparseDM(DinoDM):
         parser.add_argument("--local_scale", type=float, nargs=2, default=[0.5, 0.8],
                             help="in RandomResizedCrop the scale of local crops will be drawn uniformly \
                             between these values")
+        parser.add_argument("--global_intensity", type=float, nargs=2, default=[0.8, 1.2],
+                            help="All channels will be multiplied by a value within this range")
         parser.add_argument("--n_element_min_for_crop", type=int, default=200,
                             help="minimum number of beads/cell in a crop")
         parser.add_argument("--dropouts", type=float, nargs='*', default=[0.1, 0.2, 0.3],
@@ -284,7 +289,7 @@ class DinoSparseDM(DinoDM):
                 Rasterize(sigmas=self._rasterize_sigmas, normalize=False),
                 RandomVFlip(p=0.5),
                 RandomHFlip(p=0.5),
-                RandomGlobalIntensity(f_min=0.8, f_max=1.2)
+                RandomGlobalIntensity(f_min=self._global_intensity[0], f_max=self._global_intensity[1])
             ]),
             transform_after_stack=torchvision.transforms.CenterCrop(size=self.global_size),
         )
@@ -295,7 +300,7 @@ class DinoSparseDM(DinoDM):
             transform_before_stack=torchvision.transforms.Compose([
                 DropoutSparseTensor(p=0.5, dropouts=self._dropouts),
                 SparseToDense(),
-                RandomGlobalIntensity(f_min=0.8, f_max=1.2)
+                RandomGlobalIntensity(f_min=self._global_intensity[0], f_max=self._global_intensity[1])
             ]),
             transform_after_stack=torchvision.transforms.Compose([
                 Rasterize(sigmas=self._rasterize_sigmas, normalize=False),
@@ -322,7 +327,7 @@ class DinoSparseDM(DinoDM):
             transform_before_stack=torchvision.transforms.Compose([
                 DropoutSparseTensor(p=0.5, dropouts=self._dropouts),
                 SparseToDense(),
-                RandomGlobalIntensity(f_min=0.8, f_max=1.2)
+                RandomGlobalIntensity(f_min=self._global_intensity[0], f_max=self._global_intensity[1])
             ]),
             transform_after_stack=torchvision.transforms.Compose([
                 Rasterize(sigmas=self._rasterize_sigmas, normalize=False),
