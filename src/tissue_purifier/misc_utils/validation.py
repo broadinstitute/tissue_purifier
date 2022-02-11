@@ -1,6 +1,6 @@
 import torch
-import numpy
-from typing import Any, Callable, Union
+from typing import Callable
+
 
 def create_null_distribution(
         cell_types_n: torch.Tensor,
@@ -32,5 +32,5 @@ def create_null_distribution(
                     similarity = torch.zeros(size, sim.shape[-1])
                 similarity[n, :] = sim
                 n += 1
-        result_dict[ctype] = similarity
+        result_dict["cell_type_"+str(k)] = similarity
     return result_dict
