@@ -5,7 +5,7 @@ from typing import Callable
 def create_null_distribution(
         cell_types_n: torch.Tensor,
         counts_ng: torch.Tensor,
-        similarity_measure: str = "L1",):
+        similarity_measure: str = "L1"):
     """
     Args:
         cell_types_n: 1D tensor or array with the cell_type information
