@@ -23,12 +23,14 @@ def create_null_distribution(
         counts_kg = counts_ng[cell_types_n == ctype]
 
         n_max = counts_kg.shape[0]
-        size = int(0.5 * n_max * (n_max + 1))
-
+        size = int(0.5 * n_max * (n_max - 1))
+        index = torch.arange(n_max)
+        print("size ->", size)
         for i1 in range(n_max):
-            mask = (torch.arange(n_max) == i1)
-            gene_exp_ref = counts_kg[mask, :]
-            gene_exp_others = counts_kg[~mask, :]
+            mask = (index != i1)
+            gene_exp_others = counts_kg[mask, :]
+            gene_exp_ref = counts_kg[i1, :]
+
             if similarity_measure == "L1":
                 sim = (gene_exp_ref - gene_exp_others).abs().cpu().numpy()
             else:
