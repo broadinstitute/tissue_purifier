@@ -8,12 +8,59 @@ from pyro.ops.special import get_quad_rule
 from torch.distributions import constraints
 from torch.distributions.utils import broadcast_all, lazy_property
 from pyro.infer import SVI, Trace_ELBO
-from tissue_purifier.model_utils.log_poisson_dist import LogNormalPoisson
 import pandas as pd
 import pyro.poutine
 import pyro.optim
 from sklearn.model_selection import StratifiedShuffleSplit, ShuffleSplit
 import matplotlib.pyplot as plt
+import numpy
+
+
+def plot_few_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
+    assert len(cell_types_n.shape) == 1
+    assert len(value1_ng.shape) >= 2
+    assert cell_types_n.shape[0] == value1_ng.shape[-2]
+    assert value2_ng is None or (value1_ng.shape == value2_ng.shape)
+
+    def _to_torch(_x):
+        if isinstance(_x, torch.Tensor):
+            return _x
+        elif isinstance(_x, numpy.ndarray):
+            return torch.tensor(_x)
+        else:
+            raise Exception("Expected torch.tensor or numpy.ndarray. Received {0}".format(type(_x)))
+
+    value2_ng = None if value2_ng is None else _to_torch(value2_ng)
+    value1_ng = _to_torch(value1_ng)
+    ctypes = torch.unique(cell_types_n)
+    genes = value1_ng.shape[-1]
+
+    nrows = genes
+    ncols = len(ctypes)
+    fig, axes = plt.subplots(ncols=ncols, nrows=nrows, figsize=(4 * ncols, 4 * nrows))
+
+    for r in range(genes):
+        tmp = value1_ng[..., r]
+        other_tmp = None if value2_ng is None else value2_ng[..., r]
+        for c, c_type in enumerate(ctypes):
+            if value2_ng is None:
+                tmp2 = tmp[..., cell_types_n == c_type]
+                y, x = numpy.histogram(tmp2, bins=bins, density=True)
+                barWidth = 0.9 * (x[1] - x[0])
+                _ = axes[r, c].bar(x[:-1], y, width=barWidth)
+            else:
+                tmp2 = tmp[..., cell_types_n == c_type].flatten()
+                other_tmp2 = other_tmp[..., cell_types_n == c_type].flatten()
+                myrange = (min(min(tmp2), min(other_tmp2)).item(), max(max(tmp2), max(other_tmp2)).item())
+                y, x = numpy.histogram(tmp2, range=myrange, bins=bins, density=True)
+                other_y, other_x = numpy.histogram(other_tmp2, range=myrange, bins=bins, density=True)
+                barWidth = 0.4 * (x[1] - x[0])
+                _ = axes[r, c].bar(x[:-1], y, width=barWidth)
+                _ = axes[r, c].bar(other_x[:-1] + barWidth, other_y, width=barWidth)
+
+    plt.close()
+    return fig
+
 
 class GeneDataset(NamedTuple):
     # order is important. Do not change
@@ -435,7 +482,7 @@ class GeneRegression:
             noise_scale=eps_g,
             num_quad_points=8)
 
-        counts_pred_bng = mydist.sample(sample_shape=[num_samples])
+        counts_pred_bng = mydist.sample(sample_shape=torch.Size([num_samples]))
         log_score_ng = mydist.log_prob(counts_ng)
 
         results = {
@@ -587,12 +634,59 @@ class GeneRegression:
         self._loss_history = ckpt["loss_history"]
 
 
-
-
-
+### def EMD_between_distributions(distA, distB, normalize: bool = False):
+###     """
+###     Eearth mover's distance (aka  Wasserstein distance) has a close form solution in 1D.
+###     See https://en.wikipedia.org/wiki/Wasserstein_metric)
+###     """
+###
+###     sizeA = distA.shape[-1]
+###     sizeB = distB.shape[-1]
+###     max_size = max(sizeA, sizeB)
+###     min_size = min(sizeA, sizeB)
+###     delta_size = max_size - min_size
+###
+###     padder = torch.nn.ConstantPad1d(padding=(0, delta_size), value=0)
+###     _distA = padder(distA)[..., :max_size]
+###     _distB = padder(distB)[..., :max_size]
+###
+###     if normalize:
+###         normA = _distA.sum(dim=-1, keepdim=True)
+###         normB = _distB.sum(dim=-1, keepdim=True)
+###         _distA /= normA
+###         _distB /= normB
+###
+###     # Actual caltulation
+###     _distA_cum = torch.cumsum(_distA, axis=-1)
+###     _distB_cum = torch.cumsum(_distB, axis=-1)
+###     EMD = (_distA_cum - _distB_cum).abs().sum(axis=-1)
+###     return EMD
+###
+###
+### def L1_between_distributions(distA, distB, normalize: bool = False):
+###     """ Simple L1 distance between two distributions. """
+###     sizeA = distA.shape[-1]
+###     sizeB = distB.shape[-1]
+###     max_size = max(sizeA, sizeB)
+###     min_size = min(sizeA, sizeB)
+###     delta_size = max_size - min_size
+###
+###     padder = torch.nn.ConstantPad1d(padding=(0, delta_size), value=0)
+###     _distA = padder(distA)[..., :max_size]
+###     _distB = padder(distB)[..., :max_size]
+###
+###     if normalize:
+###         normA = _distA.sum(dim=-1, keepdim=True)
+###         normB = _distB.sum(dim=-1, keepdim=True)
+###         _distA /= normA
+###         _distB /= normB
+###
+###     # Actual calculation
+###     L1_norm = (_distA - _distB).abs().sum(axis=-1)
+###     return L1_norm
+###
 
 # This guide does MAP. Everything is a parameter except eps_n1g
-
 ### def guide_MAP(dataset, observed: bool = True, use_covariates: bool = True):
 ###     # Everything is point estimate
 ###     # Unpack the dataset
