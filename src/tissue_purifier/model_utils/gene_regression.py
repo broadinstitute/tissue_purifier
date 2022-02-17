@@ -43,6 +43,9 @@ def plot_few_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
         tmp = value1_ng[..., r]
         other_tmp = None if value2_ng is None else value2_ng[..., r]
         for c, c_type in enumerate(ctypes):
+            if r == 0:
+                _ = axes[r, c].set_title("cell_type {0}".format(c_type))
+
             if value2_ng is None:
                 tmp2 = tmp[..., cell_types_n == c_type]
                 y, x = numpy.histogram(tmp2, bins=bins, density=True)
