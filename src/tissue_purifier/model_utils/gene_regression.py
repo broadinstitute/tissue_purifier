@@ -9,6 +9,7 @@ from torch.distributions import constraints
 from torch.distributions.utils import broadcast_all, lazy_property
 from pyro.infer import SVI, Trace_ELBO
 from tissue_purifier.model_utils.log_poisson_dist import LogNormalPoisson
+import pandas as pd
 import pyro.poutine
 import pyro.optim
 from sklearn.model_selection import StratifiedShuffleSplit, ShuffleSplit
@@ -171,9 +172,6 @@ class LogNormalPoisson(TorchDistribution):
     A Poisson distribution with rate = N * (log_mu + noise).exp()
     where noise is normally distributed with mean zero and variance sigma, i.e. noise ~ N(0, sigma)
 
-    This distribution does not have a sample method. However it has a log_prob method therefore can be used as
-    an observation model.
-
     See for discussion of the nice properties of the LogNormalPoisson model:
     http://people.ee.duke.edu/~lcarin/Mingyuan_ICML_2012.pdf
     """
@@ -213,7 +211,9 @@ class LogNormalPoisson(TorchDistribution):
                 log_rate.unsqueeze(-1)
                 + noise_scale.unsqueeze(-1) * self.quad_points
         )
-        self.poi_dist = dist.Poisson(rate=n_trials.unsqueeze(-1) * quad_log_rate.exp())
+        quad_rate = quad_log_rate.exp()
+        assert torch.all(torch.isfinite(quad_rate)), "Rate is not finite."
+        self.poi_dist = dist.Poisson(rate=n_trials.unsqueeze(-1) * quad_rate)
 
         self.n_trials = n_trials
         self.log_rate = log_rate
@@ -231,7 +231,8 @@ class LogNormalPoisson(TorchDistribution):
         return torch.logsumexp(self.log_weights + poi_log_prob, axis=-1)
 
     def sample(self, sample_shape=torch.Size()):
-        raise NotImplementedError
+        eps = dist.Normal(loc=0, scale=self.noise_scale).sample(sample_shape=sample_shape)
+        return dist.Poisson(rate=self.n_trials * torch.exp(self.log_rate + eps)).sample()
 
     def expand(self, batch_shape, _instance=None):
         new = self._get_checked_instance(type(self), _instance)
@@ -276,7 +277,6 @@ class GeneRegression:
               dataset: GeneDataset,
               eps_g_range: Tuple[float, float],
               alpha_scale: float,
-              observed: bool,
               subsample_size_cells: int,
               subsample_size_genes: int,
               **kargs):
@@ -305,7 +305,7 @@ class GeneRegression:
         gene_plate = pyro.plate("genes", size=g, dim=-1, device=device, subsample_size=subsample_size_genes)
 
         eps_g = pyro.param("eps_g",
-                           eps_g_range[0] * torch.ones(g, device=device),
+                           0.5 * (eps_g_range[0] + eps_g_range[1]) * torch.ones(g, device=device),
                            constraint=constraints.interval(lower_bound=eps_g_range[0],
                                                            upper_bound=eps_g_range[1]))
         alpha0_k1g = pyro.param("alpha0", torch.zeros((k, 1, g), device=device))
@@ -345,7 +345,7 @@ class GeneRegression:
                                              log_rate=log_mu_n1g,
                                              noise_scale=eps_sub_g,
                                              num_quad_points=8),
-                            obs=counts_ng[ind_n, None].index_select(dim=-1, index=ind_g) if observed else None)
+                            obs=counts_ng[ind_n, None].index_select(dim=-1, index=ind_g))
 
     def guide(self,
               dataset: GeneDataset,
@@ -382,6 +382,81 @@ class GeneRegression:
                     alpha_klg = pyro.sample("alpha", dist.Delta(v=alpha_loc_tmp))
                     assert alpha_klg.shape == torch.Size([k, l, len(ind_g)])
 
+    def get_param(self):
+        """ Returns a (detached) dictionary with fitted parameters """
+        mydict = dict()
+        for k, v in pyro.get_param_store().items():
+            mydict[k] = v
+        return mydict
+
+    def predict(self, dataset: GeneDataset, num_samples: int = 10) -> (dict, pd.DataFrame, pd.DataFrame):
+        """
+        Args:
+            dataset: the dataset to run the prediction on
+            num_samples: how many random samples to draw from the predictive distribution
+
+        Returns:
+            tuple with a dictionary and two panda dataframes with two evaluation metrics
+            (log_score and deviance)
+        """
+
+        n, g = dataset.counts.shape[:2]
+        n, l = dataset.covariates.shape[:2]
+        k = dataset.k_cell_types
+
+        cell_type_ids = dataset.cell_type_ids.long()
+        eps_g = pyro.get_param_store().get_param("eps_g")
+        alpha0_k1g = pyro.get_param_store().get_param("alpha0")
+        alpha_klg = pyro.get_param_store().get_param("alpha_loc")
+        counts_ng = dataset.counts
+        covariates_nl1 = dataset.covariates.unsqueeze(dim=-1)
+
+        assert eps_g.shape == torch.Size([g]), \
+            "Got {0}. Are you predicting on the right dataset?".format(eps_g.shape)
+        assert alpha0_k1g.shape == torch.Size([k, 1, g]), \
+            "Got {0}. Are you predicting on the right dataset?".format(alpha0_k1g.shape)
+        assert alpha_klg.shape == torch.Size([k, l, g]), \
+            "Got {0}. Are you predicting on the right dataset?".format(alpha_klg.shape)
+
+        if torch.cuda.is_available():
+            cell_type_ids = cell_type_ids.cuda()
+            eps_g = eps_g.cuda()
+            alpha0_k1g = alpha0_k1g.cuda()
+            alpha_klg = alpha_klg.cuda()
+            counts_ng = counts_ng.cuda()
+            covariates_nl1 = covariates_nl1.cuda()
+
+        log_rate_n1g = alpha0_k1g[cell_type_ids] + (covariates_nl1 * alpha_klg[cell_type_ids]).sum(dim=-2, keepdim=True)
+        total_umi_n11 = counts_ng.sum(dim=-1, keepdim=True).unsqueeze(dim=-1)
+
+        mydist = LogNormalPoisson(
+            n_trials=total_umi_n11.squeeze(dim=-2),
+            log_rate=log_rate_n1g.squeeze(dim=-2),
+            noise_scale=eps_g,
+            num_quad_points=8)
+
+        counts_pred_bng = mydist.sample(sample_shape=[num_samples])
+        log_score_ng = mydist.log_prob(counts_ng)
+
+        results = {
+            "counts_true": counts_ng.detach().cpu(),
+            "counts_pred": counts_pred_bng.detach().cpu(),
+            "log_score": -log_score_ng.detach().cpu(),
+            "deviance": (counts_ng-counts_pred_bng).abs().detach().cpu(),
+            "cell_type": cell_type_ids.detach().cpu()
+        }
+
+        # package the results into two dataframe for easy visualization
+        cols = ["cell_type"] + ['gene_{}'.format(g) for g in range(results["log_score"].shape[-1])]
+        c_log_score = torch.cat((results["cell_type"].unsqueeze(dim=-1),
+                                 results["log_score"]), dim=-1).numpy()
+        log_score_df = pd.DataFrame(c_log_score, columns=cols)
+        c_deviance = torch.cat((results["cell_type"].unsqueeze(dim=-1),
+                                results["deviance"].mean(dim=-3)), dim=-1).numpy()
+        deviance_df = pd.DataFrame(c_deviance, columns=cols)
+
+        return results, log_score_df, deviance_df
+
     def render_model(self, dataset: GeneDataset, filename: Optional[str] = None,  render_distributions: bool = False):
         """
         Args:
@@ -396,7 +471,6 @@ class GeneRegression:
             'eps_g_range': (0.01, 0.02),
             'subsample_size_genes': None,
             'subsample_size_cells': None,
-            'observed': True
         }
 
         trace = pyro.poutine.trace(self.model).get_trace(**model_kargs)
@@ -421,11 +495,11 @@ class GeneRegression:
 
         self._optimizer_initial_state = self._optimizer.get_state()
 
-    def show_loss(self, figsize: Tuple[float, float] = (4, 4), logx: bool = False, logy: bool = False):
-        fig, ax = plt.subplots(figsize=figsize)
+    def show_loss(self, figsize: Tuple[float, float] = (4, 4), logx: bool = False, logy: bool = False, ax=None):
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
+
         ax.plot(self._loss_history)
-        ax.set_xlabel("# iterations")
-        ax.set_title("loss")
 
         if logx:
             ax.set_xscale("log")
@@ -437,9 +511,10 @@ class GeneRegression:
         else:
             ax.set_xscale("linear")
 
-        fig.tight_layout()
-        plt.close(fig)
-        return fig
+        if ax is None:
+            fig.tight_layout()
+            plt.close(fig)
+            return fig
 
     def train(self,
               dataset: GeneDataset,
@@ -479,7 +554,6 @@ class GeneRegression:
             'eps_g_range': eps_g_range,
             'subsample_size_genes': subsample_size_genes,
             'subsample_size_cells': subsample_size_cells,
-            'observed': True
         }
 
         svi = SVI(self.model, self.guide, self.optimizer, loss=Trace_ELBO())

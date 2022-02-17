@@ -7,9 +7,9 @@ def _make_binning(_x_ng, _boundaries):
     n, g = _x_ng.shape[:2]   # shape: (n_sample, n_genes)
 
     _index_ng = torch.bucketize(_x_ng, _boundaries)
-    _src = torch.ones((n, g, b))
+    _src = torch.ones((n, g, b+1))
     _counter = torch.zeros_like(_src).scatter(dim=-1, index=_index_ng.unsqueeze(dim=-1), src=_src)
-    return _counter.sum(dim=0)  # sum over sample. shape: (genes, bins)
+    return _counter.sum(dim=0)  # sum over sample. shape: (genes, bins+1)
 
 
 def create_null_distribution(
@@ -32,7 +32,6 @@ def create_null_distribution(
             The dictionary includes the bins used and the bin_counter for each gene.
     """
 
-
     if torch.cuda.is_available():
         cell_types_n = cell_types_n.cuda()
         counts_ng = counts_ng.cuda()
@@ -45,7 +44,7 @@ def create_null_distribution(
     for k, ctype in enumerate(unique_cell_types):
         counts_kg = counts_ng[cell_types_n == ctype]
 
-        bin_counter_gb = torch.zeros(g, boundaries.shape[0]).cpu().numpy()
+        bin_counter_gb = torch.zeros(g, boundaries.shape[0]+1).cpu().numpy()
         for i1 in range(1, counts_kg.shape[0]):
             gene_exp_others_mg = counts_kg[:i1, :]
             gene_exp_ref_1g = counts_kg[i1, :]
@@ -58,7 +57,7 @@ def create_null_distribution(
             bin_increment_gb = _make_binning(sim_mg, boundaries)
             bin_counter_gb += bin_increment_gb.cpu().numpy()
 
-        result_dict["cell_type_"+str(k)] = bin_counter_gb
+        result_dict["cell_type_"+str(k)] = bin_counter_gb[..., :-1]
     return result_dict
 
 
@@ -102,7 +101,7 @@ def create_heldout_distribution(
         true_counts_kg = true_counts_ng[mask_k_type]
         pred_counts_kg = pred_counts_ng[mask_k_type]
 
-        bin_counter_gb = torch.zeros(g, boundaries.shape[0]).cpu().numpy()
+        bin_counter_gb = torch.zeros(g, boundaries.shape[0]+1).cpu().numpy()
 
         if similarity_measure == "L1":
             sim_mg = (true_counts_kg - pred_counts_kg).abs()
@@ -112,5 +111,5 @@ def create_heldout_distribution(
         bin_increment_gb = _make_binning(sim_mg, boundaries)
         bin_counter_gb += bin_increment_gb.cpu().numpy()
 
-        result_dict["cell_type_"+str(k)] = bin_counter_gb
+        result_dict["cell_type_"+str(k)] = bin_counter_gb[..., :-1]
     return result_dict
