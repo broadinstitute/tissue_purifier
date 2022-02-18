@@ -17,6 +17,19 @@ import numpy
 
 
 def plot_few_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
+    """
+    Plot the per cell-type histogram.
+
+    Args:
+        cell_types_n: tensor of shape N with the cell type information
+        value1_ng: first quantity to plot of shape (N,G)
+        value2_ng: the secont quantity to plot of shape (N,G)
+        bins: number of bins in the histogram
+
+    Returns:
+        A figure with G rows and K columns where K is the number of distinct cell types
+    """
+
     assert len(cell_types_n.shape) == 1
     assert len(value1_ng.shape) >= 2
     assert cell_types_n.shape[0] == value1_ng.shape[-2]
@@ -48,15 +61,28 @@ def plot_few_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
 
             if value2_ng is None:
                 tmp2 = tmp[..., cell_types_n == c_type]
-                y, x = numpy.histogram(tmp2, bins=bins, density=True)
+
+                if tmp2.dtype == torch.long:
+                    y = torch.bincount(tmp2)
+                    x = torch.arange(y.shape[0]+1)
+                else:
+                    y, x = numpy.histogram(tmp2, bins=bins, density=True)
                 barWidth = 0.9 * (x[1] - x[0])
                 _ = axes[r, c].bar(x[:-1], y, width=barWidth)
             else:
                 tmp2 = tmp[..., cell_types_n == c_type].flatten()
                 other_tmp2 = other_tmp[..., cell_types_n == c_type].flatten()
                 myrange = (min(min(tmp2), min(other_tmp2)).item(), max(max(tmp2), max(other_tmp2)).item())
-                y, x = numpy.histogram(tmp2, range=myrange, bins=bins, density=True)
-                other_y, other_x = numpy.histogram(other_tmp2, range=myrange, bins=bins, density=True)
+
+                if tmp2.dtype == torch.long:
+                    y = torch.bincount(tmp2, minlength=myrange[1])
+                    other_y = torch.bincount(other_tmp2, minlength=myrange[1])
+                    x = torch.arange(myrange[1]+1)
+                    other_x = torch.arange(myrange[1]+1)
+                else:
+                    y, x = numpy.histogram(tmp2, range=myrange, bins=bins, density=True)
+                    other_y, other_x = numpy.histogram(other_tmp2, range=myrange, bins=bins, density=True)
+
                 barWidth = 0.4 * (x[1] - x[0])
                 _ = axes[r, c].bar(x[:-1], y, width=barWidth)
                 _ = axes[r, c].bar(other_x[:-1] + barWidth, other_y, width=barWidth)
@@ -66,10 +92,21 @@ def plot_few_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
 
 
 class GeneDataset(NamedTuple):
+    """
+    Container for organizing the gene expression data
+    """
     # order is important. Do not change
-    counts: torch.Tensor  # shape: n,g
-    cell_type_ids: torch.Tensor  # shape: n
-    covariates: torch.Tensor  # shape: n,l
+
+    #: long tensor with the count data of shape (n, g)
+    counts: torch.Tensor
+
+    #: long tensor with the cell_type_ids of shape (n)
+    cell_type_ids: torch.Tensor
+
+    #: float tensor with the covariates of shape (n, k)
+    covariates: torch.Tensor
+
+    #: number of cell types
     k_cell_types: int
 
 
@@ -83,15 +120,17 @@ def generate_fake_data(
         alpha0_scale: float = 0.5,
         noise_scale: float = 0.1):
     """
+    Helper function to generate synthetic count data
+
     Args:
         cells: number of cells
         genes: number of genes
         covariates: number of covariates
         cell_types: number of cell types
-        alpha_scale: scale for alpha
-        alpha0_loc: loc of alpha0
-        alpha0_scale: scale for alpha0
-        noise_scale: noise scale
+        alpha_scale: scale for alpha (i.e. the regression coefficients)
+        alpha0_loc: loc of alpha0 (mean value for the zero regression coefficients, i.e. offset)
+        alpha0_scale: scale for alpha0 (i.e. variance of the zero regression coefficients, i.e. offset)
+        noise_scale: noise scale (gene-specific overdispersion)
     """
     cov_nl = torch.randn((cells, covariates))
     cell_ids_n = torch.randint(low=0, high=cell_types, size=[cells])
@@ -127,30 +166,43 @@ def generate_fake_data(
 
 
 def train_test_val_split(
-    data: Union[List[Any], GeneDataset],
-    train_size: float = 0.8,
-    test_size: float = 0.15,
-    val_size: float = 0.05,
-    n_splits: int = 1,
-    random_state=None,
-    stratify=True,
-    ):
+        data: Union[List[torch.Tensor], List[numpy.ndarray], GeneDataset],
+        train_size: float = 0.8,
+        test_size: float = 0.15,
+        val_size: float = 0.05,
+        n_splits: int = 1,
+        random_state: int = None,
+        stratify: bool = True):
     """
-    Returns 3 lists with the train,test and validation tensors.
-    The length of each list depends on the number of tensors passed in.
+    Args:
+        data: the data to split into train/test/val
+        train_size: the relative size of the train dataset
+        test_size: the relative size of the test dataset
+        val_size: the relative size of the val dataset
+        n_splits: how many times to split the data
+        random_state: specify the random state for reproducibility
+        stratify: If true the tran/test/val are stratified so that they contain approximately the same
+            number of example from each class. If data is a list of arrays the 2nd array is assumed to represent the
+            class. If data is a GeneDataset the class is the cell_type.
 
-    For example:
+    Returns:
+        yields multiple splits of the data.
 
-    [X_train, y_train, z_train], [X_test, y_test, z_test], [X_val, y_val, z_val] =
-    train_test_val_split(data=[X,y,z], train_size=0.8, test_size=0.1, val_size=0.0, random_state=42)
+    Example:
+          >>> for train, test, val in train_test_val_split(data=[x,y,z]):
+          >>>       x_train, y_train, z_train = train
+          >>>       x_test, y_test, z_test = test
+          >>>       x_val, y_val, z_val = val
+          >>>       ... do something ...
 
-    GeneDataset_train, GeneDataset_test, GeneDataset_val =
-    train_test_val_split(data=GeneDataset, train_size=0.8, test_size=0.1, val_size=0.0, random_state=42)
-
-    Note:
-        The stratification (if applicable) is done on the second tensor (y in the example above)
-        In the case of GeneDataset it stratifies by cell_type
+    Example:
+          >>> for train, test, val in train_test_val_split(data=GeneDataset):
+          >>>       assert isinstance(train, GeneDataset)
+          >>>       assert isinstance(test, GeneDataset)
+          >>>       assert isinstance(val, GeneDataset)
+          >>>       ... do something ...
     """
+
     if train_size <= 0:
         raise ValueError("Train_size must be > 0")
     if test_size <= 0:
@@ -171,6 +223,7 @@ def train_test_val_split(
     assert all(a == b for a, b in zip(dims_actual, dims_expected)), \
         "Error. All leading dimensions should be the same"
 
+    # Normalize the train/test/val sizes
     norm0 = train_size + test_size + val_size
     train_size_norm0 = train_size / norm0
     test_and_val_size_norm0 = (test_size + val_size) / norm0
@@ -222,8 +275,8 @@ class LogNormalPoisson(TorchDistribution):
     A Poisson distribution with rate = N * (log_mu + noise).exp()
     where noise is normally distributed with mean zero and variance sigma, i.e. noise ~ N(0, sigma)
 
-    See for discussion of the nice properties of the LogNormalPoisson model:
-    http://people.ee.duke.edu/~lcarin/Mingyuan_ICML_2012.pdf
+    See http://people.ee.duke.edu/~lcarin/Mingyuan_ICML_2012.pdf
+    for discussion of the nice properties of the LogNormalPoisson model
     """
 
     arg_constraints = {
@@ -244,7 +297,7 @@ class LogNormalPoisson(TorchDistribution):
         """
         Args:
             n_trials: non-negative number of Poisson trials.
-            log_rate: the log of the success probability in a single trial
+            log_rate: the log_rate of a single trial
             noise_scale: controls the level of the injected noise in the log_rate
             num_quad_points: Number of quadrature points used to compute the (approximate) `log_prob`. Defaults to 8.
         """
@@ -316,20 +369,35 @@ class LogNormalPoisson(TorchDistribution):
 
 
 class GeneRegression:
-    """ Given the cell type and some covariates the model predicts the gene expression """
+    """
+    Given the cell type and some covariates the model predicts the gene expression.
+
+    For each gene, the counts are modelled as a Poisson process with rate: N * (log_mu + noise).exp()
+    where:
+
+    N is the total_umi in the cell,
+
+    noise ~ N(0, sigma) with sigma being a gene-specific overdispersion
+
+    log_mu = alpha0 + alpha * covariates
+
+    Notes:
+         alpha and alpha0 depend on the cell_type only. Covariates are cell specific an include information
+         like the cellular micro-environment
+    """
 
     def __init__(self):
         self._optimizer = None
         self._optimizer_initial_state = None
         self._loss_history = []
 
-    def model(self,
-              dataset: GeneDataset,
-              eps_g_range: Tuple[float, float],
-              alpha_scale: float,
-              subsample_size_cells: int,
-              subsample_size_genes: int,
-              **kargs):
+    def _model(self,
+               dataset: GeneDataset,
+               eps_g_range: Tuple[float, float],
+               alpha_scale: float,
+               subsample_size_cells: int,
+               subsample_size_genes: int,
+               **kargs):
 
         # Unpack the dataset
         assert eps_g_range[1] > eps_g_range[0] > 0
@@ -397,11 +465,11 @@ class GeneRegression:
                                              num_quad_points=8),
                             obs=counts_ng[ind_n, None].index_select(dim=-1, index=ind_g))
 
-    def guide(self,
-              dataset: GeneDataset,
-              use_covariates: bool,
-              subsample_size_genes: int,
-              **kargs):
+    def _guide(self,
+               dataset: GeneDataset,
+               use_covariates: bool,
+               subsample_size_genes: int,
+               **kargs):
 
         # Unpack the dataset
         n, g = dataset.counts.shape[:2]
@@ -432,11 +500,11 @@ class GeneRegression:
                     alpha_klg = pyro.sample("alpha", dist.Delta(v=alpha_loc_tmp))
                     assert alpha_klg.shape == torch.Size([k, l, len(ind_g)])
 
-    def get_param(self):
+    def get_params(self):
         """ Returns a (detached) dictionary with fitted parameters """
         mydict = dict()
         for k, v in pyro.get_param_store().items():
-            mydict[k] = v
+            mydict[k] = v.detach().cpu()
         return mydict
 
     def predict(self, dataset: GeneDataset, num_samples: int = 10) -> (dict, pd.DataFrame, pd.DataFrame):
@@ -446,8 +514,9 @@ class GeneRegression:
             num_samples: how many random samples to draw from the predictive distribution
 
         Returns:
-            tuple with a dictionary and two panda dataframes with two evaluation metrics
-            (log_score and deviance)
+            result: a distionary with the true and predicted counts, the cell_type and two metrics (log_score and deviance)
+            log_score_df: a DataFrame with the log_score evaluation metric
+            deviance_df: a DataFrame with the deviance evaluation metric
         """
 
         n, g = dataset.counts.shape[:2]
@@ -509,9 +578,11 @@ class GeneRegression:
 
     def render_model(self, dataset: GeneDataset, filename: Optional[str] = None,  render_distributions: bool = False):
         """
+        Wrapper around :method:'pyro.render_model'.
+
         Args:
             dataset: dataset to use for computing the shapes
-            filename: File to save rendered model in.
+            filename: File to save rendered model in. If None (defaults) the image is displayed.
             render_distributions: Whether to include RV distribution
         """
         model_kargs = {
@@ -523,11 +594,11 @@ class GeneRegression:
             'subsample_size_cells': None,
         }
 
-        trace = pyro.poutine.trace(self.model).get_trace(**model_kargs)
+        trace = pyro.poutine.trace(self._model).get_trace(**model_kargs)
         trace.compute_log_prob()  # optional, but allows printing of log_prob shapes
         print(trace.format_shapes())
 
-        return pyro.render_model(self.model,
+        return pyro.render_model(self._model,
                                  model_kwargs=model_kargs,
                                  filename=filename,
                                  render_distributions=render_distributions)
@@ -546,6 +617,15 @@ class GeneRegression:
         self._optimizer_initial_state = self._optimizer.get_state()
 
     def show_loss(self, figsize: Tuple[float, float] = (4, 4), logx: bool = False, logy: bool = False, ax=None):
+        """
+        Show the loss history. Usefull for checking if the training has converged.
+
+        Args:
+            figsize: the size of the image. Used only if ax=None
+            logx: if True the x_axis is shown in logarithmic scale
+            logy: if True the x_axis is shown in logarithmic scale
+            ax: The axes object to draw the plot onto. If None (defaults) creates a new figure.
+        """
         if ax is None:
             fig, ax = plt.subplots(figsize=figsize)
 
@@ -577,18 +657,21 @@ class GeneRegression:
               subsample_size_genes: int = None,
               from_scratch: bool = True):
         """
+        Train the model.
+
         Args:
             dataset: Dataset to train the model on
             n_steps: number of training step
             print_frequency: how frequently to print loss to screen
             use_covariates: if true, use covariates, if false use cell type information only
-            alpha_scale: scale of the sigma for the normal prior controlling the regression coefficients.
-                If None (defaults) there is no prior. I.e. the alpha parameters are not regularized.
-            eps_g_range: range on possible values of the gene_specific overdispersion
+            alpha_scale: controlls the strength of the L2 regularization on the regression coefficients.
+                The strength is proportional to 1/alpha_scale. Therefore small alpha means strong regularization.
+                If None (defaults) there is no regularization.
+            eps_g_range: range on possible values of the gene-specific noise. Must the a strictly positive range.
             subsample_size_genes: for large dataset, the minibatch can be created using a subset of genes.
             subsample_size_cells: for large dataset, the minibatch can be created using a subset of cells.
             from_scratch: it True (defaults) the training start from scratch. If False the training continues
-                from where it was left off.
+                from where it was left off. Usefull for extending a previously started training.
         """
 
         if from_scratch:
@@ -606,7 +689,7 @@ class GeneRegression:
             'subsample_size_cells': subsample_size_cells,
         }
 
-        svi = SVI(self.model, self.guide, self.optimizer, loss=Trace_ELBO())
+        svi = SVI(self._model, self._guide, self.optimizer, loss=Trace_ELBO())
         for i in range(n_steps+1):
             loss = svi.step(**model_kargs)
             self._loss_history.append(loss)
@@ -614,6 +697,7 @@ class GeneRegression:
                 print('[iter {}]  loss: {:.4f}'.format(i, loss))
 
     def save_ckpt(self, filename: str):
+        """ Save the full state of the model and optimizer to disk """
         ckpt = {
             "param_store": pyro.get_param_store().get_state(),
             "optimizer": self._optimizer,
@@ -626,6 +710,8 @@ class GeneRegression:
             torch.save(ckpt, output_file)
 
     def load_ckpt(self, filename: str, map_location=None):
+        """ Load the full state of the model and optimizer from disk """
+
         with open(filename, "rb") as input_file:
             ckpt = torch.load(input_file, map_location)
 
