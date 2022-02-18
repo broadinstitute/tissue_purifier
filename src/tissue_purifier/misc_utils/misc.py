@@ -2,14 +2,13 @@ import torch
 import argparse
 import math
 import numpy
-from typing import Union, Tuple
+from typing import Union, Tuple, List, Any
 from umap.umap_ import UMAP
 import leidenalg
 import igraph as ig
 import scipy
 import torch
 from torch.optim.optimizer import Optimizer
-from sklearn.decomposition import PCA
 
 
 def smart_bool(v):

@@ -350,7 +350,7 @@ class DinoSparseDM(DinoDM):
 
     def train_dataloader(self) -> DataLoaderWithLoad:
         try:
-            device = self.trainer.model.device
+            device = self.trainer._model.device
         except AttributeError:
             device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         # print("Inside train_dataloader", device)
@@ -377,7 +377,7 @@ class DinoSparseDM(DinoDM):
 
     def val_dataloader(self) -> List[DataLoaderWithLoad]:  # the same as test
         try:
-            device = self.trainer.model.device
+            device = self.trainer._model.device
         except AttributeError:
             device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 

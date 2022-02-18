@@ -14,6 +14,23 @@ import pyro.optim
 from sklearn.model_selection import StratifiedShuffleSplit, ShuffleSplit
 import matplotlib.pyplot as plt
 import numpy
+from scanpy import AnnData
+
+
+def _make_labels(y: Union[torch.Tensor, numpy.ndarray, List[Any]]) -> torch.Tensor:
+    def _to_numpy(_y):
+        if isinstance(_y, numpy.ndarray):
+            return _y
+        elif isinstance(_y, list):
+            return numpy.array(_y)
+        elif isinstance(_y, torch.Tensor):
+            return _y.detach().cpu().numpy()
+
+    y_np = _to_numpy(y)
+    unique_labels = numpy.unique(y_np)
+    y_to_ids = dict(zip(unique_labels, numpy.arange(y_np.shape[0])))
+    labels = torch.tensor([y_to_ids[tmp] for tmp in y_np])
+    return labels
 
 
 def plot_few_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
@@ -97,17 +114,56 @@ class GeneDataset(NamedTuple):
     """
     # order is important. Do not change
 
-    #: long tensor with the count data of shape (n, g)
-    counts: torch.Tensor
+    #: float tensor with the covariates of shape (n, k)
+    covariates: torch.Tensor
 
     #: long tensor with the cell_type_ids of shape (n)
     cell_type_ids: torch.Tensor
 
-    #: float tensor with the covariates of shape (n, k)
-    covariates: torch.Tensor
+    #: long tensor with the count data of shape (n, g)
+    counts: torch.Tensor
+
+    #: long tensor with the total_counts of shape (n).
+    #: It is not necessarily equal to counts.sum(dim=-1) since genes can be filtered
+    total_counts: torch.Tensor
 
     #: number of cell types
     k_cell_types: int
+
+
+def make_gene_dataset_from_anndata(anndata: AnnData, cell_type_key: str, covariate_key: str) -> GeneDataset:
+    """
+    Convert a anndata object into a GeneDataset object which can be used for gene regression
+
+    Args:
+        anndata: AnnData object with the count data
+        cell_type_key: key corresponding to the cell type, i.e. cell_type = anndata.obs[cell_type_key]
+        covariate_key: key corresponding to the covariate, i.e. covariate = anndata.obsm[covariate_key]
+
+    Returns:
+        a GeneDataset object
+    """
+
+    cell_types = list(anndata.obs[cell_type_key].values)
+    cell_type_ids_n = _make_labels(cell_types)
+    counts_ng = torch.tensor(anndata.X.toarray()).long()
+    total_counts_n = torch.tensor(anndata.obs['total_counts']).long()
+    covariates_nl = torch.tensor(anndata.obsm[covariate_key])
+
+    assert len(counts_ng.shape) == 2
+    assert len(covariates_nl.shape) == 2
+    assert len(cell_type_ids_n.shape) == 1
+
+    assert counts_ng.shape[0] == covariates_nl.shape[0] == cell_type_ids_n.shape[0]
+
+    k_cell_types = cell_type_ids_n.max().item() + 1  # +1 b/c ids start from zero
+
+    return GeneDataset(
+        counts=counts_ng,
+        cell_type_ids=cell_type_ids_n,
+        covariates=covariates_nl,
+        total_counts=total_counts_n,
+        k_cell_types=k_cell_types)
 
 
 def generate_fake_data(
@@ -160,6 +216,7 @@ def generate_fake_data(
 
     return GeneDataset(
         counts=counts_ng,
+        total_counts=counts_ng.sum(dim=-1),
         covariates=cov_nl,
         cell_type_ids=cell_ids_n,
         k_cell_types=cell_types)
@@ -213,8 +270,8 @@ def train_test_val_split(
     if isinstance(data, List):
         arrays = data
     elif isinstance(data, GeneDataset):
-        # this is the same order in the definition of GeneDataset
-        arrays = [data.counts, data.cell_type_ids, data.covariates]
+        # same order as in the definition of GeneDataset NamedTuple
+        arrays = [data.covariates, data.cell_type_ids, data.counts, data.total_counts]
     else:
         raise ValueError("data must be a list or a GeneDataset")
 
@@ -253,10 +310,10 @@ def train_test_val_split(
 
     # Part common to both stratified and not stratified
     trains, tests, vals = None, None, None
-    for index_train, index_test_and_val in sss0.split(*arrays):
+    for index_train, index_test_and_val in sss0.split(*arrays[:2]):
         trains = [a[index_train] for a in arrays]
         test_and_val = [a[index_test_and_val] for a in arrays]
-        for index_val, index_test in sss1.split(*test_and_val):
+        for index_val, index_test in sss1.split(*test_and_val[:2]):
             tests = [a[index_test] for a in test_and_val]
             vals = [a[index_val] for a in test_and_val]
 
@@ -315,7 +372,8 @@ class LogNormalPoisson(TorchDistribution):
                 + noise_scale.unsqueeze(-1) * self.quad_points
         )
         quad_rate = quad_log_rate.exp()
-        assert torch.all(torch.isfinite(quad_rate)), "Rate is not finite."
+        assert torch.all(torch.isfinite(quad_rate)), "Quad_Rate is not finite."
+        assert torch.all(n_trials > 0), "n_trials must be positive"
         self.poi_dist = dist.Poisson(rate=n_trials.unsqueeze(-1) * quad_rate)
 
         self.n_trials = n_trials
@@ -402,6 +460,7 @@ class GeneRegression:
         # Unpack the dataset
         assert eps_g_range[1] > eps_g_range[0] > 0
         counts_ng = dataset.counts.long()
+        total_umi_n = dataset.total_counts.long()
         covariates_nl = dataset.covariates.float()
         cell_type_ids_n = dataset.cell_type_ids.long()  # ids: 0,1,...,K-1
         k = dataset.k_cell_types
@@ -442,7 +501,7 @@ class GeneRegression:
             alpha0_n1g = alpha0_k1g[cell_ids_sub_n]
             alpha_nlg = alpha_klg[cell_ids_sub_n]
             covariate_sub_nl1 = covariates_nl[cell_ids_sub_n].unsqueeze(dim=-1)
-            total_umi_n11 = counts_ng[ind_n].sum(dim=-1, keepdim=True).unsqueeze(dim=-1)
+            total_umi_n11 = total_umi_n[ind_n, None, None]
 
             # assert total_umi_n11.shape == torch.Size([len(ind_n), 1, 1]), "Got {0}".format(total_umi_n11.shape)
             # assert torch.all(total_umi_n11 > 0)
@@ -523,11 +582,12 @@ class GeneRegression:
         n, l = dataset.covariates.shape[:2]
         k = dataset.k_cell_types
 
-        cell_type_ids = dataset.cell_type_ids.long()
         eps_g = pyro.get_param_store().get_param("eps_g")
         alpha0_k1g = pyro.get_param_store().get_param("alpha0")
         alpha_klg = pyro.get_param_store().get_param("alpha_loc")
         counts_ng = dataset.counts
+        total_umi_n = dataset.total_counts
+        cell_type_ids = dataset.cell_type_ids.long()
         covariates_nl1 = dataset.covariates.unsqueeze(dim=-1)
 
         assert eps_g.shape == torch.Size([g]), \
@@ -543,13 +603,14 @@ class GeneRegression:
             alpha0_k1g = alpha0_k1g.cuda()
             alpha_klg = alpha_klg.cuda()
             counts_ng = counts_ng.cuda()
+            total_umi_n = total_umi_n.cuda()
             covariates_nl1 = covariates_nl1.cuda()
 
         log_rate_n1g = alpha0_k1g[cell_type_ids] + (covariates_nl1 * alpha_klg[cell_type_ids]).sum(dim=-2, keepdim=True)
-        total_umi_n11 = counts_ng.sum(dim=-1, keepdim=True).unsqueeze(dim=-1)
+        total_umi_n1 = total_umi_n[:, None]
 
         mydist = LogNormalPoisson(
-            n_trials=total_umi_n11.squeeze(dim=-2),
+            n_trials=total_umi_n1,
             log_rate=log_rate_n1g.squeeze(dim=-2),
             noise_scale=eps_g,
             num_quad_points=8)
