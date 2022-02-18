@@ -522,7 +522,7 @@ class GeneRegression:
                                              log_rate=log_mu_n1g.to(device),
                                              noise_scale=eps_sub_g.to(device),
                                              num_quad_points=8),
-                            obs=counts_ng[ind_n, None].index_select(dim=-1, index=ind_g))
+                            obs=counts_ng[ind_n, None].index_select(dim=-1, index=ind_g).to(device))
 
     def _guide(self,
                dataset: GeneDataset,
