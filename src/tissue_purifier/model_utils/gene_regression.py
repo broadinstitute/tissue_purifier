@@ -494,11 +494,11 @@ class GeneRegression:
                         alpha_klg = pyro.sample("alpha", dist.Uniform(low=-2.0, high=2.0)).to(device)
 
         with cell_plate as ind_n:
-            cell_ids_sub_n = cell_type_ids_n[ind_n]
+            cell_ids_sub_n = cell_type_ids_n[ind_n].to(device)
             alpha0_n1g = alpha0_k1g[cell_ids_sub_n]
             alpha_nlg = alpha_klg[cell_ids_sub_n]
-            covariate_sub_nl1 = covariates_nl[cell_ids_sub_n].unsqueeze(dim=-1)
-            total_umi_n11 = total_umi_n[ind_n, None, None]
+            covariate_sub_nl1 = covariates_nl[cell_ids_sub_n].unsqueeze(dim=-1).to(device)
+            total_umi_n11 = total_umi_n[ind_n, None, None].to(device)
 
             # assert total_umi_n11.shape == torch.Size([len(ind_n), 1, 1]), "Got {0}".format(total_umi_n11.shape)
             # assert torch.all(total_umi_n11 > 0)
