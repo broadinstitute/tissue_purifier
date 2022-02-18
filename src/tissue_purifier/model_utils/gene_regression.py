@@ -471,6 +471,8 @@ class GeneRegression:
 
         # Define the right device:
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        one = torch.ones(1, device=device)
+        zero = torch.zeros(1, device=device)
 
         # Define the plates (i.e. conditional independence). It make sense to subsample only gene and cells.
         cell_plate = pyro.plate("cells", size=n, dim=-3, device=device, subsample_size=subsample_size_cells)
@@ -488,10 +490,10 @@ class GeneRegression:
             with cell_types_plate:
                 with covariate_plate:
                     if alpha_scale is not None:
-                        alpha_klg = pyro.sample("alpha", dist.Normal(loc=0.0, scale=alpha_scale)).to(device)
+                        alpha_klg = pyro.sample("alpha", dist.Normal(loc=zero, scale=alpha_scale*one))
                     else:
                         # note that alpha change the log_rate. Therefore it must be small
-                        alpha_klg = pyro.sample("alpha", dist.Uniform(low=-2.0, high=2.0)).to(device)
+                        alpha_klg = pyro.sample("alpha", dist.Uniform(low=-2*one, high=2*one))
 
         with cell_plate as ind_n:
             cell_ids_sub_n = cell_type_ids_n[ind_n].to(device)
