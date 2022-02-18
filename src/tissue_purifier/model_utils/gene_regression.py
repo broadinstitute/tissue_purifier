@@ -159,10 +159,9 @@ def make_gene_dataset_from_anndata(anndata: AnnData, cell_type_key: str, covaria
     k_cell_types = cell_type_ids_n.max().item() + 1  # +1 b/c ids start from zero
 
     return GeneDataset(
-        counts=counts_ng,
-        cell_type_ids=cell_type_ids_n,
-        covariates=covariates_nl,
-        total_counts=total_counts_n,
+        cell_type_ids=cell_type_ids_n.detach().cpu(),
+        covariates=covariates_nl.detach().cpu(),
+        total_counts=total_counts_n.detach().cpu(),
         k_cell_types=k_cell_types)
 
 
@@ -374,6 +373,7 @@ class LogNormalPoisson(TorchDistribution):
         quad_rate = quad_log_rate.exp()
         assert torch.all(torch.isfinite(quad_rate)), "Quad_Rate is not finite."
         assert torch.all(n_trials > 0), "n_trials must be positive"
+        assert n_trials.device == quad_rate.device, "Got {0} and {1}".format(n_trials.device, quad_rate.device)
         self.poi_dist = dist.Poisson(rate=n_trials.unsqueeze(-1) * quad_rate)
 
         self.n_trials = n_trials
@@ -468,12 +468,8 @@ class GeneRegression:
         n, l = covariates_nl.shape[:2]
         n = cell_type_ids_n.shape[0]
 
-        # Put the data on GOU is available
-        if torch.cuda.is_available():
-            covariates_nl = covariates_nl.cuda()
-            cell_type_ids_n = cell_type_ids_n.cuda()
-            counts_ng = counts_ng.cuda()
-        device = covariates_nl.device
+        # Define the right device:
+        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
         # Define the plates (i.e. conditional independence). It make sense to subsample only gene and cells.
         cell_plate = pyro.plate("cells", size=n, dim=-3, device=device, subsample_size=subsample_size_cells)
@@ -518,9 +514,9 @@ class GeneRegression:
                 eps_sub_g = eps_g[ind_g]
 
                 pyro.sample("counts",
-                            LogNormalPoisson(n_trials=total_umi_n11,
-                                             log_rate=log_mu_n1g,
-                                             noise_scale=eps_sub_g,
+                            LogNormalPoisson(n_trials=total_umi_n11.to(device),
+                                             log_rate=log_mu_n1g.to(device),
+                                             noise_scale=eps_sub_g.to(device),
                                              num_quad_points=8),
                             obs=counts_ng[ind_n, None].index_select(dim=-1, index=ind_g))
 
@@ -533,13 +529,10 @@ class GeneRegression:
         # Unpack the dataset
         n, g = dataset.counts.shape[:2]
         n, l = dataset.covariates.shape[:2]
-        cell_type_ids_n = dataset.cell_type_ids.long()  # ids: 0,1,...,K-1
         k = dataset.k_cell_types
 
-        # Data on GPU if available
-        if torch.cuda.is_available():
-            cell_type_ids_n = cell_type_ids_n.cuda()
-        device = cell_type_ids_n.device
+        # Define the right device:
+        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
         # Define the gene and cell plates. It make sense to subsample only gene and cells.
         # cell_plate = pyro.plate("cells", size=n, dim=-3, device=device, subsample_size=subsample_size_cells)
