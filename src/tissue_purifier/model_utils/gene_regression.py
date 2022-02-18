@@ -162,6 +162,7 @@ def make_gene_dataset_from_anndata(anndata: AnnData, cell_type_key: str, covaria
         cell_type_ids=cell_type_ids_n.detach().cpu(),
         covariates=covariates_nl.detach().cpu(),
         total_counts=total_counts_n.detach().cpu(),
+        counts=counts_ng.detach().cpu(),
         k_cell_types=k_cell_types)
 
 
@@ -726,6 +727,9 @@ class GeneRegression:
             subsample_size_cells: for large dataset, the minibatch can be created using a subset of cells.
             from_scratch: it True (defaults) the training start from scratch. If False the training continues
                 from where it was left off. Usefull for extending a previously started training.
+
+        Note:
+            If you get an out-of-memory error try to tune the subsample_size_cells and subsample_size_genes
         """
 
         if from_scratch:
