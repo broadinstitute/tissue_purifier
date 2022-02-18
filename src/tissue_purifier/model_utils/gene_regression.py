@@ -511,11 +511,6 @@ class GeneRegression:
                 # assert alpha_nlg.shape == torch.Size([len(ind_n), covariates, len(ind_g)]), "Got {0}".format(
                 #    alpha_nlg.shape)
 
-                assert alpha0_k1g.device == covariate_sub_nl1.device == alpha_nlg.device, \
-                    "Got {0} {1} {2}".format(alpha0_k1g.device, covariate_sub_nl1.device, alpha_nlg.device)
-                assert ind_n.device == ind_g.device == counts_ng.device, \
-                    "Got {0} {1} {2}".format(ind_n.device, ind_g.device, counts_ng.device)
-
                 log_mu_n1g = alpha0_n1g[..., ind_g] + torch.sum(covariate_sub_nl1 * alpha_nlg, dim=-2, keepdim=True)
                 eps_sub_g = eps_g[ind_g]
 
