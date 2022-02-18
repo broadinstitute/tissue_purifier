@@ -123,10 +123,6 @@ class GeneDataset(NamedTuple):
     #: long tensor with the count data of shape (n, g)
     counts: torch.Tensor
 
-    #: long tensor with the total_counts of shape (n).
-    #: It is not necessarily equal to counts.sum(dim=-1) since genes can be filtered
-    total_counts: torch.Tensor
-
     #: number of cell types
     k_cell_types: int
 
@@ -134,8 +130,7 @@ class GeneDataset(NamedTuple):
 def make_gene_dataset_from_anndata(
         anndata: AnnData,
         cell_type_key: str,
-        covariate_key: str,
-        single_cell_type: str = None) -> GeneDataset:
+        covariate_key: str) -> GeneDataset:
     """
     Convert a anndata object into a GeneDataset object which can be used for gene regression
 
@@ -143,7 +138,6 @@ def make_gene_dataset_from_anndata(
         anndata: AnnData object with the count data
         cell_type_key: key corresponding to the cell type, i.e. cell_types = anndata.obs[cell_type_key]
         covariate_key: key corresponding to the covariate, i.e. covariates = anndata.obsm[covariate_key]
-        single_cell_type: if not None, the resulting dataset has a single cell_type corrisponding to this key
 
     Returns:
         a GeneDataset object
@@ -152,7 +146,6 @@ def make_gene_dataset_from_anndata(
     cell_types = list(anndata.obs[cell_type_key].values)
     cell_type_ids_n = _make_labels(cell_types)
     counts_ng = torch.tensor(anndata.X.toarray()).long()
-    total_counts_n = torch.tensor(anndata.obs['total_counts']).long()
     covariates_nl = torch.tensor(anndata.obsm[covariate_key])
 
     assert len(counts_ng.shape) == 2
@@ -166,7 +159,6 @@ def make_gene_dataset_from_anndata(
     return GeneDataset(
         cell_type_ids=cell_type_ids_n.detach().cpu(),
         covariates=covariates_nl.detach().cpu(),
-        total_counts=total_counts_n.detach().cpu(),
         counts=counts_ng.detach().cpu(),
         k_cell_types=k_cell_types)
 
@@ -221,7 +213,6 @@ def generate_fake_data(
 
     return GeneDataset(
         counts=counts_ng,
-        total_counts=counts_ng.sum(dim=-1),
         covariates=cov_nl,
         cell_type_ids=cell_ids_n,
         k_cell_types=cell_types)
@@ -276,7 +267,7 @@ def train_test_val_split(
         arrays = data
     elif isinstance(data, GeneDataset):
         # same order as in the definition of GeneDataset NamedTuple
-        arrays = [data.covariates, data.cell_type_ids, data.counts, data.total_counts]
+        arrays = [data.covariates, data.cell_type_ids, data.counts]
     else:
         raise ValueError("data must be a list or a GeneDataset")
 
@@ -466,7 +457,7 @@ class GeneRegression:
         # Unpack the dataset
         assert eps_g_range[1] > eps_g_range[0] > 0
         counts_ng = dataset.counts.long()
-        total_umi_n = dataset.total_counts.long()
+        total_umi_n = counts_ng.sum(dim=-1)
         covariates_nl = dataset.covariates.float()
         cell_type_ids_n = dataset.cell_type_ids.long()  # ids: 0,1,...,K-1
         k = dataset.k_cell_types
@@ -587,7 +578,6 @@ class GeneRegression:
         alpha0_k1g = pyro.get_param_store().get_param("alpha0")
         alpha_klg = pyro.get_param_store().get_param("alpha_loc")
         counts_ng = dataset.counts
-        total_umi_n = dataset.total_counts
         cell_type_ids = dataset.cell_type_ids.long()
         covariates_nl1 = dataset.covariates.unsqueeze(dim=-1)
 
@@ -604,11 +594,10 @@ class GeneRegression:
             alpha0_k1g = alpha0_k1g.cuda()
             alpha_klg = alpha_klg.cuda()
             counts_ng = counts_ng.cuda()
-            total_umi_n = total_umi_n.cuda()
             covariates_nl1 = covariates_nl1.cuda()
 
         log_rate_n1g = alpha0_k1g[cell_type_ids] + (covariates_nl1 * alpha_klg[cell_type_ids]).sum(dim=-2, keepdim=True)
-        total_umi_n1 = total_umi_n[:, None]
+        total_umi_n1 = counts_ng.sum(dim=-1, keepdim=True)
 
         mydist = LogNormalPoisson(
             n_trials=total_umi_n1,
@@ -626,10 +615,6 @@ class GeneRegression:
             "deviance": (counts_ng-counts_pred_bng).abs().detach().cpu(),
             "cell_type": cell_type_ids.detach().cpu()
         }
-
-        import scanpy as sc
-        sc.pp.filter_cells
-        assert 1==2
 
         # package the results into two dataframe for easy visualization
         cols = ["cell_type"] + ['gene_{}'.format(g) for g in range(results["log_score"].shape[-1])]
