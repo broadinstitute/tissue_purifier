@@ -131,14 +131,19 @@ class GeneDataset(NamedTuple):
     k_cell_types: int
 
 
-def make_gene_dataset_from_anndata(anndata: AnnData, cell_type_key: str, covariate_key: str) -> GeneDataset:
+def make_gene_dataset_from_anndata(
+        anndata: AnnData,
+        cell_type_key: str,
+        covariate_key: str,
+        single_cell_type: str = None) -> GeneDataset:
     """
     Convert a anndata object into a GeneDataset object which can be used for gene regression
 
     Args:
         anndata: AnnData object with the count data
-        cell_type_key: key corresponding to the cell type, i.e. cell_type = anndata.obs[cell_type_key]
-        covariate_key: key corresponding to the covariate, i.e. covariate = anndata.obsm[covariate_key]
+        cell_type_key: key corresponding to the cell type, i.e. cell_types = anndata.obs[cell_type_key]
+        covariate_key: key corresponding to the covariate, i.e. covariates = anndata.obsm[covariate_key]
+        single_cell_type: if not None, the resulting dataset has a single cell_type corrisponding to this key
 
     Returns:
         a GeneDataset object
@@ -621,6 +626,10 @@ class GeneRegression:
             "deviance": (counts_ng-counts_pred_bng).abs().detach().cpu(),
             "cell_type": cell_type_ids.detach().cpu()
         }
+
+        import scanpy as sc
+        sc.pp.filter_cells
+        assert 1==2
 
         # package the results into two dataframe for easy visualization
         cols = ["cell_type"] + ['gene_{}'.format(g) for g in range(results["log_score"].shape[-1])]
