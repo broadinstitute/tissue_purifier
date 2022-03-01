@@ -237,6 +237,61 @@ class Rasterize(torch.nn.Module):
         return rasterized_tensor
 
 
+class DropChannel(torch.nn.Module):
+    """
+    Set a random channel to zero with a given probability.
+    """
+    def __init__(self,
+                 p: float = 0.2,
+                 relative_frequency: Iterable[float] = None,
+                 ):
+        """
+        Args:
+            p: probability of setting a channel to zero.
+            relative_frequency: relative probability of each channel being set to zero.
+                If None (default) the relative frequency is uniform, i.e. each channel has the same probability
+                of being set to zero.
+        """
+        super().__init__()
+        self.p = p
+        if relative_frequency is None:
+            self.relative_frequency = None
+            self._cumulative_frequency = None
+        else:
+            tmp = torch.tensor(relative_frequency, dtype=torch.float)
+            assert torch.all(tmp >= 0.0), "Relative frequency must be None or an Iterable of non-negative values"
+            self.relative_frequency = tmp / tmp.sum()
+            self._cumulative_frequency = torch.cumsum(self.relative_frequency, dim=0)
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(p={0}, relative_frequency={1})'.format(self.p,
+                                                                                  self.relative_frequency.cpu().numpy())
+
+    def forward(self, tensor: torch.Tensor):
+        assert isinstance(tensor, torch.Tensor) and len(tensor.shape) == 4
+        assert self.relative_frequency is None or self.relative_frequency.shape[0] == tensor.shape[-3], \
+            "Error. Relative frequency must have length equal to channels in the image. Received {0} and {1}".format(
+                self.relative_frequency.shape[0],
+                tensor.shape[-3]
+            )
+
+        if self.p > 0.0:
+            batch_size, chs = tensor.shape[:-2]  # get dimension -4 and -3, i.e. batch and channel
+            r = torch.rand(size=[batch_size, 2])
+            x = torch.linspace(1.0 / chs, 1.0, chs) if self._cumulative_frequency is None else \
+                self._cumulative_frequency
+            ch_index = torch.sum(r[:, :1] > x, dim=-1).view(-1)
+            active = (r[:, -1] < self.p)
+            assert ch_index.shape == active.shape == torch.Size([batch_size])
+
+            # make the correct channels zero
+            ch_active = ch_index[active]
+            tmp = tensor[active].clone()
+            tmp[torch.arange(ch_active.shape[0]), ch_active] = 0.0
+            tensor[active] = tmp
+        return tensor
+
+
 class RandomStraightCut(torch.nn.Module):
     """
     Draw a random straight line and set all the values on one side of the line to zero thus occluding part of a

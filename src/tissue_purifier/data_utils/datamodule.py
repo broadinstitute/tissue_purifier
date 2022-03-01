@@ -6,7 +6,7 @@ import tarfile
 import pandas as pd
 import os.path
 from anndata import read_h5ad
-from typing import Dict, Callable, Optional, Tuple, List
+from typing import Dict, Callable, Optional, Tuple, List, Iterable
 import torch
 import torchvision
 from os import cpu_count
@@ -24,6 +24,7 @@ from tissue_purifier.data_utils.transforms import (
     RandomVFlip,
     RandomStraightCut,
     RandomGlobalIntensity,
+    DropChannel,
     # LargestSquareCrop,
     # ToRgb,
 )
@@ -147,7 +148,7 @@ class DinoDM(pl.LightningDataModule):
 
 class DinoSparseDM(DinoDM):
     """
-    DinoDM for sparse Images with the parameter for the transform specified.
+    DinoDM for sparse Images with the parameter for the transform (i.e. data augmentation) specified.
     If you are inheriting from this class then you have to overwrite:
     'prepara_data', 'setup', 'get_metadata_to_classify' and 'get_metadata_to_regress'.
     """
@@ -163,6 +164,8 @@ class DinoSparseDM(DinoDM):
                  dropouts: Tuple[float] = (0.1, 0.2, 0.3),
                  rasterize_sigmas: Tuple[float] = (0.5, 1.0, 1.5, 2.0),
                  occlusion_fraction: Tuple[float, float] = (0.1, 0.3),
+                 drop_channel_prob: float = 0.0,
+                 drop_channel_relative_freq: Iterable[float] = None,
                  n_crops_for_tissue_test: int = 50,
                  n_crops_for_tissue_train: int = 50,
                  # batch_size
@@ -181,6 +184,9 @@ class DinoSparseDM(DinoDM):
             dropouts: Possible values of the dropout. Should be > 0.0
             rasterize_sigmas: Possible values of the sigma of the gaussian kernel used for rasterization.
             occlusion_fraction: Fraction of the sample which is occluded is drawn uniformly between these values
+            drop_channel_prob: Probability that a channel will be set to zero,
+            drop_channel_relative_freq: Relative probability of each channel to be set to zero. If None (default) all
+                channels are equally likely to be set to zero.
             n_crops_for_tissue_test: The number of crops in each validation epoch will be: n_tissue * n_crops
             n_crops_for_tissue_train: The number of crops in each training epoch will be: n_tissue * n_crops
             batch_size_per_gpu: batch size FOR EACH GPUs.
@@ -200,6 +206,8 @@ class DinoSparseDM(DinoDM):
         self._dropouts = dropouts
         self._rasterize_sigmas = rasterize_sigmas
         self._occlusion_fraction = occlusion_fraction
+        self._drop_channel_prob = drop_channel_prob
+        self._drop_channel_relative_freq = drop_channel_relative_freq
         self._n_element_min_for_crop = n_element_min_for_crop
         self._n_crops_for_tissue_test = n_crops_for_tissue_test
         self._n_crops_for_tissue_train = n_crops_for_tissue_train
@@ -233,6 +241,11 @@ class DinoSparseDM(DinoDM):
                             help="Possible values of the sigma of the gaussian kernel used for rasterization")
         parser.add_argument("--occlusion_fraction", type=float, nargs=2, default=[0.1, 0.3],
                             help="Fraction of the sample which is occluded is drawn uniformly between these values.")
+        parser.add_argument("--drop_channel_prob", type=float, default=0.2,
+                            help="Probability that a channel in the image will be set to zero.")
+        parser.add_argument("--drop_channel_relative_freq", type=float, nargs='*', default=[None],
+                            help="Relative probability of each channel to be set to zero. \
+                            If None, all channels have the same probability of being zero")
         parser.add_argument("--n_crops_for_tissue_train", type=int, default=50,
                             help="The number of crops in each training epoch will be: n_tissue * n_crops. \
                                Set small for rapid prototyping")
@@ -318,6 +331,7 @@ class DinoSparseDM(DinoDM):
                     ratio=(0.95, 1.05),
                     interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
                 RandomStraightCut(p=0.5, occlusion_fraction=self._occlusion_fraction),
+                DropChannel(p=self._drop_channel_prob, relative_frequency=self._drop_channel_relative_freq),
             ])
         )
 
@@ -345,6 +359,7 @@ class DinoSparseDM(DinoDM):
                     ratio=(0.95, 1.05),
                     interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
                 RandomStraightCut(p=0.5, occlusion_fraction=self._occlusion_fraction),
+                DropChannel(p=self._drop_channel_prob, relative_frequency=self._drop_channel_relative_freq),
             ])
         )
 
