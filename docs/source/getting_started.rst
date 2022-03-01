@@ -92,7 +92,7 @@ Next install the most recent version of Pyro (not yet available using pip):
 
 .. code-block::
 
-    git clone git@github.com:pyro-ppl/pyro.git
+    git clone https://github.com/pyro-ppl/pyro.git
     cd pyro
     pip install .
 
@@ -103,8 +103,8 @@ Finally install *Tissue Purifier* and its dependencies:
 
     git clone https://github.com/broadinstitute/tissue_purifier.git
     cd tissue_purifier
-    pip install -e .
     pip install -r requirements.txt
+    pip install .
 
 
 Docker Image
@@ -116,7 +116,7 @@ A GPU-enabled docker image is available from the Google Container Registry (GCR)
 
 Older versions are available at the same location, for example as
 
-``us.gcr.io/broad-dsde-methods/tissuepurifier:0.0.3``
+``us.gcr.io/broad-dsde-methods/tissuepurifier:0.0.4``
 
 How to run
 ----------
