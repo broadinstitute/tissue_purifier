@@ -62,7 +62,6 @@ def are_dicts_equal(
     return True
 
 
-
 def transfer_annotations_between_dict(
         source_dict: dict,
         dest_dict: dict,

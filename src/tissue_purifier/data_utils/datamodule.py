@@ -1,18 +1,19 @@
 import pytorch_lightning as pl
 
 from argparse import ArgumentParser
-from os import listdir
-import tarfile
-import pandas as pd
+import numpy
 import os.path
 from anndata import read_h5ad
-from typing import Dict, Callable, Optional, Tuple, List, Iterable
+from typing import Dict, Callable, Optional, Tuple, List, Iterable, Any
 import torch
 import torchvision
 from os import cpu_count
+from scanpy import AnnData
 
-from tissue_purifier.misc_utils.misc import smart_bool
-
+from tissue_purifier.misc_utils.misc import (
+    # smart_bool,
+    ParseDict,
+)
 from tissue_purifier.data_utils.sparse_image import SparseImage
 from tissue_purifier.model_utils.analyzer import SpatialAutocorrelation
 from tissue_purifier.data_utils.transforms import (
@@ -44,14 +45,11 @@ from tissue_purifier.data_utils.dataset import (
 # Therefore I put the dataset in GPU and use num_workers = 0.
 
 
-class classproperty(property):
-    """ Own-made decorator for defining cls properties """
-    def __get__(self, cls, owner):
-        return classmethod(self.fget).__get__(None, owner)()
-
-
-class DinoDM(pl.LightningDataModule):
-    """ Abstract class to inherit from to make a dataset to be used with the DINO model """
+class SslDM(pl.LightningDataModule):
+    """
+    Abstract class to inherit from to make a datamodule which can be used with any
+    Self Supervised Learning framework
+    """
 
     @classmethod
     def get_default_params(cls) -> dict:
@@ -72,7 +70,7 @@ class DinoDM(pl.LightningDataModule):
         """ Extract one or more quantities to classify from the metadata """
         raise NotImplementedError
 
-    @classproperty
+    @property
     def ch_in(self) -> int:
         raise NotImplementedError
 
@@ -146,10 +144,10 @@ class DinoDM(pl.LightningDataModule):
         raise NotImplementedError
 
 
-class DinoSparseDM(DinoDM):
+class SparseSslDM(SslDM):
     """
-    DinoDM for sparse Images with the parameter for the transform (i.e. data augmentation) specified.
-    If you are inheriting from this class then you have to overwrite:
+    SslDM for sparse Images with the parameter for the transform (i.e. data augmentation) specified.
+    If you are inheriting from this class then you only have to overwrite:
     'prepara_data', 'setup', 'get_metadata_to_classify' and 'get_metadata_to_regress'.
     """
     def __init__(self,
@@ -162,7 +160,7 @@ class DinoSparseDM(DinoDM):
                  global_intensity: Tuple[float, float] = (0.8, 1.2),
                  n_element_min_for_crop: int = 200,
                  dropouts: Tuple[float] = (0.1, 0.2, 0.3),
-                 rasterize_sigmas: Tuple[float] = (0.5, 1.0, 1.5, 2.0),
+                 rasterize_sigmas: Tuple[float] = (1.0, 1.5),
                  occlusion_fraction: Tuple[float, float] = (0.1, 0.3),
                  drop_channel_prob: float = 0.0,
                  drop_channel_relative_freq: Iterable[float] = None,
@@ -191,7 +189,7 @@ class DinoSparseDM(DinoDM):
             n_crops_for_tissue_train: The number of crops in each training epoch will be: n_tissue * n_crops
             batch_size_per_gpu: batch size FOR EACH GPUs.
         """
-        super(DinoSparseDM, self).__init__()
+        super(SparseSslDM, self).__init__()
         
         # params for overwriting the abstract property
         self._global_size = global_size
@@ -214,8 +212,8 @@ class DinoSparseDM(DinoDM):
 
         # batch_size
         self._batch_size_per_gpu = batch_size_per_gpu
-        self.dataset_train = None
-        self.dataset_test = None
+        self.dataset_train: CropperDataset = None
+        self.dataset_test: CropperDataset = None
 
     @classmethod
     def add_specific_args(cls, parent_parser) -> ArgumentParser:
@@ -243,7 +241,7 @@ class DinoSparseDM(DinoDM):
                             help="Fraction of the sample which is occluded is drawn uniformly between these values.")
         parser.add_argument("--drop_channel_prob", type=float, default=0.2,
                             help="Probability that a channel in the image will be set to zero.")
-        parser.add_argument("--drop_channel_relative_freq", type=float, nargs='*', default=[None],
+        parser.add_argument("--drop_channel_relative_freq", type=float, nargs='*', default=None,
                             help="Relative probability of each channel to be set to zero. \
                             If None, all channels have the same probability of being zero")
         parser.add_argument("--n_crops_for_tissue_train", type=int, default=50,
@@ -423,193 +421,51 @@ class DinoSparseDM(DinoDM):
     def predict_dataloader(self) -> List[DataLoaderWithLoad]:
         return self.val_dataloader()
 
+    def prepare_data(self):
+        raise NotImplementedError
+
+    def get_metadata_to_classify(self, metadata) -> Dict[str, int]:
+        raise NotImplementedError
+
+    def get_metadata_to_regress(self, metadata) -> Dict[str, float]:
+        raise NotImplementedError
+
     def setup(self, stage: Optional[str] = None) -> None:
-        """ Must overwrite this function and redefine dataset_train, dataset_test """
         self.dataset_train = None
         self.dataset_test = None
         raise NotImplementedError
 
 
-class DummyDM(DinoSparseDM):
-    def __init__(self, **kargs):
-        """ All inputs are neglected and the default values are applied. """
-        print("-----> running datamodule init")
-
-        configs_for_transforms = {
-            'batch_size_per_gpu': 10,
-            'n_crops_for_tissue_test': 10,
-            'n_crops_for_tissue_train': 10,
-            'n_element_min_for_crop': 1,
-            'global_size': 64,
-            'global_scale': (0.75, 1.0),
-            'local_size': 32,
-            'local_scale': (0.5, 0.75)
-        }
-        for k,v in configs_for_transforms.items():
-            kargs[k] = v
-
-        super(DummyDM, self).__init__(**kargs)
-
-        self._data_dir = "./dummy_data"
-        self._num_workers = 1
-        self._gpus = torch.cuda.device_count()
-        self._load_count_matrix = False
-        self._pixel_size = 1.0
-        self._n_neighbours_moran = 6
-
-        # Callable on dataset
-        self.compute_moran = SpatialAutocorrelation(
-            modality='moran',
-            n_neighbours=self._n_neighbours_moran,
-            neigh_correct=False)
-        self.dataset_train = None
-        self.dataset_test = None
-
-    @classmethod
-    def add_specific_args(cls, parent_parser) -> ArgumentParser:
-        parser_from_super = super().add_specific_args(parent_parser)
-        parser = ArgumentParser(parents=[parser_from_super], add_help=False, conflict_handler='resolve')
-
-        parser.add_argument("--data_dir", type=str, default="./slide_seq_testis",
-                            help="directory where to download the data")
-        parser.add_argument("--num_workers", default=cpu_count(), type=int,
-                            help="number of worker to load data. Meaningful only if dataset is on disk. \
-                            Set to zero if data in memory")
-        parser.add_argument("--pixel_size", type=float, default=4.0,
-                            help="size of the pixel (used to convert raw_coordinates to pixel_coordinates)")
-        parser.add_argument("--load_count_matrix", type=smart_bool, default=False,
-                            help="If true load the count matrix in the anndata object. \
-                            Count matrix is memory intensive therefore it can be advantegeous not to load it.")
-        parser.add_argument("--n_neighbours_moran", type=int, default=6,
-                            help="number of neighbours used to compute moran")
-
-        return parser
-
-    def get_metadata_to_regress(self, metadata: MetadataCropperDataset) -> Dict[str, float]:
-        """ Extract one or more quantities to regress from the metadata """
-        return {
-            "moran": float(metadata.moran),
-            "loc_x": float(metadata.loc_x),
-        }
-
-    def get_metadata_to_classify(self, metadata: MetadataCropperDataset) -> Dict[str, int]:
-        """
-        Extract one or more quantities to classify from the metadata.
-        One should be at "tissue_label" b/c it is used to select non-overlapping patches.
-        """
-
-        def _remove_prefix(x):
-            return int(x.lstrip("id_"))
-
-        return {
-            "tissue_label": _remove_prefix(metadata.f_name)
-        }
-
-    @classproperty
-    def ch_in(self) -> int:
-        return 9
-
-    def prepare_data(self):
-        cell_list = ["ES", "Endothelial", "Leydig", "Macrophage", "Myoid", "RS", "SPC", "SPG", "Sertoli"]
-        categories_to_codes = dict(zip(cell_list, range(len(cell_list))))
-
-        import random
-        import pandas
-        import numpy
-        from anndata import AnnData
-
-        n_tissues, n_beads = 5, 5000
-        all_anndata, all_names_sparse_images, all_labels_sparse_images = [], [], []
-        for n_tissue in range(n_tissues):
-            tmp_dict = {
-                "x_raw": 200.0 + 500.0 * numpy.random.rand(n_beads),
-                "y_raw": -200.0 + 500.0 * numpy.random.rand(n_beads),
-                "cell_type": [cell_list[i] for i in numpy.random.randint(low=0, high=9, size=n_beads)],
-                "barcodes": [random.getrandbits(128) for i in range(n_beads)]
-            }
-            metadata_df = pandas.DataFrame(data=tmp_dict).set_index("barcodes")
-            adata = AnnData(obs=metadata_df)
-
-            all_anndata.append(adata)
-            all_names_sparse_images.append("id_"+str(n_tissue))
-            all_labels_sparse_images.append("wt" if numpy.random.rand() < 0.5 else "dis")
-
-        all_metadata = [MetadataCropperDataset(f_name=f_name, loc_x=0.0, loc_y=0.0, moran=-99.9) for
-                        f_name in all_names_sparse_images]
-
-        # create the train_dataset and write to file
-        all_sparse_images = [SparseImage.from_anndata(
-            anndata,
-            x_key="x_raw",
-            y_key="y_raw",
-            category_key="cell_type",
-            pixel_size=self._pixel_size,
-            padding=10,
-            categories_to_codes=categories_to_codes) for anndata in all_anndata]
-
-        all_sparse_images_cpu = [sp_image.cpu() for sp_image in all_sparse_images]
-        os.makedirs(self._data_dir, exist_ok=True)
-        torch.save((all_sparse_images_cpu, all_labels_sparse_images, all_metadata),
-                   os.path.join(self._data_dir, "train_dataset.pt"))
-        print("saved the file", os.path.join(self._data_dir, "train_dataset.pt"))
-
-        # create test_dataset_random and write to file
-        list_imgs, list_labels, list_fnames, list_loc_xs, list_loc_ys, list_morans = [], [], [], [], [], []
-        for sp_img, label, fname in zip(all_sparse_images, all_labels_sparse_images, all_names_sparse_images):
-            sps_tmp, loc_x_tmp, loc_y_tmp = self.cropper_test(sp_img, n_crops=self._n_crops_for_tissue_test)
-            list_morans += [self.compute_moran(sparse_tensor).max().item() for sparse_tensor in sps_tmp]
-            list_imgs += sps_tmp
-            list_labels += [label] * len(sps_tmp)
-            list_fnames += [fname] * len(sps_tmp)
-            list_loc_xs += loc_x_tmp
-            list_loc_ys += loc_y_tmp
-
-        list_metadata = [MetadataCropperDataset(f_name=f_name, loc_x=loc_x, loc_y=loc_y, moran=moran) for
-                         f_name, loc_x, loc_y, moran in zip(list_fnames, list_loc_xs, list_loc_ys, list_morans)]
-        list_imgs_cpu = [img.cpu() for img in list_imgs]
-        os.makedirs(self._data_dir, exist_ok=True)
-        torch.save((list_imgs_cpu, list_labels, list_metadata), os.path.join(self._data_dir, "test_dataset.pt"))
-        print("saved the file", os.path.join(self._data_dir, "test_dataset.pt"))
-
-    def setup(self, stage: Optional[str] = None) -> None:
-        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._data_dir, "train_dataset.pt"))
-        list_imgs = [img.coalesce().cpu() for img in list_imgs]
-        self.dataset_train = CropperDataset(
-            imgs=list_imgs,
-            labels=list_labels,
-            metadatas=list_metadata,
-            cropper=self.cropper_train,
-        )
-        print("created train_dataset device = {0}, length = {1}".format(self.dataset_train.imgs[0].device,
-                                                                        self.dataset_train.__len__()))
-
-        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._data_dir, "test_dataset.pt"))
-        list_imgs = [img.coalesce().cpu() for img in list_imgs]
-        self.dataset_test = CropperDataset(
-            imgs=list_imgs,
-            labels=list_labels,
-            metadatas=list_metadata,
-            cropper=None,
-        )
-        print("created test_dataset device = {0}, length = {1}".format(self.dataset_test.imgs[0].device,
-                                                                       self.dataset_test.__len__()))
-
-
-class SlideSeqTestisDM(DinoSparseDM):
+class AnndataFolderDM(SparseSslDM):
+    """
+    Create a Datamodule ready for Self-supervised learning starting
+    from a folder full of anndata file in h5ad format
+    """
     def __init__(self,
-                 data_dir: str = './slide_seq_testis',
-                 num_workers: int = None,
-                 gpus: int = None,
-                 pixel_size: int = 4,
-                 load_count_matrix: bool = False,
-                 n_neighbours_moran: int = 6,
+                 root: str,
+                 pixel_size: float,
+                 x_key: str,
+                 y_key: str,
+                 category_key: str,
+                 categories_to_channels: Dict[Any, int],
+                 metadata_to_classify: Callable,
+                 metadata_to_regress: Callable,
+                 num_workers: int,
+                 gpus: int,
+                 n_neighbours_moran: int,
                  **kargs):
-        # new_params
-        self._data_dir = data_dir
+
+        self._root = root
+        self._pixel_size = pixel_size
+        self._x_key = x_key
+        self._y_key = y_key
+        self._category_key = category_key
+        self._categories_to_channels = categories_to_channels
+        self._metadata_to_regress = metadata_to_regress
+        self._metadata_to_classify = metadata_to_classify
+
         self._num_workers = cpu_count() if num_workers is None else num_workers
         self._gpus = torch.cuda.device_count() if gpus is None else gpus
-        self._pixel_size = pixel_size
-        self._load_count_matrix = load_count_matrix
         self._n_neighbours_moran = n_neighbours_moran
 
         # Callable on dataset
@@ -618,172 +474,127 @@ class SlideSeqTestisDM(DinoSparseDM):
             n_neighbours=self._n_neighbours_moran,
             neigh_correct=False)
 
-        super(SlideSeqTestisDM, self).__init__(**kargs)
-        print("-----> running datamodule init")
+        # list of all the files used to create the dataset
+        self._all_filenames = None
+
+        super(AnndataFolderDM, self).__init__(**kargs)
 
     @classmethod
     def add_specific_args(cls, parent_parser) -> ArgumentParser:
         parser_from_super = super().add_specific_args(parent_parser)
         parser = ArgumentParser(parents=[parser_from_super], add_help=False, conflict_handler='resolve')
 
-        parser.add_argument("--data_dir", type=str, default="./slide_seq_testis",
-                            help="directory where to download the data")
+        parser.add_argument("--root", type=str, default="./",
+                            help="directory where to find the anndata in h5ad format")
+        parser.add_argument("--pixel_size", type=float, default=4.0,
+                            help="size of the pixel (used to convert raw_coordinates to pixel_coordinates)")
+        parser.add_argument("--x_key", type=str, default="x",
+                            help="key associated with the x_coordinate in the AnnData object")
+        parser.add_argument("--y_key", type=str, default="y",
+                            help="key associated with the y_coordinate in the AnnData object")
+        parser.add_argument("--category_key", type=str, default="cell_type",
+                            help="key associated with the the categorical values (cell_types or gene_identities) \
+                            in the AnnData object")
+        parser.add_argument("--categories_to_channels", nargs='*', action=ParseDict,
+                            help="dictionary in the form 'foo'=1 'bar'=2 to define \
+                            how the categorical values are mapped to the different channels in the image")
+        parser.add_argument("--metadata_to_classify", default=None,
+                            help="callable which defines the values to classify during training")
+        parser.add_argument("--metadata_to_regress", default=None,
+                            help="callable which defines the values to regress during training")
         parser.add_argument("--num_workers", default=cpu_count(), type=int,
                             help="number of worker to load data. Meaningful only if dataset is on disk. \
                             Set to zero if data in memory")
-        parser.add_argument("--pixel_size", type=float, default=4.0,
-                            help="size of the pixel (used to convert raw_coordinates to pixel_coordinates)")
-        parser.add_argument("--load_count_matrix", type=smart_bool, default=False,
-                            help="If true load the count matrix in the anndata object. \
-                            Count matrix is memory intensive therefore it can be advantegeous not to load it.")
+        parser.add_argument("--gpus", default=None, type=int,
+                            help="number of gpus to use for training. If None (default) I uses all the gpus available")
         parser.add_argument("--n_neighbours_moran", type=int, default=6,
                             help="number of neighbours used to compute moran")
-
         return parser
 
-    def get_metadata_to_regress(self, metadata: MetadataCropperDataset) -> Dict[str, float]:
-        """ Extract one or more quantities to regress from the metadata """
-        return {
-            "moran": float(metadata.moran),
-            "loc_x": float(metadata.loc_x),
-        }
-
-    def get_metadata_to_classify(self, metadata: MetadataCropperDataset) -> Dict[str, int]:
-        """ Extract one or more quantities to classify from the metadata """
-        conversion1 = {
-            'wt1': 0,
-            'wt2': 1,
-            'wt3': 2,
-            'dis1': 3,
-            'dis2': 4,
-            'dis3': 5,
-        }
-
-        conversion2 = {
-            'wt1': 0,
-            'wt2': 0,
-            'wt3': 0,
-            'dis1': 1,
-            'dis2': 1,
-            'dis3': 1,
-        }
-
-        return {
-            "tissue_label": conversion1[metadata.f_name],
-            "healthy_sick": conversion2[metadata.f_name],
-        }
-
-    @classproperty
+    @property
     def ch_in(self) -> int:
-        return 9
+        return numpy.max(list(self._categories_to_channels.values())) + 1
+
+    def anndata_to_sparseimage(self, anndata: AnnData):
+        """ Method which converts a anndata to sparse image """
+        return SparseImage.from_anndata(
+            anndata=anndata,
+            x_key=self._x_key,
+            y_key=self._y_key,
+            category_key=self._category_key,
+            pixel_size=self._pixel_size,
+            categories_to_channels=self._categories_to_channels,
+            padding=10)
 
     def prepare_data(self):
         # these are things to be done only once in distributed settings
         # good for writing stuff to disk and avoid corruption
-        print("-----> running datamodule prepare_data")
 
-        def __tar_exists__():
-            return os.path.exists(os.path.join(self._data_dir, "slideseq_testis_anndata_h5ad.tar.gz"))
+        # create train_dataset_random and write to file
+        all_metadatas = []
+        all_sparse_images = []
+        all_labels = []
 
-        def __download__tar__():
-            from google.cloud import storage
+        for filename in os.listdir(self._root):
+            f = os.path.join(self._root, filename)
+            # checking if it is a file
+            if os.path.isfile(f) and filename.endswith('h5ad'):
+                print("reading file {}".format(f))
+                anndata = read_h5ad(filename=f)
+                anndata.X = None  # set the count matrix to None
+                sp_img = self.anndata_to_sparseimage(anndata=anndata).cpu()
+                all_sparse_images.append(sp_img)
 
-            bucket_name = "ld-data-bucket"
-            source_blob_name = "tissue-purifier/slideseq_testis_anndata_h5ad.tar.gz"
-            destination_file_name = os.path.join(self._data_dir, "slideseq_testis_anndata_h5ad.tar.gz")
+                metadata = MetadataCropperDataset(f_name=filename, loc_x=0.0, loc_y=0.0, moran=-99)
+                all_metadatas.append(metadata)
 
-            # create the directory where the file will be written
-            dirname_tmp = os.path.dirname(destination_file_name)
-            os.makedirs(dirname_tmp, exist_ok=True)
+                all_labels.append(filename)
 
-            # connect ot the google bucket
-            storage_client = storage.Client()
-            bucket = storage_client.bucket(bucket_name)
+        self._all_filenames: list = all_labels
 
-            # Construct a client side representation of a blob.
-            # Note `Bucket.blob` differs from `Bucket.get_blob` as it doesn't retrieve
-            # any content from Google Cloud Storage. As we don't need additional data,
-            # using `Bucket.blob` is preferred here.
-            blob = bucket.blob(source_blob_name)
-            blob.download_to_filename(destination_file_name)
-
-            print(
-                "Downloaded storage object {} from bucket {} to local file {}.".format(
-                    source_blob_name, bucket_name, destination_file_name
-                )
-            )
-
-        def __untar__():
-            tar_file_name = os.path.join(self._data_dir, "slideseq_testis_anndata_h5ad.tar.gz")
-
-            # untar the tar.gz file
-            with tarfile.open(tar_file_name, "r:gz") as fp:
-                fp.extractall(path=self._data_dir)
-
-        print("Will create the test and train file")
-        if __tar_exists__():
-            print("untar data")
-            __untar__()
-        else:
-            print("download and untar data")
-            __download__tar__()
-            __untar__()
-
-        anndata_wt1 = read_h5ad(os.path.join(self._data_dir, "anndata_wt1.h5ad"))
-        anndata_wt2 = read_h5ad(os.path.join(self._data_dir, "anndata_wt2.h5ad"))
-        anndata_wt3 = read_h5ad(os.path.join(self._data_dir, "anndata_wt3.h5ad"))
-        anndata_sick1 = read_h5ad(os.path.join(self._data_dir, "anndata_sick1.h5ad"))
-        anndata_sick2 = read_h5ad(os.path.join(self._data_dir, "anndata_sick2.h5ad"))
-        anndata_sick3 = read_h5ad(os.path.join(self._data_dir, "anndata_sick3.h5ad"))
-
-        # create train_dataset and write to file
-        cell_list = ["ES", "Endothelial", "Leydig", "Macrophage", "Myoid", "RS", "SPC", "SPG", "Sertoli"]
-        categories_to_codes = dict(zip(cell_list, range(len(cell_list))))
-        all_anndata = [anndata_wt1, anndata_wt2, anndata_wt3, anndata_sick1, anndata_sick2, anndata_sick3]
-        all_labels_sparse_images = ['wt', 'wt', 'wt', 'sick', 'sick', 'sick']
-        all_names_sparse_images = ["wt1", "wt2", "wt3", "dis1", "dis2", "dis3"]
-        all_metadata = [MetadataCropperDataset(f_name=f_name, loc_x=0.0, loc_y=0.0, moran=-99.9) for
-                        f_name in all_names_sparse_images]
-
-        # set the count matrix to None (if necessary)
-        if not self._load_count_matrix:
-            for anndata in all_anndata:
-                anndata.X = None
-
-        # create the train_dataset and write to file
-        all_sparse_images = [SparseImage.from_anndata(
-            anndata,
-            x_key="x",
-            y_key="y",
-            category_key="cell_type",
-            pixel_size=self._pixel_size,
-            padding=10,
-            categories_to_codes=categories_to_codes) for anndata in all_anndata]
-
-        all_sparse_images_cpu = [sp_image.cpu() for sp_image in all_sparse_images]
-        torch.save((all_sparse_images_cpu, all_labels_sparse_images, all_metadata),
-                   os.path.join(self._data_dir, "train_dataset.pt"))
-        print("saved the file", os.path.join(self._data_dir, "train_dataset.pt"))
+        torch.save((all_sparse_images, all_labels, all_metadatas),
+                   os.path.join(self._root, "train_dataset.pt"))
+        print("saved the file", os.path.join(self._root, "train_dataset.pt"))
 
         # create test_dataset_random and write to file
-        list_imgs, list_labels, list_fnames, list_loc_xs, list_loc_ys, list_morans = [], [], [], [], [], []
-        for sp_img, label, fname in zip(all_sparse_images, all_labels_sparse_images, all_names_sparse_images):
-            sps_tmp, loc_x_tmp, loc_y_tmp = self.cropper_test(sp_img, n_crops=self._n_crops_for_tissue_test)
-            list_morans += [self.compute_moran(sparse_tensor).max().item() for sparse_tensor in sps_tmp]
-            list_imgs += sps_tmp
-            list_labels += [label] * len(sps_tmp)
-            list_fnames += [fname] * len(sps_tmp)
-            list_loc_xs += loc_x_tmp
-            list_loc_ys += loc_y_tmp
+        all_names = [metadata.f_name for metadata in all_metadatas]
 
-        list_metadata = [MetadataCropperDataset(f_name=f_name, loc_x=loc_x, loc_y=loc_y, moran=moran) for
-                         f_name, loc_x, loc_y, moran in zip(list_fnames, list_loc_xs, list_loc_ys, list_morans)]
-        list_imgs_cpu = [img.cpu() for img in list_imgs]
-        torch.save((list_imgs_cpu, list_labels, list_metadata), os.path.join(self._data_dir, "test_dataset.pt"))
-        print("saved the file", os.path.join(self._data_dir, "test_dataset.pt"))
+        if torch.cuda.is_available():
+            all_sparse_images = [sp_img.cuda() for sp_img in all_sparse_images]
+
+        test_imgs, test_labels, test_metadatas = [], [], []
+        for sp_img, label, fname in zip(all_sparse_images, all_labels, all_names):
+            sps_tmp, loc_x_tmp, loc_y_tmp = self.cropper_test(sp_img, n_crops=self._n_crops_for_tissue_test)
+            labels = [label] * len(sps_tmp)
+
+            morans = [self.compute_moran(sparse_tensor).max().item() for sparse_tensor in sps_tmp]
+            metadatas = [MetadataCropperDataset(f_name=fname, loc_x=loc_x, loc_y=loc_y, moran=moran) for
+                         loc_x, loc_y, moran in zip(loc_x_tmp, loc_y_tmp, morans)]
+
+            test_imgs += [sp_img.cpu() for sp_img in sps_tmp]
+            test_labels += labels
+            test_metadatas += metadatas
+
+        torch.save((test_imgs, test_labels, test_metadatas), os.path.join(self._root, "test_dataset.pt"))
+        print("saved the file", os.path.join(self._root, "test_dataset.pt"))
+
+    def get_metadata_to_classify(self, metadata) -> Dict[str, int]:
+        if self._metadata_to_classify is None:
+            return {"tissue_label": self._all_filenames.index(metadata.f_name)}
+        else:
+            return self._metadata_to_classify(metadata)
+
+    def get_metadata_to_regress(self, metadata) -> Dict[str, float]:
+        if self._metadata_to_regress is None:
+            return {
+                "moran": float(metadata.moran),
+                "loc_x": float(metadata.loc_x),
+            }
+        else:
+            return self._metadata_to_regress(metadata)
 
     def setup(self, stage: Optional[str] = None) -> None:
-        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._data_dir, "train_dataset.pt"))
+        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._root, "train_dataset.pt"))
         list_imgs = [img.coalesce().cpu() for img in list_imgs]
         self.dataset_train = CropperDataset(
             imgs=list_imgs,
@@ -794,7 +605,7 @@ class SlideSeqTestisDM(DinoSparseDM):
         print("created train_dataset device = {0}, length = {1}".format(self.dataset_train.imgs[0].device,
                                                                         self.dataset_train.__len__()))
 
-        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._data_dir, "test_dataset.pt"))
+        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._root, "test_dataset.pt"))
         list_imgs = [img.coalesce().cpu() for img in list_imgs]
         self.dataset_test = CropperDataset(
             imgs=list_imgs,
@@ -804,268 +615,3 @@ class SlideSeqTestisDM(DinoSparseDM):
         )
         print("created test_dataset device = {0}, length = {1}".format(self.dataset_test.imgs[0].device,
                                                                        self.dataset_test.__len__()))
-
-
-class SlideSeqKidneyDM(DinoSparseDM):
-    def __init__(self,
-                 cohort: str = 'all',
-                 data_dir: str = './slide_seq_kidney',
-                 num_workers: int = None,
-                 gpus: int = None,
-                 pixel_size: int = 4,
-                 load_count_matrix: bool = False,
-                 n_neighbours_moran: int = 6,
-                 **kargs):
-        # new_params
-        self._cohort = cohort
-        self._data_dir = data_dir
-        self._num_workers = cpu_count() if num_workers is None else num_workers
-        self._gpus = torch.cuda.device_count() if gpus is None else gpus
-        self._pixel_size = pixel_size
-        self._load_count_matrix = load_count_matrix
-        self._n_neighbours_moran = n_neighbours_moran
-
-        # Callable on dataset
-        self.compute_moran = SpatialAutocorrelation(
-            modality='moran',
-            n_neighbours=self._n_neighbours_moran,
-            neigh_correct=False)
-
-        # dictionary which will be created during prepare_data
-        self.array_to_code = None
-        self.array_to_species = None
-        self.array_to_condition = None
-        super(SlideSeqKidneyDM, self).__init__(**kargs)
-        print("-----> running datamodule init")
-
-    @classmethod
-    def add_specific_args(cls, parent_parser) -> ArgumentParser:
-        parser_from_super = super().add_specific_args(parent_parser)
-        parser = ArgumentParser(parents=[parser_from_super], add_help=False, conflict_handler='resolve')
-        parser.add_argument("--cohort", default='test', type=str,
-                            choices=['small', 'all', 'mouse_only', 'human_only'],
-                            help="Specify grouping of samples to use during training and testing")
-        parser.add_argument("--data_dir", type=str, default="./slide_seq_testis",
-                            help="directory where to download the data")
-        parser.add_argument("--num_workers", default=cpu_count(), type=int,
-                            help="number of worker to load data. Meaningful only if dataset is on disk. \
-                            Set to zero if data in memory")
-        parser.add_argument("--pixel_size", type=float, default=4.0,
-                            help="size of the pixel (used to convert raw_coordinates to pixel_coordinates)")
-        parser.add_argument("--load_count_matrix", type=smart_bool, default=False,
-                            help="If true load the count matrix in the anndata object. \
-                            Count matrix is memory intensive therefore it can be advantegeous not to load it.")
-        parser.add_argument("--n_neighbours_moran", type=int, default=6,
-                            help="number of neighbours used to compute moran")
-
-        return parser
-
-    def get_metadata_to_regress(self, metadata: MetadataCropperDataset) -> Dict[str, float]:
-        """ Extract one or more quantities to regress from the metadata """
-        return {
-            "moran": float(metadata.moran),
-            "loc_x": float(metadata.loc_x),
-        }
-
-    def get_metadata_to_classify(self, metadata: MetadataCropperDataset) -> Dict[str, int]:
-        """ Extract one or more quantities to classify from the metadata """
-
-        def species_to_code(specie):
-            if specie == 'human':
-                return 0
-            elif specie == 'mouse':
-                return 1
-            else:
-                return 2
-
-        def condition_to_code(sample):
-            if sample.startswith('UMOD'):
-                return 0
-            elif sample.startswith('WT'):
-                return 1
-            elif sample.startswith('DKD'):
-                return 2
-            elif sample.endswith('cortex'):
-                return 3
-            elif sample.endswith('med'):
-                return 4
-            else:
-                return 5
-
-        return {
-            "tissue_label": self.array_to_code[metadata.f_name],
-            "species_code": species_to_code(self.array_to_species[metadata.f_name]),
-            "condition_code": condition_to_code(self.array_to_condition[metadata.f_name])
-        }
-
-    @classproperty
-    def ch_in(self) -> int:
-        return 13
-
-    def prepare_data(self):
-        # these are things to be done only once in distributed settings
-        print("-----> running datamodule prepare_data")
-
-        def __tar_exists__():
-            return os.path.exists(os.path.join(self._data_dir, "slideseq_kidney_anndata_h5ad.tar.gz"))
-
-        def __download__tar__():
-            from google.cloud import storage
-
-            bucket_name = "ld-data-bucket"
-            source_blob_name = "tissue-purifier/slideseq_kidney_anndata_h5ad.tar.gz"
-            destination_file_name = os.path.join(self._data_dir, "slideseq_kidney_anndata_h5ad.tar.gz")
-
-            # create the directory where the file will be written
-            dirname_tmp = os.path.dirname(destination_file_name)
-            os.makedirs(dirname_tmp, exist_ok=True)
-
-            # connect ot the google bucket
-            storage_client = storage.Client()
-            bucket = storage_client.bucket(bucket_name)
-
-            # Construct a client side representation of a blob.
-            # Note `Bucket.blob` differs from `Bucket.get_blob` as it doesn't retrieve
-            # any content from Google Cloud Storage. As we don't need additional data,
-            # using `Bucket.blob` is preferred here.
-            blob = bucket.blob(source_blob_name)
-            blob.download_to_filename(destination_file_name)
-
-            print(
-                "Downloaded storage object {} from bucket {} to local file {}.".format(
-                    source_blob_name, bucket_name, destination_file_name
-                )
-            )
-
-        def __untar__():
-            tar_file_name = os.path.join(self._data_dir, "slideseq_kidney_anndata_h5ad.tar.gz")
-
-            # untar the tar.gz file
-            with tarfile.open(tar_file_name, "r:gz") as fp:
-                fp.extractall(path=self._data_dir)
-
-        print("Will create the test and train file")
-        if __tar_exists__():
-            print("untar data")
-            __untar__()
-        else:
-            print("download and untar data")
-            __download__tar__()
-            __untar__()
-
-        df_archive = pd.read_csv(os.path.join(self._data_dir, "slideseq_kidney_datatable.csv"),
-                                 usecols=["arrays", "samples", "species"])
-        array_list = df_archive["arrays"].tolist()
-        condition_list = df_archive["samples"].tolist()
-        array_to_condition = dict(zip(array_list, condition_list))
-
-        print("COHORT -->", self._cohort)
-        if self._cohort == 'small':
-            puck_id_list = df_archive.head(6)['arrays'].tolist()
-        elif self._cohort == 'mouse_only':
-            puck_id_list = df_archive[df_archive['species'] == 'mouse']['arrays'].tolist()
-        elif self._cohort == 'human_only':
-            puck_id_list = df_archive[df_archive['species'] == 'human']['arrays'].tolist()
-        else:
-            puck_id_list = df_archive['arrays'].tolist()
-
-        all_anndata_files = []
-        for file in listdir(self._data_dir):
-            if file.startswith("anndata"):
-                all_anndata_files.append(file)
-
-        anndata_included, puck_id_included = [], []
-        for puck_id in puck_id_list:
-            for anndata_file in all_anndata_files:
-                if puck_id in anndata_file:
-                    anndata_included.append(anndata_file)
-                    puck_id_included.append(puck_id)
-                    break
-
-        print("len(anndata_included) -->", len(anndata_included))
-
-        # Note that I make some identification and map different cell_types to the same channel
-        cell_list = ["CD-IC", "CD-PC", "DCT", "EC", "Fibroblast", "GC", "MC", "vSMC", "Macrophage",
-                     "Podocyte", "Other_Immune", "PCT", "PCT_1", "PCT_2", "TAL", "MD"]
-        codes_list = [0, 1, 2, 3, 4, 5, 6, 7, 8,
-                      9, 10, 11, 11, 11, 12, 12]
-        categories_to_codes = dict(zip(cell_list, codes_list))
-
-        all_labels_sparse_images = [array_to_condition[puck_id] for puck_id in puck_id_included]
-        all_names_sparse_images = puck_id_included
-        all_metadata = [MetadataCropperDataset(f_name=f_name, loc_x=0.0, loc_y=0.0, moran=-99.9) for
-                        f_name in all_names_sparse_images]
-        all_anndata = [read_h5ad(os.path.join(self._data_dir, anndata)) for anndata in anndata_included]
-
-        # set the count matrix to None (if necessary)
-        if not self._load_count_matrix:
-            for anndata in all_anndata:
-                anndata.X = None
-
-        all_sparse_images = [SparseImage.from_anndata(
-            anndata,
-            x_key="xcoord",
-            y_key="ycoord",
-            category_key="cell_type",
-            pixel_size=self._pixel_size,
-            padding=10,
-            categories_to_codes=categories_to_codes) for anndata in all_anndata]
-
-        all_sparse_images_cpu = [sp_image.to(torch.device('cpu')) for sp_image in all_sparse_images]
-        torch.save((all_sparse_images_cpu, all_labels_sparse_images, all_metadata),
-                   os.path.join(self._data_dir, "train_dataset.pt"))
-        print("saved the file", os.path.join(self._data_dir, "train_dataset.pt"))
-
-        # create test_dataset_random and write to file
-        list_imgs, list_labels, list_fnames, list_loc_xs, list_loc_ys, list_morans = [], [], [], [], [], []
-        for sp_img, label, fname in zip(all_sparse_images, all_labels_sparse_images, all_names_sparse_images):
-            sps_tmp, loc_x_tmp, loc_y_tmp = self.cropper_test(sp_img, n_crops=self._n_crops_for_tissue_test)
-            list_morans += [self.compute_moran(sparse_tensor).max().item() for sparse_tensor in sps_tmp]
-            list_imgs += sps_tmp
-            list_labels += [label] * len(sps_tmp)
-            list_fnames += [fname] * len(sps_tmp)
-            list_loc_xs += loc_x_tmp
-            list_loc_ys += loc_y_tmp
-
-        list_metadata = [MetadataCropperDataset(f_name=f_name, loc_x=loc_x, loc_y=loc_y, moran=moran) for
-                         f_name, loc_x, loc_y, moran in zip(list_fnames, list_loc_xs, list_loc_ys, list_morans)]
-        list_imgs_cpu = [img.cpu() for img in list_imgs]
-        torch.save((list_imgs_cpu, list_labels, list_metadata), os.path.join(self._data_dir, "test_dataset.pt"))
-        print("saved the file", os.path.join(self._data_dir, "test_dataset.pt"))
-
-    def setup(self, stage: Optional[str] = None) -> None:
-        raise NotImplementedError
-        # these are things that run on each gpus.
-        # Surprisingly, here model.device == cpu while later in dataloader model.device == cuda:0
-        """ stage: either 'fit', 'validate', 'test', or 'predict' """
-        print("-----> running datamodule setup. stage -> {0}".format(stage))
-
-        # This need to go here so that each gpu has a dictionary available
-        df_archive = pd.read_csv(os.path.join(self._data_dir, "slideseq_kidney_datatable.csv"),
-                                 usecols=["arrays", "samples", "species"])
-
-        array_list = df_archive["arrays"].tolist()
-        species_list = df_archive["species"].tolist()
-        condition_list = df_archive["samples"].tolist()
-
-        self.array_to_code = dict(zip(array_list, range(len(array_list))))
-        self.array_to_species = dict(zip(array_list, species_list))
-        self.array_to_condition = dict(zip(array_list, condition_list))
-
-
-
-class DinoSparseFolderDM(DinoSparseDM):
-    """
-    It expects a folder structure as follow
-    root
-    ├── train/
-    |   ├── 0001.hd5d
-    |   └── 0002.h5ad
-    └── test/
-        ├── 0003.hd5d
-        └── 0004.h5ad
-    """
-    def __init__(self):
-        raise NotImplementedError
-        # TODO: Implement a general dataset that takes a folder with anndata objects.
-    pass

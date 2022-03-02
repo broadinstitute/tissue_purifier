@@ -8,6 +8,7 @@ from scanpy import AnnData
 import matplotlib.colors
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
+from tissue_purifier.data_utils.datamodule import AnndataFolderDM
 import colorcet as cc
 
 
@@ -255,6 +256,35 @@ class SparseImage:
     def values(self) -> torch.Tensor:
         return self.data.values()
 
+    def inspect(self):
+        """ Describe the content of the spot, patch and image properties dictionaries """
+
+        def _inspect_dict(d, prefix: str = ''):
+            for k, v in d.items():
+                if isinstance(v, list):
+                    print(prefix, k, type(v), len(v))
+                elif isinstance(v, torch.Tensor):
+                    print(prefix, k, type(v), v.shape, v.device)
+                elif isinstance(v, numpy.ndarray):
+                    print(prefix, k, type(v), v.shape)
+                elif isinstance(v, dict):
+                    print(prefix, k, type(v))
+                    _inspect_dict(v, prefix=prefix + "-->")
+                else:
+                    print(prefix, k, type(v))
+
+        print("")
+        print("-- SPOT PROPERTIES DICT --")
+        _inspect_dict(self.spot_properties_dict)
+
+        print("")
+        print("-- PATCH PROPERTIES DICT --")
+        _inspect_dict(self.patch_properties_dict)
+
+        print("")
+        print("-- IMAGE PROPERTIES DICT --")
+        _inspect_dict(self.image_properties_dict)
+
     def to_dense(self) -> torch.Tensor:
         """
         Create a dense torch tensor of shape (channel, width, height)
@@ -414,6 +444,180 @@ class SparseImage:
                                       radius=radius,
                                       neigh_correct=neigh_correct)(self.data)
 
+    def compute_ncv(self,
+                    feature_name: str = None,
+                    k: int = None,
+                    r: float = None,
+                    overwrite: bool = False):
+        """
+        Compute the neighborhood composition vectors (ncv) of every spot
+        and store the results in the spot_properties_dictionary under the :attr:'feature_name' key.
+
+        Args:
+            feature_name: the key under which the results will be stored.
+            k: if specified the k nearest neighbours are used to compute the ncv.
+            r: if specified the neighbours at a distance less than r (in raw units) are used to compute the ncv.
+            overwrite: if the :attr:'feature_name' is already present in the spot_properties_dict,
+                this variable controls when to overwrite it.
+        """
+
+        assert (k is None and r is not None) or (k is not None and r is None), \
+            "Exactly one between r and k must be defined."
+        assert k is None or isinstance(k, int) and k > 0, "k is either None or a positive integer"
+        assert r is None or r > 0, "r is either None or a positive value"
+
+        if feature_name in self.spot_properties_dict.keys() and not overwrite:
+            print("The key {0} is already present in spot_properties_dict.")
+            print(" Set overwrite=True to overwrite its value. Nothing will be done.".format(feature_name))
+            return
+        elif feature_name in self.spot_properties_dict.keys() and overwrite:
+            print("The key {0} is already present in spot_properties_dict and it will be overwritten".format(
+                feature_name))
+
+        # preparation
+        cell_type_codes = torch.tensor([self._categories_to_codes[cat] for cat in self.cat_raw]).long()
+        metric_features = numpy.stack((self.x_raw, self.y_raw), axis=-1)
+        chs = self.shape[-3]
+        cell_types_one_hot = torch.nn.functional.one_hot(cell_type_codes, num_classes=chs).cpu()  # shape (*, ch)
+
+        if k is not None:
+            # use a knn neighbours
+            from sklearn.neighbors import KDTree
+            kdtree = KDTree(metric_features)
+            dist, ind = kdtree.query(metric_features, k=k)  # shapes (*, k), (*, k)
+            ncv_tmp = cell_types_one_hot[ind]  # shape (*, k, ch)
+            ncv = ncv_tmp.sum(dim=-2)  # shape (*, ch)
+        else:
+            # use radius neighbours
+            from sklearn.neighbors import BallTree
+            balltree = BallTree(metric_features)
+            inds = balltree.query_radius(metric_features,
+                                         r=r,
+                                         return_distance=False,
+                                         count_only=False,
+                                         sort_results=False)
+            ncv = torch.zeros_like(cell_types_one_hot)  # shape (*, ch)
+            # ind is a list of array of different length. There is noway to avoid the for-loop
+            for n, ind in enumerate(inds):
+                ncv_tmp = cell_types_one_hot[ind].sum(dim=-2)  # shape (ch)
+                ncv[n] = ncv_tmp
+
+        ncv = ncv.float() / ncv.sum(dim=-1, keepdim=True).clamp(min=1.0)
+        self.spot_properties_dict[feature_name] = ncv.cpu().numpy()
+
+    @torch.no_grad()
+    def compute_features(
+            self,
+            feature_name: str,
+            datamodule: AnndataFolderDM,
+            model: torch.nn.Module,
+            apply_transform: bool = True,
+            batch_size: int = 64,
+            n_patches_max: int = 100,
+            overwrite: bool = False,
+            return_crops: bool = False) -> Union[torch.Tensor, None]:
+        """
+        Split the sparse image into (possibly overlapping) patches.
+        Each patch is analyzed by the model.
+        The features are stored in the patch_properties_dict.
+
+        Args:
+            feature_name: the key under which the results will be stored.
+            datamodule: the datamodule used for training the model. This guarantees that the cropping strategy and
+                the data augmentations are identical to the one used during training.
+            model: the trained model will ingest the patch and produce the features.
+            apply_transform: if True (defaults) the datamodule.test_trasform will be applied to the crops before
+                feeding them into the model.
+                If False no transformation is applied and the sparse tensors are fed into the model.
+            batch_size: how many crops to process simultaneously (default = 64)
+            n_patches_max: maximum number of patches generated to analyze the current picture (default = 100)
+            overwrite: if the :attr:'feature_names' are already present in the patch_properties_dict,
+                this variable controls when to overwrite them.
+            return_crops: if True the model returns a (batched) torch.Tensor of shape (n_patches_max, ch, w, h)
+                with all the crops which were fed to the model. Default is False.
+
+        Returns:
+            if :attr:'return_crops' is False returns None.
+            else return a (batched) torch.Tensor of shape (n_patches_max, ch, w, h)
+        """
+
+        if feature_name in self.patch_properties_dict.keys() and not overwrite:
+            print("The key {0} is already present in patch_properties_dict.")
+            print(" Set overwrite=True to overwrite its value. Nothing will be done.".format(feature_name))
+            return
+        elif feature_name in self.patch_properties_dict.keys() and overwrite:
+            print("The key {0} is already present in patch_properties_dict and it will be overwritten".format(
+                feature_name))
+
+        # set the model into eval mode
+        was_original_in_training_mode = model.training
+        model.eval()
+
+        all_patches, all_features = [], []
+        n_patches = 0
+        patches_x, patches_y, patches_w, patches_h = [], [], [], []
+        while n_patches < n_patches_max:
+            n_tmp = min(batch_size, n_patches_max - n_patches)
+            crops, x_locs, y_locs = datamodule.cropper_test(self.data, n_crops=n_tmp)
+            patches_x += x_locs
+            patches_y += y_locs
+            patches_w += [crop.shape[-2] for crop in crops]
+            patches_h += [crop.shape[-1] for crop in crops]
+            n_patches += len(x_locs)
+
+            if apply_transform:
+                patches = datamodule.trsfm_test(crops)
+            else:
+                patches = crops
+
+            if return_crops:
+                all_patches.append(patches.detach().cpu())
+
+            features_tmp = model(patches)
+            if isinstance(features_tmp, torch.Tensor):
+                all_features.append(features_tmp)
+            elif isinstance(features_tmp, list):
+                all_features += features_tmp
+
+        # put back the model in the state it was original
+        if was_original_in_training_mode:
+            model.train()
+
+        raise NotImplementedError
+        # FROM HERE
+        # make a single batched tensor of both the features and the patches
+        for key, list_value in results.items():
+            if isinstance(list_value, list) and isinstance(list_value[0], torch.Tensor):
+                if len(list_value) == n_patches_max:
+                    results[key] = torch.stack(list_value, dim=0).cpu()
+                else:
+                    results[key] = torch.cat(list_value, dim=0).cpu()
+            else:
+                print(key, type(list_value), type(list_value[0]))
+                raise NotImplementedError
+
+        # add the results in patch_properties_dict
+        self.patch_properties_dict.update(results)
+
+        # store the patches if necessary
+        if store_crops:
+            self.patch_properties_dict[store_crops_key] = torch.cat(all_patches, dim=0).detach().cpu()
+
+        # Write the patches coordinates to the dictionary if they are new
+        if patches_xywh is None:
+            x_torch = torch.tensor(patches_x, dtype=torch.int).cpu()
+            y_torch = torch.tensor(patches_y, dtype=torch.int).cpu()
+            w_torch = torch.tensor(patches_w, dtype=torch.int).cpu()
+            h_torch = torch.tensor(patches_h, dtype=torch.int).cpu()
+            patches_xywh = torch.stack((x_torch, y_torch, w_torch, h_torch), dim=-1).long()
+            self.patch_properties_dict["patch_xywh"] = patches_xywh
+
+        FROM HERE
+
+
+
+
+
     @torch.no_grad()
     def analyze_with_tiling(
             self,
@@ -425,6 +629,7 @@ class SparseImage:
             n_patches_max: int = 100,
             store_crops: bool = False,
             store_crops_key: str = 'image_patches',
+            reuse_crops_if_possible: bool = True,
             overwrite: bool = False):
         """
         Split the sparse image into (possibly overlapping) patches.
@@ -443,7 +648,7 @@ class SparseImage:
             batch_size: how many crops to process simultaneously (default = 64)
             n_patches_max: maximum number of patches generated to analyze the current picture (default = 100)
             store_crops: if true the crops (after transform) are stored in the patch_dictionary
-                under the key :attr:'store_crops_key'.
+                under the key :attr:'store_crops_key'. Setting this flag to true might lead to large memory footprint.
             store_crops_key: the key associated with the crops. Only used if :attr:'store_crops' == True.
             overwrite: if the :attr:'feature_names' are already present in the patch_properties_dict,
                 this variable controls when to overwrite them.
@@ -527,11 +732,11 @@ class SparseImage:
                 raise NotImplementedError
 
         # add the results in patch_properties_dict
-        self._patch_properties_dict.update(results)
+        self.patch_properties_dict.update(results)
 
         # store the patches if necessary
         if store_crops:
-            self._patch_properties_dict[store_crops_key] = torch.cat(all_patches, dim=0).detach().cpu()
+            self.patch_properties_dict[store_crops_key] = torch.cat(all_patches, dim=0).detach().cpu()
 
         # Write the patches coordinates to the dictionary if they are new
         if patches_xywh is None:
@@ -540,7 +745,7 @@ class SparseImage:
             w_torch = torch.tensor(patches_w, dtype=torch.int).cpu()
             h_torch = torch.tensor(patches_h, dtype=torch.int).cpu()
             patches_xywh = torch.stack((x_torch, y_torch, w_torch, h_torch), dim=-1).long()
-            self._patch_properties_dict["patch_xywh"] = patches_xywh
+            self.patch_properties_dict["patch_xywh"] = patches_xywh
 
     def patch_property_to_image_property(
             self,
@@ -786,7 +991,7 @@ class SparseImage:
             y_key: str,
             category_key: str,
             pixel_size: float = None,
-            categories_to_codes: dict = None,
+            categories_to_channels: dict = None,
             padding: int = 10,
     ):
         """
@@ -805,7 +1010,7 @@ class SparseImage:
                 If it is not specified it will be chosen to be 1/3 of the median of the Nearest Neighbour distances
                 between spots. Explicitely setting this attribute ensures that the pixel_size will be consistent
                 across multiple images
-            categories_to_codes: dictionary with the mapping from the names (of cell_types or genes) to integer codes.
+            categories_to_channels: dictionary with the mapping from the names (of cell_types or genes) to integer codes.
                 If not given, the caterogy_values will be inferred from the anndata object.
                 Explicitely setting this attribute ensures that the encoding between category
                 and integer codes will be consistent across multiple images.
@@ -824,7 +1029,7 @@ class SparseImage:
             >>>     x_key="spatial",
             >>>     y_key="spatial",
             >>>     category_key="cell_type",
-            >>>     categories_to_codes=categories_to_codes)
+            >>>     categories_to_channels=categories_to_channels)
             >>>
             >>> anndata = AnnDatae(obs={"gene": gene, "x": gene_location_x, "y": gene_location_y})
             >>> sparse_image = SparseImage.from_anndata(
@@ -893,11 +1098,11 @@ class SparseImage:
 
         except KeyError:
 
-            if categories_to_codes is None:
+            if categories_to_channels is None:
                 category_values = list(numpy.unique(cat_raw))
-                categories_to_codes = dict(zip(category_values, range(len(category_values))))
+                categories_to_channels = dict(zip(category_values, range(len(category_values))))
 
-            assert set(numpy.unique(cat_raw)).issubset(set(categories_to_codes.keys())), \
+            assert set(numpy.unique(cat_raw)).issubset(set(categories_to_channels.keys())), \
                 " Error. The adata object contains values which are not present in category_values."
 
             # Get the pixel_size
@@ -910,7 +1115,7 @@ class SparseImage:
                 x_key="x_key",
                 y_key="y_key",
                 category_key="cat_key",
-                categories_to_codes=categories_to_codes,
+                categories_to_codes=categories_to_channels,
                 pixel_size=pixel_size,
                 padding=padding,
                 patch_properties_dict=None,
