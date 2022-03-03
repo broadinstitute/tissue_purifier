@@ -261,12 +261,11 @@ class DropChannel(torch.nn.Module):
         else:
             tmp = torch.tensor(relative_frequency, dtype=torch.float)
             assert torch.all(tmp >= 0.0), "Relative frequency must be None or an Iterable of non-negative values"
-            self.relative_frequency = tmp / tmp.sum()
+            self.relative_frequency = (tmp / tmp.sum()).cpu().numpy()
             self._cumulative_frequency = torch.cumsum(self.relative_frequency, dim=0)
 
     def __repr__(self):
-        return self.__class__.__name__ + '(p={0}, relative_frequency={1})'.format(self.p,
-                                                                                  self.relative_frequency.cpu().numpy())
+        return self.__class__.__name__ + '(p={0}, relative_frequency={1})'.format(self.p, self.relative_frequency)
 
     def forward(self, tensor: torch.Tensor):
         assert isinstance(tensor, torch.Tensor) and len(tensor.shape) == 4
