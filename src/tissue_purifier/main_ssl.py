@@ -418,7 +418,7 @@ if __name__ == '__main__':
         datamodule_ = AnndataFolderDM(**config_dict_)
 
         # overwrite so that ch_in is the one specified by DM
-        config_dict_["image_in_ch"] = datamodule_.ch_in  #
+        config_dict_["image_in_ch"] = datamodule_.ch_in
 
         # run the simulation
         run_simulation(config_dict=config_dict_, datamodule=datamodule_)
