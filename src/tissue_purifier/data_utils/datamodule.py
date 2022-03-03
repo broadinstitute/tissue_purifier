@@ -240,7 +240,7 @@ class SparseSslDM(SslDM):
                             help="minimum number of beads/cell in a crop")
         parser.add_argument("--dropouts", type=float, nargs='*', default=[0.1, 0.2, 0.3],
                             help="Possible values of the dropout. Should be > 0.0")
-        parser.add_argument("--rasterize_sigmas", type=float, nargs='*', default=[0.5, 1.0, 1.5, 2.0],
+        parser.add_argument("--rasterize_sigmas", type=float, nargs='*', default=[1.0, 1.5],
                             help="Possible values of the sigma of the gaussian kernel used for rasterization")
         parser.add_argument("--occlusion_fraction", type=float, nargs=2, default=[0.1, 0.3],
                             help="Fraction of the sample which is occluded is drawn uniformly between these values.")
@@ -460,6 +460,14 @@ class AnndataFolderDM(SparseSslDM):
                  n_neighbours_moran: int,
                  **kargs):
 
+        assert isinstance(categories_to_channels, dict) and len(categories_to_channels.keys()) >= 1, \
+            "Error. Specify a valid categories_to_channels mapping. Received {}".format(categories_to_channels)
+
+        set_chs = set(categories_to_channels.values())
+        set_chs_should_be = set([i for i in range(len(set_chs))])
+        assert set_chs == set_chs_should_be, \
+            "The values of the categories_to_channels must be integers starting at zero. Received {}".format(set_chs)
+
         self._data_folder = data_folder
         self._pixel_size = pixel_size
         self._x_key = x_key
@@ -511,7 +519,7 @@ class AnndataFolderDM(SparseSslDM):
                             help="number of worker to load data. Meaningful only if dataset is on disk. \
                             Set to zero if data in memory")
         parser.add_argument("--gpus", default=None, type=int,
-                            help="number of gpus to use for training. If None (default) I uses all the gpus available")
+                            help="number of gpus to use for training. If None (defaults) uses all available gpus.")
         parser.add_argument("--n_neighbours_moran", type=int, default=6,
                             help="number of neighbours used to compute moran")
         return parser
