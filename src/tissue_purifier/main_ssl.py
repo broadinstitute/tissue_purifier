@@ -278,13 +278,11 @@ def run_simulation(config_dict: dict, datamodule: AnndataFolderDM):
             log_name="transform/test",
         )
 
-    if hparam_dict["training"]:
-        print("training begins")
-        # this use train and validation dataset
-        if ckpt_file_trainer is not None:
-            trainer.fit(model=model, datamodule=datamodule, ckpt_path=ckpt_file_trainer)
-        else:
-            trainer.fit(model=model, datamodule=datamodule)
+    # training begins
+    if ckpt_file_trainer is not None:
+        trainer.fit(model=model, datamodule=datamodule, ckpt_path=ckpt_file_trainer)
+    else:
+        trainer.fit(model=model, datamodule=datamodule)
 
     # at the end close connection to neptune database
     if model.global_rank == 0:
