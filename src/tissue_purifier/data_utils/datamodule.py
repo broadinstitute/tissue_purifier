@@ -447,7 +447,7 @@ class AnndataFolderDM(SparseSslDM):
     from a folder full of anndata file in h5ad format.
     """
     def __init__(self,
-                 root: str,
+                 data_folder: str,
                  pixel_size: float,
                  x_key: str,
                  y_key: str,
@@ -460,7 +460,7 @@ class AnndataFolderDM(SparseSslDM):
                  n_neighbours_moran: int,
                  **kargs):
 
-        self._root = root
+        self._data_folder = data_folder
         self._pixel_size = pixel_size
         self._x_key = x_key
         self._y_key = y_key
@@ -489,7 +489,7 @@ class AnndataFolderDM(SparseSslDM):
         parser_from_super = super().add_specific_args(parent_parser)
         parser = ArgumentParser(parents=[parser_from_super], add_help=False, conflict_handler='resolve')
 
-        parser.add_argument("--root", type=str, default="./",
+        parser.add_argument("--data_folder", type=str, default="./",
                             help="directory where to find the anndata in h5ad format")
         parser.add_argument("--pixel_size", type=float, default=4.0,
                             help="size of the pixel (used to convert raw_coordinates to pixel_coordinates)")
@@ -540,8 +540,8 @@ class AnndataFolderDM(SparseSslDM):
         all_sparse_images = []
         all_labels = []
 
-        for filename in os.listdir(self._root):
-            f = os.path.join(self._root, filename)
+        for filename in os.listdir(self._data_folder):
+            f = os.path.join(self._data_folder, filename)
             # checking if it is a file
             if os.path.isfile(f) and filename.endswith('h5ad'):
                 print("reading file {}".format(f))
@@ -558,8 +558,8 @@ class AnndataFolderDM(SparseSslDM):
         self._all_filenames: list = all_labels
 
         torch.save((all_sparse_images, all_labels, all_metadatas),
-                   os.path.join(self._root, "train_dataset.pt"))
-        print("saved the file", os.path.join(self._root, "train_dataset.pt"))
+                   os.path.join(self._data_folder, "train_dataset.pt"))
+        print("saved the file", os.path.join(self._data_folder, "train_dataset.pt"))
 
         # create test_dataset_random and write to file
         all_names = [metadata.f_name for metadata in all_metadatas]
@@ -580,8 +580,8 @@ class AnndataFolderDM(SparseSslDM):
             test_labels += labels
             test_metadatas += metadatas
 
-        torch.save((test_imgs, test_labels, test_metadatas), os.path.join(self._root, "test_dataset.pt"))
-        print("saved the file", os.path.join(self._root, "test_dataset.pt"))
+        torch.save((test_imgs, test_labels, test_metadatas), os.path.join(self._data_folder, "test_dataset.pt"))
+        print("saved the file", os.path.join(self._data_folder, "test_dataset.pt"))
 
     def get_metadata_to_classify(self, metadata) -> Dict[str, int]:
         if self._metadata_to_classify is None:
@@ -599,7 +599,7 @@ class AnndataFolderDM(SparseSslDM):
             return self._metadata_to_regress(metadata)
 
     def setup(self, stage: Optional[str] = None) -> None:
-        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._root, "train_dataset.pt"))
+        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._data_folder, "train_dataset.pt"))
         list_imgs = [img.coalesce().cpu() for img in list_imgs]
         self.dataset_train = CropperDataset(
             imgs=list_imgs,
@@ -610,7 +610,7 @@ class AnndataFolderDM(SparseSslDM):
         print("created train_dataset device = {0}, length = {1}".format(self.dataset_train.imgs[0].device,
                                                                         self.dataset_train.__len__()))
 
-        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._root, "test_dataset.pt"))
+        list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._data_folder, "test_dataset.pt"))
         list_imgs = [img.coalesce().cpu() for img in list_imgs]
         self.dataset_test = CropperDataset(
             imgs=list_imgs,

@@ -195,9 +195,9 @@ def initialization(
     pl_trainer = Trainer(
         weights_save_path="saved_ckpt",
         profiler=profiler,
-        num_nodes=num_processes,  # uses a single machine possibly with many gpus,
+        num_nodes=num_processes,  # number of different machines, FOr us this is 1
         accelerator=accelerator,
-        gpus=torch.cuda.device_count(),  # number of gpu cards on a single machine to use
+        gpus=new_dict["gpus"],
         check_val_every_n_epoch=new_dict["check_val_every_n_epoch"],
         callbacks=[ckpt_train_end, ckpt_train_interval, ckpt_save_best, lr_monitor],
         strategy=strategy,
@@ -327,6 +327,8 @@ def parse_args(argv: List[str]) -> dict:
                         help="neptune project name. This is where the data will be logged")
 
     # parameters for the trainer
+    parser.add_argument("--gpus", type=int, default=torch.cuda.device_count(),
+                        help="Number of gpus to use for training.")
     parser.add_argument("--max_epochs", type=int, default=3000, help="maximum number of training epochs")
     parser.add_argument("--check_val_every_n_epoch", type=int, default=25, help="run validation every N epochs")
     parser.add_argument("--profiler", default="passthrough", type=str, choices=["passthrough", "simple", "advanced"])
@@ -350,8 +352,6 @@ def parse_args(argv: List[str]) -> dict:
     # select the model and dataset
     parser.add_argument("--ssl_model", default="barlow", type=str, choices=["barlow", "dino", "vae", "simclr"],
                         help="Self Supervised Learning framework")
-    parser.add_argument("--data_folder", default="./data", type=str,
-                        help="The path to the directory with the h5ad files.")
 
     # simulation parameters
     parser.add_argument("--initialization_type", type=str, default="scratch",
