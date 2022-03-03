@@ -1,20 +1,18 @@
-from typing import List, Any, Dict, Tuple
+from typing import Dict, Tuple
+from torch.nn import functional as F
 import torch
 from argparse import ArgumentParser
-
-from pytorch_lightning.utilities.distributed import sync_ddp_if_available
-from torch.nn import functional as F
+from pytorch_lightning.utilities.distributed import sync_ddp_if_available  # wrapper around torch.distributed.all_reduce
 from neptune.new.types import File
-
-from tissue_purifier.misc_utils.misc import LARS
+from tissue_purifier.model_utils.ssl_models._ssl_base_model import SslModelBase
+from tissue_purifier.model_utils._optim_scheduler import LARS, linear_warmup_and_cosine_protocol
 from tissue_purifier.plot_utils.plot_images import show_batch
-from tissue_purifier.misc_utils.misc import linear_warmup_and_cosine_protocol
-from tissue_purifier.model_utils.benckmark_mixin import BenchmarkModelMixin
-from tissue_purifier.model_utils.resnet_backbone import (
+from tissue_purifier.model_utils.ssl_models._resnet_backbone import (
     make_vae_decoder_backbone_from_scratch,
     make_vae_decoder_backbone_from_resnet,
     make_vae_encoder_backbone_from_scratch,
-    make_vae_encoder_backbone_from_resnet)
+    make_vae_encoder_backbone_from_resnet,
+)
 
 
 class ConvolutionalVae(torch.nn.Module):
@@ -144,7 +142,7 @@ class ConvolutionalVae(torch.nn.Module):
         return {'x_rec': x_rec, 'x_in': x, 'mu': dict_encoder['mu'], 'log_var': dict_encoder['log_var']}
 
 
-class VaeModel(BenchmarkModelMixin):
+class VaeModel(SslModelBase):
     def __init__(
             self,
             # architecture
@@ -304,7 +302,8 @@ class VaeModel(BenchmarkModelMixin):
         args = parser.parse_args(args=[])
         return args.__dict__
 
-    def compute_losses(self, x_in, x_rec, mu, log_var):
+    @staticmethod
+    def compute_losses(x_in, x_rec, mu, log_var):
         # compute both kl and derivative of kl w.r.t. mu and log_var
         assert len(mu.shape) == 2
         batch_size = mu.shape[0]
@@ -331,7 +330,7 @@ class VaeModel(BenchmarkModelMixin):
 
         with torch.no_grad():
             # Update the optimizer parameters
-            opt = self.optimizers()
+            opt: torch.optim.Optimizer = self.optimizers()
             lr = self.learning_rate_fn(self.current_epoch)
             wd = self.weight_decay_fn(self.current_epoch)
             for i, param_group in enumerate(opt.param_groups):
@@ -516,11 +515,3 @@ class VaeModel(BenchmarkModelMixin):
         else:
             # do adamw
             raise Exception("optimizer is misspecified")
-
-    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """ Loading and resuming is handled automatically. Here I am dealing only with the special variables """
-        self.neptune_run_id = checkpoint.get("neptune_run_id", None)
-
-    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """ Loading and resuming is handled automatically. Here I am dealing only with the special variables """
-        checkpoint["neptune_run_id"] = getattr(self.logger, "_run_short_id", None)

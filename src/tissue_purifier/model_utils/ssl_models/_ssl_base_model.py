@@ -1,7 +1,7 @@
 import numpy
 import torch
 import pandas
-from typing import Dict, List, Sequence
+from typing import Dict, List, Sequence, Any
 from neptune.new.types import File
 from pytorch_lightning import LightningModule
 
@@ -13,12 +13,12 @@ from sklearn.linear_model import RidgeClassifierCV, RidgeCV
 from tissue_purifier.data_utils.dataset import MetadataCropperDataset
 from tissue_purifier.plot_utils.plot_images import show_raw_all_channels
 from tissue_purifier.plot_utils.plot_embeddings import plot_embeddings
-from tissue_purifier.misc_utils.nms import NonMaxSuppression
+from tissue_purifier.misc_utils.nms_util import NonMaxSuppression
 from tissue_purifier.misc_utils.dict_util import (
     concatenate_list_of_dict,
     subset_dict)
 
-from tissue_purifier.misc_utils.misc import (
+from tissue_purifier.misc_utils.validation_util import (
     SmartPca,
     SmartUmap)
 
@@ -224,9 +224,9 @@ def knn_classification_regression(world_dict: dict, val_iomin_threshold: float):
     df_tot = None
     for n in range(20):
         # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
-        nms_mask_n = NonMaxSuppression._perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
-                                                              score_n=torch.rand_like(initial_score),
-                                                              possible_n=torch.ones_like(initial_score).bool())
+        nms_mask_n = NonMaxSuppression.perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
+                                                             score_n=torch.rand_like(initial_score),
+                                                             possible_n=torch.ones_like(initial_score).bool())
         world_dict_subset = subset_dict(input_dict=world_dict, mask=nms_mask_n)
 
         df_tmp = classify_and_regress(
@@ -285,9 +285,9 @@ def linear_classification_regression(world_dict: dict, val_iomin_threshold: floa
     df_tot = None
     for n in range(20):
         # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
-        nms_mask_n = NonMaxSuppression._perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
-                                                              score_n=torch.rand_like(initial_score),
-                                                              possible_n=torch.ones_like(initial_score).bool())
+        nms_mask_n = NonMaxSuppression.perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
+                                                             score_n=torch.rand_like(initial_score),
+                                                             possible_n=torch.ones_like(initial_score).bool())
         world_dict_subset = subset_dict(input_dict=world_dict, mask=nms_mask_n)
 
         df_tmp = classify_and_regress(
@@ -309,13 +309,14 @@ def linear_classification_regression(world_dict: dict, val_iomin_threshold: floa
     return df_mean, df_std
 
 
-class BenchmarkModelMixin(LightningModule):
+class SslModelBase(LightningModule):
     """
-    Common part to VAE, Dino, Barlow, SimClr with the routine to evaluate the embeddings
+    Common part to VAE, Dino, Barlow, SimClr with the routines to evaluate the embeddings
     """
     def __init__(self, val_iomin_threshold: float):
-        super(BenchmarkModelMixin, self).__init__()
+        super(SslModelBase, self).__init__()
         self.val_iomin_threshold = val_iomin_threshold
+        self.neptune_run_id = None
 
     def get_metadata_to_regress(self, metadata) -> dict:
         try:
@@ -536,3 +537,14 @@ class BenchmarkModelMixin(LightningModule):
                         if isinstance(v, float) and numpy.isfinite(v):
                             name = "linear/" + row.Index + "/" + k + "/std"
                             self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
+
+    def optimizer_zero_grad(self, epoch, batch_idx, optimizer, optimizer_idx):
+        optimizer.zero_grad(set_to_none=True)
+
+    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        """ Loading and resuming is handled automatically. Here I am dealing only with the special variables """
+        self.neptune_run_id = checkpoint.get("neptune_run_id", None)
+
+    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        """ Loading and resuming is handled automatically. Here I am dealing only with the special variables """
+        checkpoint["neptune_run_id"] = getattr(self.logger, "_run_short_id", None)

@@ -1,13 +1,10 @@
-from typing import List, Dict, Any
-
+from typing import List, Any, Dict
 import torch
-from argparse import ArgumentParser
 from torch.nn import functional as F
-
-from tissue_purifier.model_utils.resnet_backbone import make_resnet_backbone
-from tissue_purifier.model_utils.benckmark_mixin import BenchmarkModelMixin
-from tissue_purifier.misc_utils.misc import LARS
-from tissue_purifier.misc_utils.misc import linear_warmup_and_cosine_protocol
+from argparse import ArgumentParser
+from tissue_purifier.model_utils.ssl_models._resnet_backbone import make_resnet_backbone
+from tissue_purifier.model_utils.ssl_models._ssl_base_model import SslModelBase
+from tissue_purifier.model_utils._optim_scheduler import LARS, linear_warmup_and_cosine_protocol
 
 
 class NTXentLoss(torch.nn.Module):
@@ -60,7 +57,7 @@ class NTXentLoss(torch.nn.Module):
         return loss
 
 
-class SimclrModel(BenchmarkModelMixin):
+class SimclrModel(SslModelBase):
     """
     See
     https://pytorch-lightning.readthedocs.io/en/stable/starter/style_guide.html  and
@@ -129,7 +126,7 @@ class SimclrModel(BenchmarkModelMixin):
     def init_projection(
             ch_in: int,
             ch_out: int,
-            ch_hidden: List[int]=None):
+            ch_hidden: List[int] = None):
 
         sizes = [ch_in] + ch_hidden + [ch_out]
         layers = []
@@ -260,14 +257,3 @@ class SimclrModel(BenchmarkModelMixin):
         else:
             # do adamw
             raise Exception("optimizer is misspecified")
-
-    def optimizer_zero_grad(self, epoch, batch_idx, optimizer, optimizer_idx):
-        optimizer.zero_grad(set_to_none=True)
-
-    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """ Loading and resuming is handled automatically. Here I am dealing only with the special variables """
-        self.neptune_run_id = checkpoint.get("neptune_run_id", None)
-
-    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """ Loading and resuming is handled automatically. Here I am dealing only with the special variables """
-        checkpoint["neptune_run_id"] = getattr(self.logger, "_run_short_id", None)

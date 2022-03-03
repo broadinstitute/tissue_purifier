@@ -172,5 +172,3 @@ def make_vae_decoder_backbone_from_scratch(hidden_dims: Tuple[int]):
         )
     decoder_backbone = torch.nn.Sequential(*modules)
     return decoder_backbone
-
-

@@ -1,17 +1,23 @@
-from typing import Sequence, List, Any, Dict
-
+from typing import List, Any, Dict
 import torch
-from argparse import ArgumentParser
 from torch.nn import functional as F
-import numpy
 import math
+from argparse import ArgumentTypeError as ArgparseArgumentTypeError
+from argparse import ArgumentParser
+from tissue_purifier.model_utils.ssl_models._resnet_backbone import make_resnet_backbone
+from tissue_purifier.model_utils.ssl_models._ssl_base_model import SslModelBase
+from tissue_purifier.model_utils._optim_scheduler import LARS, linear_warmup_and_cosine_protocol
 
-from tissue_purifier.model_utils.resnet_backbone import make_resnet_backbone
-from tissue_purifier.model_utils.benckmark_mixin import BenchmarkModelMixin
-from tissue_purifier.misc_utils.misc import LARS
-from tissue_purifier.misc_utils.misc import (
-    smart_bool,
-    linear_warmup_and_cosine_protocol)
+
+def smart_bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise ArgparseArgumentTypeError('Boolean value expected.')
 
 
 def dino_loss(output_t: torch.Tensor,
@@ -199,12 +205,8 @@ class MultiResolutionNet(torch.nn.Module):
         return self.head(output), output
 
 
-class DinoModel(BenchmarkModelMixin):
+class DinoModel(SslModelBase):
     """
-    See
-    https://pytorch-lightning.readthedocs.io/en/stable/starter/style_guide.html  and
-    https://github.com/PyTorchLightning/Lightning-Bolts/blob/master/pl_bolts/models/self_supervised/simclr/simclr_module.py#L61-L301
-
     DINO implementation, inspired by:
     https://sachinruk.github.io/blog/pytorch/pytorch%20lightning/loss%20function/2021/08/01/dino-self-supervised-vision-transformers.html
     And original github repo
@@ -242,7 +244,6 @@ class DinoModel(BenchmarkModelMixin):
             param_momentum_final: float = 0.996,
             param_momentum_epochs_end: int = 1000,
             **kwargs,
-
             ):
         super(DinoModel, self).__init__(val_iomin_threshold=val_iomin_threshold)
 
@@ -664,7 +665,7 @@ class DinoModel(BenchmarkModelMixin):
     def __normalized_stable_entropy__(x):
         x_logx = x * x.log()
         tmp = torch.where(torch.isfinite(x_logx), x_logx, torch.zeros_like(x_logx))
-        return -torch.sum(tmp, dim=-1) / numpy.log(float(tmp.shape[-1]))
+        return -torch.sum(tmp, dim=-1) / math.log(float(tmp.shape[-1]))
 
     def __update_teacher_param__(self, p_momentum: float):
         if p_momentum < 1.0:
@@ -675,9 +676,6 @@ class DinoModel(BenchmarkModelMixin):
         assert empirical_center_teacher.shape == torch.Size([self.dim_out]), \
             "Received {0}. Expected torch.Size([{1}])".format(empirical_center_teacher.shape, self.dim_out)
         self.center_teacher = c_momentum * self.center_teacher + (1.0-c_momentum) * empirical_center_teacher
-
-    def optimizer_zero_grad(self, epoch, batch_idx, optimizer, optimizer_idx):
-        optimizer.zero_grad(set_to_none=True)
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         regularized = []
@@ -706,11 +704,3 @@ class DinoModel(BenchmarkModelMixin):
         else:
             # do adamw
             raise Exception("optimizer is misspecified")
-
-    def on_load_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """ Loading and resuming is handled automatically. Here I am dealing only with the special variables """
-        self.neptune_run_id = checkpoint.get("neptune_run_id", None)
-
-    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        """ Loading and resuming is handled automatically. Here I am dealing only with the special variables """
-        checkpoint["neptune_run_id"] = getattr(self.logger, "_run_short_id", None)
