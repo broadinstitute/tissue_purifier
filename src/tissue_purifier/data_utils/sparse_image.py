@@ -2,14 +2,16 @@ from typing import List, Optional, Tuple, Union
 import numpy
 import copy
 import torch
-from tissue_purifier.model_utils.analyzer import SpatialAutocorrelation
+from tissue_purifier.model_utils.patch_analyzer.patch_analyzer import SpatialAutocorrelation
 from tissue_purifier.data_utils.dataset import CropperSparseTensor
 from scanpy import AnnData
 import matplotlib.cm
 import matplotlib.colors
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
-from tissue_purifier.data_utils.datamodule import AnndataFolderDM
+
+# comment this out otherwise circular imports
+# from tissue_purifier.data_utils.datamodule import AnndataFolderDM
 
 
 class SparseImage:
@@ -557,7 +559,7 @@ class SparseImage:
     def compute_patch_features(
             self,
             feature_name: str,
-            datamodule: AnndataFolderDM,
+            datamodule: "AnndataFolderDM",
             model: torch.nn.Module,
             apply_transform: bool = True,
             batch_size: int = 64,

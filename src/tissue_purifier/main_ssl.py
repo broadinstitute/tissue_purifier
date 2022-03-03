@@ -11,7 +11,6 @@ from pytorch_lightning.trainer import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 from tissue_purifier.model_utils.logger import NeptuneLoggerCkpt
-
 from tissue_purifier.model_utils.ssl_models.barlow import BarlowModel
 from tissue_purifier.model_utils.ssl_models.dino import DinoModel
 from tissue_purifier.model_utils.ssl_models.vae import VaeModel
@@ -31,7 +30,7 @@ def smart_bool(v):
 
 
 def initialization(
-        args_dict: dict,
+        config_dict: dict,
         ckpt_file: str,
         initialization_type: str,
         ) -> (pl.LightningModule, pl.Trainer, dict, str):
@@ -39,16 +38,16 @@ def initialization(
     Initialize all that is necessary for the simulation
 
     Args:
-        args_dict: the command-line arguments obtained from parser.parse_args()
+        config_dict: dictionary with all the parameters of the simulation
         ckpt_file: path to a ckpt file (obtained from trainer.save_checkpoint or the CheckpointCallback)
         initialization_type: str, either 'resume', 'extend', 'scratch', 'pretraining', 'predict_only'
 
     Returns:
         pl_model: the pytorch_lightning model either a scratch or one loaded from a checkpoint
         pl_trainer:  the pytorch_lightning trainer
-        new_args_dict: dict with the configurations. This is identical to :attr:'args_dict'
+        new_args_dict: dict with the configurations. This is identical to :attr:'config_dict'
             if :attr:'initialization_type' == 'scratch'.
-            In other cases it can be different from :attr:'args_dict' because some entries are overwritten.
+            In other cases it can be different from :attr:'config_dict' because some entries are overwritten.
         ckpt_file_for_trainer: None or a str pointing to a ckpt_file to be used to resume the training.
     """
     assert initialization_type in {'resume', 'extend', 'scratch', 'pretraining', 'predict_only'}
@@ -64,53 +63,45 @@ def initialization(
         ckpt_file_for_trainer = None
 
     # Ridefine the model
-    if args_dict["model"] == "barlow":
-        PlModel = BarlowModel
-    elif args_dict["model"] == "dino":
-        PlModel = DinoModel
-    elif args_dict["model"] == "vae":
-        PlModel = VaeModel
-    elif args_dict["model"] == "simclr":
-        PlModel = SimclrModel
+    if config_dict["ssl_model"] == "barlow":
+        Model = BarlowModel
+    elif config_dict["ssl_model"] == "dino":
+        Model = DinoModel
+    elif config_dict["ssl_model"] == "vae":
+        Model = VaeModel
+    elif config_dict["ssl_model"] == "simclr":
+        Model = SimclrModel
     else:
-        raise Exception("Invalid model value. Received {0}".format(args_dict["model"]))
+        raise Exception("Invalid model value. Received {0}".format(config_dict["model"]))
 
     if initialization_type in {'resume'}:
         # use ckpt_file for everything
-        pl_model = PlModel.load_from_checkpoint(checkpoint_path=ckpt_file)
+        pl_model = Model.load_from_checkpoint(checkpoint_path=ckpt_file)
         # TODO: I am having trouble using the same run_id
         neptune_run_id = None  # pl_model.neptune_run_id
         new_dict = pl_model.__dict__['_hparams'].copy()
-
-    elif initialization_type in {'predict_only'}:
-        # use ckpt_file only but overwrite stuff relative to the duration of the training
-        pl_model = PlModel.load_from_checkpoint(checkpoint_path=ckpt_file)
-        # TODO: I am having trouble using the same run_id
-        neptune_run_id = None  # pl_model.neptune_run_id
-        new_dict = pl_model.__dict__['_hparams'].copy()
-        new_dict['training'] = False
 
     elif initialization_type in {'extend'}:
         # use ckpt_file only but overwrite stuff relative to the duration of the training
-        pl_model = PlModel.load_from_checkpoint(checkpoint_path=ckpt_file)
+        pl_model = Model.load_from_checkpoint(checkpoint_path=ckpt_file)
         # TODO: I am having trouble using the same run_id
         neptune_run_id = None  # pl_model.neptune_run_id
         new_dict = pl_model.__dict__['_hparams'].copy()
-        for key, value in args_dict.items():
+        for key, value in config_dict.items():
             if key in {"max_epochs", "max_time_minutes"}:
                 new_dict[key] = value
 
     elif initialization_type in {'scratch'}:
         # use args only
-        pl_model = PlModel(**args_dict)
+        pl_model = Model(**config_dict)
         neptune_run_id = None
-        new_dict = args_dict.copy()
+        new_dict = config_dict.copy()
 
     elif initialization_type in {'pretraining'}:
         # use checkpoint but overwrite
-        pl_model = PlModel.load_from_checkpoint(checkpoint_path=ckpt_file, **args_dict)
+        pl_model = Model.load_from_checkpoint(checkpoint_path=ckpt_file, **config_dict)
         neptune_run_id = None
-        new_dict = args_dict.copy()
+        new_dict = config_dict.copy()
 
     else:
         raise Exception("You should not be here initialization_type = {0}".format(initialization_type))
@@ -118,16 +109,15 @@ def initialization(
     print("new_dict ->", new_dict)
 
     pl_neptune_logger = NeptuneLoggerCkpt(
-        project='cellarium/tissue-purifier',  # args_dict["neptune_project"],  # change this to your project
+        project=new_dict['neptune_project'],
         run=neptune_run_id,  # pass something here to keep logging onto an existing run
         log_model_checkpoints=True,  # copy the checkpoints into Neptune
         # neptune kargs
-        mode="async" if args_dict.get("logging", False) else "offline",
-        tags=[str(args_dict.get("model", "no model")), str(args_dict.get("dataset", "no_dataset"))],
-        source_files=["main*.py", "*.yaml"],
+        mode="async" if config_dict.get("remote_logging", False) else "offline",
+        tags=[str(config_dict.get("ssl_model", "unknown_model"))],
+        source_files=["*.py", "*.yaml"],
         fail_on_exception=True,  # it does not good if you are not logging anything but simulation keeps going
     )
-    assert isinstance(pl_neptune_logger, NeptuneLoggerCkpt)
 
     if new_dict["profiler"] == 'advanced':
         profiler = AdvancedProfiler(dirpath="./", filename="advanced_profiler.out", line_count_restriction=1.0)
@@ -160,7 +150,7 @@ def initialization(
         num_processes = 1
         sync_batchnorm = True
         precision = new_dict["precision"]
-        if args_dict["model"] == "vae":
+        if config_dict["ssl_model"] == "vae":
             # vae uses manual optimization. I need to set this flag to true
             strategy = DDPPlugin(find_unused_parameters=True)
         else:
@@ -239,12 +229,9 @@ def initialization(
 
 def run_simulation(config_dict: dict, datamodule: AnndataFolderDM):
     """
-    This is where most of the work ois done.
-    Log info, train the model, save the checkpoint.
-
     Args:
         config_dict: dictionary with all the config parameters
-        datamodule: a DinoDM datamodule (includes, train_dataloader and val_dataloaders)
+        datamodule: a AnndataFolderDM datamodule for Self Supervised Learning
     """
 
     pl.seed_everything(seed=config_dict['random_seed'], workers=True)
@@ -254,7 +241,7 @@ def run_simulation(config_dict: dict, datamodule: AnndataFolderDM):
         print("trying to restart from pre-emption checkpoint")
         model, trainer, hparam_dict, ckpt_file_trainer = initialization(
             ckpt_file="./preemption_ckpt.pt",
-            args_dict=config_dict,
+            config_dict=config_dict,
             initialization_type='resume',
         )
     except (Exception, LookupError) as e2:
@@ -263,7 +250,7 @@ def run_simulation(config_dict: dict, datamodule: AnndataFolderDM):
         print("trying to initialize from:", config_dict["initialization_type"])
         model, trainer, hparam_dict, ckpt_file_trainer = initialization(
             ckpt_file=None if config_dict["initialization_type"] == 'scratch' else "./old_run_ckpt.pt",
-            args_dict=config_dict,
+            config_dict=config_dict,
             initialization_type=config_dict["initialization_type"],
         )
     print("initialization done. I have a model, trainer, hparam_dict")
@@ -299,12 +286,6 @@ def run_simulation(config_dict: dict, datamodule: AnndataFolderDM):
         else:
             trainer.fit(model=model, datamodule=datamodule)
 
-    if hparam_dict["predict"]:
-        print("prediction begins, will be here")  # will be written to file using the PredictionWriter callback
-        # trainer.predict(model=model,
-        #                 datamodule=datamodule,
-        #                 return_predictions=False)
-
     # at the end close connection to neptune database
     if model.global_rank == 0:
         trainer.logger.finalize(status='completed')
@@ -318,41 +299,27 @@ def parse_args(argv: List[str]) -> dict:
     If the command-line arguments include '--to_yaml my_yaml_file.yaml' the configuration dictionary is written to file.
 
     Args:
-        argv: the parameter passed from the command line. If argv includes '--from_yaml input.yaml' all
-            other CL parameters are neglected. The parameters will be read from file instead.
-            Parameters missing in input.yaml will be set to their default values.
-            If argv includes '--to_yaml output.yaml' the configuration dictionary is written to file.
+        argv: the parameter passed from the command line.
+
+    Note:
+        If argv includes '--config input.yaml' the parameters are read from file.
+        The config.yaml parameters have priority over the CLI parameters.
+
+    Note:
+        If argv includes '--to_yaml output.yaml' the configuration dictionary is written to file.
+
+    Note:
+        Parameters which are missing from both argv and config.yaml will be set to their default values.
 
     Returns:
         config_dict: a dictionary with all the configuration parameters.
-
-    Note:
-        Parameters which are missing from argv or input.yaml will be set to their default values.
     """
-    def write_to_yaml(_my_dict, _yaml_file):
-        import yaml
-        with open(_yaml_file, 'w') as file:
-            yaml.dump(_my_dict, file)
-
-    def read_args_from_yaml(_yaml_file):
-        import yaml
-        with open(_yaml_file, 'r') as stream:
-            config_tmp = yaml.safe_load(stream)
-        _args_from_file = []
-        for k, v in config_tmp.items():
-            _args_from_file.append('--'+k)
-            if isinstance(v, list):
-                _args_from_file += [str(vi) for vi in v]
-            else:
-                _args_from_file.append(str(v))
-        return _args_from_file
-
     parser = argparse.ArgumentParser(add_help=False, conflict_handler='resolve')
+    parser.add_argument("--config", type=str, default=None,
+                        help="If provided read the configuration file *.yaml. The parameters passed from config file \
+                              have precedence over the one from the CLI")
     parser.add_argument("--to_yaml", type=str, default=None,
-                        help="Write a yaml file with the chosen (or default) parameters and exit")
-    parser.add_argument("--from_yaml", type=str, default=None,
-                        help="If given ALL the args will be read from the YAML file specified here. \
-                        Command Line arguments will be ignored. Missing arguments will be set to default values")
+                        help="If provided write a yaml file with the parameters and exit")
 
     # parameters for Neptune and random seed
     parser.add_argument("--random_seed", type=int, default=1, help="Integer specifying the global random seed")
@@ -381,89 +348,77 @@ def parse_args(argv: List[str]) -> dict:
     parser.add_argument("--deterministic", type=smart_bool, default=False, help="Deterministic operation in CUDA?")
 
     # select the model and dataset
-    parser.add_argument("--model", default="barlow", type=str, choices=["barlow", "dino", "vae", "simclr"],
-                        help="methodology for representation learning")
-    parser.add_argument("--dataset", default="slide_seq_testis", type=str,
-                        choices=["slide_seq_testis", "slide_seq_kidney", "dummy_dm"],
-                        help="datamodule to use for train and validation")
+    parser.add_argument("--ssl_model", default="barlow", type=str, choices=["barlow", "dino", "vae", "simclr"],
+                        help="Self Supervised Learning framework")
+    parser.add_argument("--data_folder", default="./data", type=str,
+                        help="The path to the directory with the h5ad files.")
 
     # simulation parameters
     parser.add_argument("--initialization_type", type=str, default="scratch",
                         choices=["resume", "extend", "predict_only", "pretraining", "scratch"])
-    parser.add_argument("--predict", default=False, type=smart_bool,
-                        help="use trained model for prediction? Set to false if interested in training only")
-    parser.add_argument("--training", default=True, type=smart_bool,
-                        help="train the model? Set to false if interested in evaluation only")
-    parser.add_argument("--logging", default=True, type=smart_bool,
-                        help="Logging to neptune? Set to false for quicker development")
+    parser.add_argument("--remote_logging", default=True, type=smart_bool,
+                        help="If True the logs are saved on the Neptune server. Set to False to save logs locally")
 
-    # parse the known args to decide if I am going to use the command_line or config_file
-    (args, _) = parser.parse_known_args(argv)
+    # Figure out which model I am using
+    (args, _) = parser.parse_known_args(argv)  # args is a Namespace object
 
-    if args.from_yaml is not None:
-        argv = read_args_from_yaml(args.from_yaml)
-        (args, _) = parser.parse_known_args(args=argv)
+    if args.config is not None:
+        import yaml
+        with open(args.config, 'r') as stream:
+            yaml_config_dict = yaml.safe_load(stream)
+        delattr(args, 'config')
+    else:
+        yaml_config_dict = dict()
 
-    # Decide which model to use
-    if args.model == "barlow":
+    # Decide which ssl_model to use
+    ssl_model_from_yaml = yaml_config_dict.get(key="ssl_model", default=None)
+    ssl_model = args.ssl_model if ssl_model_from_yaml is None else ssl_model_from_yaml
+
+    # Update the parser with model params
+    if ssl_model == "barlow":
         parser = BarlowModel.add_specific_args(parser)
-    elif args.model == "dino":
+    elif ssl_model == "dino":
         parser = DinoModel.add_specific_args(parser)
-    elif args.model == 'vae':
+    elif ssl_model == 'vae':
         parser = VaeModel.add_specific_args(parser)
-    elif args.model == 'simclr':
+    elif ssl_model == 'simclr':
         parser = SimclrModel.add_specific_args(parser)
     else:
-        raise Exception("Invalid model {0}".format(args.model))
+        raise Exception("Invalid ssl_model {0}".format(ssl_model))
 
-    # Decide which dataset to use
-    if args.dataset == "slide_seq_testis":
-        parser = SlideSeqTestisDM.add_specific_args(parser)
-        datamodule_ch_in = SlideSeqTestisDM.ch_in
-    elif args.dataset == "slide_seq_kidney":
-        parser = SlideSeqKidneyDM.add_specific_args(parser)
-        datamodule_ch_in = SlideSeqKidneyDM.ch_in
-    elif args.dataset == 'dummy_dm':
-        parser = DummyDM.add_specific_args(parser)
-        datamodule_ch_in = DummyDM.ch_in
-    else:
-        raise Exception("Invalid dataset {0}".format(args.dataset))
+    # Update parser with datamodule params
+    parser = AnndataFolderDM.add_specific_args(parser)
 
-    # add the help at the very end so that all the options are present
+    # Add help at the very end
     parser = argparse.ArgumentParser(parents=[parser], add_help=True)
 
-    # read from command_line if args_from_file is None, missing_value will be set to defaults values
-    args = parser.parse_args(args=argv)
+    # Process everything
+    args = parser.parse_args(argv)
+    config_dict_full = vars(args)
+    config_dict_full.update(yaml_config_dict)  # yaml config has priority
 
-    # overwrite so that ch_in is the one specified by the datamodule
-    args.image_in_ch = datamodule_ch_in
-
-    config_dict_tmp = args.__dict__
-    if args.to_yaml is not None:
-        yaml_file = args.to_yaml
-        config_to_file = config_dict_tmp.copy()
-        config_to_file.pop('to_yaml', None)
-        config_to_file.pop('from_yaml', None)
-        write_to_yaml(config_to_file, yaml_file)
-
-    return config_dict_tmp
+    return config_dict_full
 
 
 if __name__ == '__main__':
     """ This is executed when run from the command line """
     config_dict_ = parse_args(sys.argv[1:])
-    to_yaml_ = config_dict_.get('to_yaml', None)
-    dataset_ = config_dict_.get('dataset', None)
 
-    if to_yaml_ is None:
-        if dataset_ == "slide_seq_testis":
-            datamodule_ = SlideSeqTestisDM(**config_dict_)
-        elif dataset_ == "slide_seq_kidney":
-            datamodule_ = SlideSeqKidneyDM(**config_dict_)
-        elif dataset_ == "dummy_dm":
-            datamodule_ = DummyDM(**config_dict_)
-        else:
-            raise Exception("Invalid dataset {0}".format(dataset_))
+    to_yaml_file = config_dict_["to_yaml"]
+    if to_yaml_file is not None:
+        config_dict_.pop('to_yaml', None)
+        config_dict_.pop('config', None)
+        import yaml
+        with open(to_yaml_file, 'w') as file:
+            yaml.dump(config_dict_, file)
+    else:
+        # Run the simulation
 
-        # Run the simulation with all the command-line params passed as a dictionary
+        # Instantiate the datamodule
+        datamodule_ = AnndataFolderDM(**config_dict_)
+
+        # overwrite so that ch_in is the one specified by DM
+        config_dict_["image_in_ch"] = datamodule_.ch_in  #
+
+        # run the simulation
         run_simulation(config_dict=config_dict_, datamodule=datamodule_)

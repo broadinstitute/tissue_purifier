@@ -12,7 +12,7 @@ from os import cpu_count
 from scanpy import AnnData
 
 from tissue_purifier.data_utils.sparse_image import SparseImage
-from tissue_purifier.model_utils.analyzer import SpatialAutocorrelation
+from tissue_purifier.model_utils.patch_analyzer.patch_analyzer import SpatialAutocorrelation
 from tissue_purifier.data_utils.transforms import (
     DropoutSparseTensor,
     SparseToDense,
