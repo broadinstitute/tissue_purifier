@@ -1,6 +1,7 @@
 import pytorch_lightning as pl
 
 from argparse import ArgumentParser
+from argparse import Action as ArgparseAction
 import numpy
 import os.path
 from anndata import read_h5ad
@@ -10,10 +11,6 @@ import torchvision
 from os import cpu_count
 from scanpy import AnnData
 
-from tissue_purifier.misc_utils.misc import (
-    # smart_bool,
-    ParseDict,
-)
 from tissue_purifier.data_utils.sparse_image import SparseImage
 from tissue_purifier.model_utils.analyzer import SpatialAutocorrelation
 from tissue_purifier.data_utils.transforms import (
@@ -30,7 +27,6 @@ from tissue_purifier.data_utils.transforms import (
     # ToRgb,
 )
 from tissue_purifier.data_utils.dataset import (
-    # AddFakeMetadata,
     CropperDataset,
     DataLoaderWithLoad,
     CollateFnListTuple,
@@ -45,9 +41,18 @@ from tissue_purifier.data_utils.dataset import (
 # Therefore I put the dataset in GPU and use num_workers = 0.
 
 
+class ParseDict(ArgparseAction):
+    """ Make argparse able to parse a dictionary from command line """
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, dict())
+        for value in values:
+            key, value = value.split('=')
+            getattr(namespace, self.dest)[key] = value
+
+
 class SslDM(pl.LightningDataModule):
     """
-    Abstract class to inherit from to make a datamodule which can be used with any
+    Abstract class to inherit from to make a DataModule which can be used with any
     Self Supervised Learning framework
     """
 
@@ -295,7 +300,7 @@ class SparseSslDM(SslDM):
     def trsfm_test(self) -> Callable:
         return TransformForList(
             transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropouts=self._dropouts),
+                DropoutSparseTensor(p=0.5, dropout_rate=self._dropouts),
                 SparseToDense(),
                 Rasterize(sigmas=self._rasterize_sigmas, normalize=False),
                 RandomVFlip(p=0.5),
@@ -309,7 +314,7 @@ class SparseSslDM(SslDM):
     def trsfm_train_global(self) -> Callable:
         return TransformForList(
             transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropouts=self._dropouts),
+                DropoutSparseTensor(p=0.5, dropout_rate=self._dropouts),
                 SparseToDense(),
                 RandomGlobalIntensity(f_min=self._global_intensity[0], f_max=self._global_intensity[1])
             ]),
@@ -337,7 +342,7 @@ class SparseSslDM(SslDM):
     def trsfm_train_local(self) -> Callable:
         return TransformForList(
             transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropouts=self._dropouts),
+                DropoutSparseTensor(p=0.5, dropout_rate=self._dropouts),
                 SparseToDense(),
                 RandomGlobalIntensity(f_min=self._global_intensity[0], f_max=self._global_intensity[1])
             ]),
@@ -439,7 +444,7 @@ class SparseSslDM(SslDM):
 class AnndataFolderDM(SparseSslDM):
     """
     Create a Datamodule ready for Self-supervised learning starting
-    from a folder full of anndata file in h5ad format
+    from a folder full of anndata file in h5ad format.
     """
     def __init__(self,
                  root: str,
@@ -516,7 +521,7 @@ class AnndataFolderDM(SparseSslDM):
         return numpy.max(list(self._categories_to_channels.values())) + 1
 
     def anndata_to_sparseimage(self, anndata: AnnData):
-        """ Method which converts a anndata to sparse image """
+        """ Method which converts a anndata object to sparse image """
         return SparseImage.from_anndata(
             anndata=anndata,
             x_key=self._x_key,

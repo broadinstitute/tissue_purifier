@@ -1,15 +1,15 @@
-from typing import List, Optional, Tuple, Callable, Union
+from typing import List, Optional, Tuple, Union
 import numpy
 import copy
 import torch
 from tissue_purifier.model_utils.analyzer import SpatialAutocorrelation
 from tissue_purifier.data_utils.dataset import CropperSparseTensor
 from scanpy import AnnData
+import matplotlib.cm
 import matplotlib.colors
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from tissue_purifier.data_utils.datamodule import AnndataFolderDM
-import colorcet as cc
 
 
 class SparseImage:
@@ -134,14 +134,56 @@ class SparseImage:
             requires_grad=False,
         ).coalesce()
 
-    def clear_patch_and_image_properties(self):
+    def trim_spot_dictionary(self, keys: List[str]):
         """
-        Clear the patch_properties_dict and image_properties_dict.
-        It is useful you want to restart the analysis from scratch.
-        It will not modify the spot_properties_dict.
+        Clear selective entries in the spot_properties_dictionary.
+
+        Args:
+            keys: the list of keys to remove from the spot dictionary
         """
-        self._patch_properties_dict = {}
-        self._image_properties_dict = {}
+        if not isinstance(keys, list):
+            keys = [keys]
+        for key in keys:
+            _ = self.spot_properties_dict.pop(key, None)
+
+    def trim_patch_dictionary(self, keys: List[str]):
+        """
+        Clear selective entries in the patch_properties_dictionary.
+
+        Args:
+            keys: the list of keys to remove from the patch dictionary
+        """
+        if not isinstance(keys, list):
+            keys = [keys]
+        for key in keys:
+            _ = self.patch_properties_dict.pop(key, None)
+
+    def trim_image_dictionary(self, keys: List[str]):
+        """
+        Clear selective entries in the image_properties_dictionary.
+
+        Args:
+            keys: the list of keys to remove from the image dictionary
+        """
+        if not isinstance(keys, list):
+            keys = [keys]
+        for key in keys:
+            _ = self.image_properties_dict.pop(key, None)
+
+    def clear(self, patch_dict: bool = True, image_dict: bool = True):
+        """
+        Clear the patch_properties_dict and image_properties_dict in their entirety.
+        Useful to restart the analysis from scratch.
+        It will never modify the spot_properties_dict.
+
+        Argsalready present in spot_properties_dict.:
+            patch_dict: If True (defaults) the patch_properties_dictionary is cleared
+            image_dict: If True (defaults) the image_properties_dictionary is cleared
+        """
+        if patch_dict:
+            self._patch_properties_dict = {}
+        if image_dict:
+            self._image_properties_dict = {}
 
     def pixel_to_raw(
             self,
@@ -274,15 +316,15 @@ class SparseImage:
                     print(prefix, k, type(v))
 
         print("")
-        print("-- SPOT PROPERTIES DICT --")
+        print("-- spot_properties_dict --")
         _inspect_dict(self.spot_properties_dict)
 
         print("")
-        print("-- PATCH PROPERTIES DICT --")
+        print("-- patch_properties_dict --")
         _inspect_dict(self.patch_properties_dict)
 
         print("")
-        print("-- IMAGE PROPERTIES DICT --")
+        print("-- image_properties_dict --")
         _inspect_dict(self.image_properties_dict)
 
     def to_dense(self) -> torch.Tensor:
@@ -505,8 +547,14 @@ class SparseImage:
         ncv = ncv.float() / ncv.sum(dim=-1, keepdim=True).clamp(min=1.0)
         self.spot_properties_dict[feature_name] = ncv.cpu().numpy()
 
+    def _set_patchxywh_for_key(self, key, value):
+        self.patch_properties_dict[key+"_patch_xywh"] = value
+
+    def _get_patchxywh_for_key(self, key):
+        return self.patch_properties_dict[key+"_patch_xywh"]
+
     @torch.no_grad()
-    def compute_features(
+    def compute_patch_features(
             self,
             feature_name: str,
             datamodule: AnndataFolderDM,
@@ -576,200 +624,90 @@ class SparseImage:
             features_tmp = model(patches)
             if isinstance(features_tmp, torch.Tensor):
                 all_features.append(features_tmp)
+            elif isinstance(features_tmp, numpy.ndarray):
+                all_features.append(torch.from_numpy(features_tmp))
             elif isinstance(features_tmp, list):
                 all_features += features_tmp
+            else:
+                raise NotImplementedError
 
         # put back the model in the state it was original
         if was_original_in_training_mode:
             model.train()
 
-        raise NotImplementedError
-        # FROM HERE
-        # make a single batched tensor of both the features and the patches
-        for key, list_value in results.items():
-            if isinstance(list_value, list) and isinstance(list_value[0], torch.Tensor):
-                if len(list_value) == n_patches_max:
-                    results[key] = torch.stack(list_value, dim=0).cpu()
-                else:
-                    results[key] = torch.cat(list_value, dim=0).cpu()
-            else:
-                print(key, type(list_value), type(list_value[0]))
-                raise NotImplementedError
+        # make a single batched tensor of both patches coordinates
+        x_torch = torch.tensor(patches_x, dtype=torch.int).cpu()
+        y_torch = torch.tensor(patches_y, dtype=torch.int).cpu()
+        w_torch = torch.tensor(patches_w, dtype=torch.int).cpu()
+        h_torch = torch.tensor(patches_h, dtype=torch.int).cpu()
+        patches_xywh = torch.stack((x_torch, y_torch, w_torch, h_torch), dim=-1).long()
 
-        # add the results in patch_properties_dict
-        self.patch_properties_dict.update(results)
-
-        # store the patches if necessary
-        if store_crops:
-            self.patch_properties_dict[store_crops_key] = torch.cat(all_patches, dim=0).detach().cpu()
-
-        # Write the patches coordinates to the dictionary if they are new
-        if patches_xywh is None:
-            x_torch = torch.tensor(patches_x, dtype=torch.int).cpu()
-            y_torch = torch.tensor(patches_y, dtype=torch.int).cpu()
-            w_torch = torch.tensor(patches_w, dtype=torch.int).cpu()
-            h_torch = torch.tensor(patches_h, dtype=torch.int).cpu()
-            patches_xywh = torch.stack((x_torch, y_torch, w_torch, h_torch), dim=-1).long()
-            self.patch_properties_dict["patch_xywh"] = patches_xywh
-
-        FROM HERE
-
-
-
-
-
-    @torch.no_grad()
-    def analyze_with_tiling(
-            self,
-            cropper: CropperSparseTensor,
-            patch_analyzers: List[Callable],
-            feature_names: List[str],
-            transform: Callable = None,
-            batch_size: int = 64,
-            n_patches_max: int = 100,
-            store_crops: bool = False,
-            store_crops_key: str = 'image_patches',
-            reuse_crops_if_possible: bool = True,
-            overwrite: bool = False):
-        """
-        Split the sparse image into (possibly overlapping) patches.
-        Each patch is analyzed separately by the patch analyzer.
-        The predictions are stored in the patch_properties_dict.
-
-        Args:
-            cropper: specify how to split an image into patches
-            transform: specify how to convert the sparse_tensor into images before ingestion by a patch_analyzer.
-                If None (defaults) no transformation is applied and the sparse tensor is fed into the patch analyzer.
-            patch_analyzers: List of objects with the compute_features method (preferred) or  the __call__ method.
-                Will be called on each image_patch to extract the features.
-            feature_names: List of names of the features to extract.
-                Will be used to save the features in patch_properties_dict.
-                Must be of the same lengths as patch_analyzers list.
-            batch_size: how many crops to process simultaneously (default = 64)
-            n_patches_max: maximum number of patches generated to analyze the current picture (default = 100)
-            store_crops: if true the crops (after transform) are stored in the patch_dictionary
-                under the key :attr:'store_crops_key'. Setting this flag to true might lead to large memory footprint.
-            store_crops_key: the key associated with the crops. Only used if :attr:'store_crops' == True.
-            overwrite: if the :attr:'feature_names' are already present in the patch_properties_dict,
-                this variable controls when to overwrite them.
-        """
-        patch_analyzers = patch_analyzers if isinstance(patch_analyzers, list) else [patch_analyzers]
-        feature_names = feature_names if isinstance(feature_names, list) else [feature_names]
-        assert len(feature_names) == len(patch_analyzers), \
-            "Error, feature_names of length {0} and patch_analyzers of length {1} must have same length".format(
-                len(feature_names), len(patch_analyzers))
-        assert isinstance(cropper, CropperSparseTensor)
-
-        destination_keys = self._patch_properties_dict.keys()
-
-        all_keys_to_store = feature_names.copy()
-        if store_crops:
-            all_keys_to_store.append(store_crops_key)
-
-        for k in all_keys_to_store:
-            if k in destination_keys and not overwrite:
-                print("The key {0} is already present in patch_properties_dict.")
-                print(" Set overwrite=True to overwrite its value. Nothing will be done.".format(k))
-                return
-            elif k in destination_keys and overwrite:
-                print("The key {0} is already present in patch_properties_dict and it will be overwritten".format(k))
-
-        patches_xywh = self._patch_properties_dict.get("patch_xywh", None)
-        if patches_xywh is None:
-            print("I will generate {0} new patches for this sparse image".format(n_patches_max))
+        # make a single batched tensor of the features
+        if len(all_features) == n_patches_max:
+            features = torch.stack(all_features, dim=0).cpu()
         else:
-            patches_xywh = patches_xywh.to(device=self.data.device, dtype=torch.long)
-            n_patches_max = patches_xywh.shape[0]
-            print("I will reuse the {0} patches previously generated for this sparse image".format(n_patches_max))
+            features = torch.cat(all_features, dim=0).cpu()
 
-        n_patches = 0
-        patches_x, patches_y, patches_w, patches_h = [], [], [], []
-        all_patches = []
-        results = dict()
-        while n_patches < n_patches_max:
-            if patches_xywh is None:
-                n_added = min(batch_size, n_patches_max - n_patches)
-                crops, x_locs, y_locs = cropper(self.data, n_crops=n_added, strategy='random')
-                patches_x += x_locs
-                patches_y += y_locs
-                patches_w += [crop.shape[-2] for crop in crops]
-                patches_h += [crop.shape[-1] for crop in crops]
+        self.patch_properties_dict[feature_name] = features.cpu().numpy()
+        self._set_patchxywh_for_key(key=feature_name, value=patches_xywh.cpu().numpy())
+
+        if return_crops:
+            if len(all_patches) == n_patches_max:
+                patches = torch.stack(all_patches, dim=0).cpu()
             else:
-                n_added = min(batch_size, n_patches_max - n_patches)
-                crops, x_locs, y_locs = cropper.reapply_crops(self.data, patches_xywh[n_patches:n_patches+n_added])
-            n_patches += n_added
+                patches = torch.cat(all_patches, dim=0).cpu()
+            return patches
 
-            if transform is not None:
-                patches = transform(crops)
-            else:
-                patches = crops
-
-            if store_crops:
-                all_patches.append(patches.detach().cpu())
-
-            for f_name, analyzer in zip(feature_names, patch_analyzers):
-                # defaults to call the __call__ method
-                tmp = analyzer(patches)
-
-                # make sure the output is in the form of a list
-                if not isinstance(tmp, list):
-                    tmp = [tmp]
-
-                if f_name not in results.keys():
-                    results[f_name] = tmp
-                else:
-                    results[f_name] += tmp
-
-        # stack or cat the results in one large tensor
-        for key, list_value in results.items():
-            if isinstance(list_value, list) and isinstance(list_value[0], torch.Tensor):
-                if len(list_value) == n_patches_max:
-                    results[key] = torch.stack(list_value, dim=0).cpu()
-                else:
-                    results[key] = torch.cat(list_value, dim=0).cpu()
-            else:
-                print(key, type(list_value), type(list_value[0]))
-                raise NotImplementedError
-
-        # add the results in patch_properties_dict
-        self.patch_properties_dict.update(results)
-
-        # store the patches if necessary
-        if store_crops:
-            self.patch_properties_dict[store_crops_key] = torch.cat(all_patches, dim=0).detach().cpu()
-
-        # Write the patches coordinates to the dictionary if they are new
-        if patches_xywh is None:
-            x_torch = torch.tensor(patches_x, dtype=torch.int).cpu()
-            y_torch = torch.tensor(patches_y, dtype=torch.int).cpu()
-            w_torch = torch.tensor(patches_w, dtype=torch.int).cpu()
-            h_torch = torch.tensor(patches_h, dtype=torch.int).cpu()
-            patches_xywh = torch.stack((x_torch, y_torch, w_torch, h_torch), dim=-1).long()
-            self.patch_properties_dict["patch_xywh"] = patches_xywh
-
-    def patch_property_to_image_property(
+    def transfer_patch_to_spot(
             self,
             keys_to_transfer: List[str],
-            keys_after_transfer: List[str] = None,
+            overwrite: bool = False,
+            verbose: bool = False,
+            strategy_patch_to_image: str = "average",
+            strategy_image_to_spot: str = "bilinear"):
+        """
+        Convenience function which sequentially transfer annotations from patch -> image -> spot
+        """
+        if verbose:
+            print("transferring annotations from patch to image first")
+
+        self.transfer_patch_to_image(
+            keys_to_transfer=keys_to_transfer,
+            overwrite=overwrite,
+            verbose=verbose,
+            strategy=strategy_patch_to_image,
+        )
+
+        if verbose:
+            print("transferring annotations from image to spot last")
+
+        self.transfer_image_to_spot(
+            keys_to_transfer=keys_to_transfer,
+            overwrite=overwrite,
+            verbose=verbose,
+            strategy=strategy_image_to_spot,
+        )
+
+    def transfer_patch_to_image(
+            self,
+            keys_to_transfer: List[str],
             overwrite: bool = False,
             verbose: bool = False,
             strategy: str = "average"):
         """
         Collect the properties computed separately for each patch and stored in patch_properties_dict to create
-        an image properties which will be stored in image_properties_dict with the appropriate name.
+        an image properties which will be stored in image_properties_dict under the same name.
 
         Args:
             keys_to_transfer: keys of the quantity to transfer from patch_properties_dict to image_properties_dict.
                 The patch_quantity can be: a scalar, a vector, a scalar field or a vector field.
                 This corresponds to patch_quantity having shapes:
                 (N_patches), (N_patches, ch), (N_patches, w, h) or (N_patches, ch, w, h) respectively.
-            keys_after_transfer: keys in the image_properties_dict after transfer.
-                If None, the keys in the image_properties_dict will be identical to :attr:'keys_to_transfer'.
             overwrite: bool, in case of collision between keys this variable controls when to overwrite the values in
                 the image_properties_dict.
             strategy: str, either 'average' (default) or 'closest'. If 'average' the value of each pixel in the image
                 is obtained by averaging the contribution of all patches which contain that pixel. If 'nearest' each
-                pixel takes the value from the patch which center is closets to the pixel.
+                pixel takes the value from the patch whose center is closets to the pixel.
             verbose: bool, if true print intermediate messages
         """
 
@@ -779,43 +717,38 @@ class SparseImage:
             elif isinstance(_x, numpy.ndarray):
                 return torch.from_numpy(_x).float().cpu()
             else:
-                raise Exception("The patch quantity to be transfered must be torch.Tensor or numpy.ndarray. \
-                Received {0}.".format(type(_x)))
+                raise Exception("Expect torch.Tensor or numpy.ndarray. Received {0}.".format(type(_x)))
 
+        # make sure keys_to_transfer is provided as a list
         if not isinstance(keys_to_transfer, list):
             keys_to_transfer = [keys_to_transfer]
 
+        # check keys_to_transfer are present in the source
         assert set(keys_to_transfer).issubset(self.patch_properties_dict.keys()), \
-            "Some keys are not present in self.patch_properties_dict."
+            "Some keys are not present in patch_properties_dict."
 
-        keys_after_transfer = keys_to_transfer if keys_after_transfer is None else keys_after_transfer
-        assert (isinstance(keys_after_transfer, list) and len(keys_after_transfer) == len(keys_to_transfer)), \
-            " Error. keys_after_transfer must be a list of the same length as keys_to_transfer "
-
-        assert "patch_xywh" in self.patch_properties_dict.keys(), \
-            " The spot_properties_dict does not have the patch_xywh keyword."
-        patch_xywh = self.patch_properties_dict["patch_xywh"].to(device=self.device, dtype=torch.long)
-
+        # check name collision at destination
         keys_at_destination = self.image_properties_dict.keys()
-        for k_new in keys_after_transfer:
-            if k_new in keys_at_destination and not overwrite:
+        for key in keys_to_transfer:
+            if key in keys_at_destination and not overwrite:
                 print("The key {0} is already present in image_properties_dict. \
                         Set overwrite=True to overwrite its value. \
-                        Nothing will be done.".format(k_new))
+                        Nothing will be done.".format(key))
                 return
-            elif k_new in keys_at_destination and overwrite:
+            elif key in keys_at_destination and overwrite:
                 print("The key {0} is already present in image_properties_dict and it will be overwritten".format(
-                    k_new))
+                    key))
 
         # Here is where the actual calculation starts
-        for k_old, k_new in zip(keys_to_transfer, keys_after_transfer):
+        for key in keys_to_transfer:
             if verbose:
-                print("working on ->", k_old)
-            patch_quantity = _to_torch(self.patch_properties_dict[k_old])
+                print("working on ->", key)
+
+            patch_quantity = _to_torch(self.patch_properties_dict[key]).to(device=self.device, dtype=torch.float)
+            patch_xywh = _to_torch(self._get_patchxywh_for_key(key=key)).to(device=self.device, dtype=torch.long)
 
             assert patch_quantity.shape[0] == patch_xywh.shape[0], \
-                "patch_quantity {0} and patch_xywh must have the same leading dimension. \
-                Received {1} and {2}".format(k_old, patch_quantity.shape, patch_xywh.shape)
+                "Shape mismatched for {0}. Received {1} and {2}".format(key, patch_quantity.shape, patch_xywh.shape)
 
             len_shape = len(patch_quantity.shape)
             if len_shape == 1:
@@ -835,12 +768,14 @@ class SparseImage:
                 ch = patch_quantity.shape[-3]
             else:
                 raise Exception("Can not interpret the dimension of the path_property {0} of \
-                shape {1}".format(k_old, patch_quantity.shape))
+                shape {1}".format(key, patch_quantity.shape))
 
             w_all, h_all = self.shape[-2:]
             tmp_result = torch.zeros((ch, w_all, h_all), device=patch_quantity.device, dtype=patch_quantity.dtype)
             tmp_counter = torch.zeros((w_all, h_all), device=patch_quantity.device, dtype=torch.int)
-            tmp_distance = torch.ones((w_all, h_all), device=patch_quantity.device, dtype=torch.float) * numpy.inf
+            tmp_distance: torch.Tensor = torch.ones((w_all, h_all),
+                                                    device=patch_quantity.device,
+                                                    dtype=torch.float) * numpy.inf
             for n, xywh in enumerate(patch_xywh):
                 x, y, w, h = xywh.unbind(dim=0)
                 if strategy == 'average':
@@ -849,7 +784,7 @@ class SparseImage:
                 elif strategy == 'closest':
                     dw_from_center = torch.linspace(start=-0.5 * (w - 1), end=0.5 * (w - 1), steps=w)
                     dh_from_center = torch.linspace(start=-0.5 * (h - 1), end=0.5 * (h - 1), steps=h)
-                    d2_from_center = dw_from_center[:, None].pow(2) + dh_from_center[None, :].pow(2)
+                    d2_from_center: torch.Tensor = dw_from_center[:, None].pow(2) + dh_from_center[None, :].pow(2)
                     mask = (d2_from_center < tmp_distance[x:x + w, y:y + h])  # shape (w, h)
 
                     # If the current patch has a smaller distance. Overwrite patch_quantity and tmp_distance
@@ -860,32 +795,38 @@ class SparseImage:
                     raise ValueError("strategy can only be 'average' or 'closest'. Received {0}".format(strategy))
 
             if strategy == 'average':
-                self.image_properties_dict[k_new] = tmp_result / tmp_counter.clamp(min=1.0)
+                result = tmp_result / tmp_counter.clamp(min=1.0)
             elif strategy == 'closest':
-                self.image_properties_dict[k_new] = tmp_result
+                result = tmp_result
             else:
                 raise ValueError("strategy can only be 'average' or 'closest'. Received {0}".format(strategy))
+            self.image_properties_dict[key] = result.cpu().numpy()
 
-    def image_property_to_spot_property(
+    def transfer_image_to_spot(
             self,
             keys_to_transfer: List[str],
-            keys_after_transfer: List[str] = None,
             overwrite: bool = False,
             verbose: bool = False,
-            strategy: str = "closest"):
+            strategy: str = "bilinear"):
         """
-        Evaluate the image_properties_dict[keys] at the spots location (either cell or genes).
-        Store the results in the spot_properties_dict with the appropriate names.
+        Evaluate the image_properties_dict at the spots location.
+        Store the results in the spot_properties_dict with the same name.
 
         Args:
             keys_to_transfer: the keys of the quantity to transfer from image_properties_dict to spot_properties_dict.
-            keys_after_transfer: keys in the spot_properties_dict after transfer.
-                If None, the keys in the spot_properties_dict will be identical to :attr:'keys_to_transfer'.
             overwrite: bool, in case of collision between the keys this variable controls
                 when the value will be overwritten.
             verbose: bool, if true intermediate messages are displayed.
             strategy: str, either 'closest' (default) or 'bilinear'.
         """
+
+        def _to_torch(_x):
+            if isinstance(_x, torch.Tensor):
+                return _x
+            elif isinstance(_x, numpy.ndarray):
+                return torch.from_numpy(_x).float().cpu()
+            else:
+                raise Exception("Expect torch.Tensor or numpy.ndarray. Received {0}.".format(type(_x)))
 
         def _interpolation(data_to_interpolate, x_float, y_float, _strategy):
             if _strategy == 'closest':
@@ -916,30 +857,28 @@ class SparseImage:
         assert strategy == 'bilinear' or strategy == 'closest', "Invalid interpolation_method \
         Expected 'bilinear' or 'closest'. Received {0}. ".format(strategy)
 
-        assert isinstance(keys_to_transfer, list), \
-            "Error. keys_to_transfer must be a list. Received {0}".format(keys_to_transfer)
+        # make sure keys_to_transfer is provided as a list
+        if not isinstance(keys_to_transfer, list):
+            keys_to_transfer = [keys_to_transfer]
+
         assert set(keys_to_transfer).issubset(set(self.image_properties_dict.keys())), \
             "Some keys are not present in self.image_properties_dict"
 
-        keys_after_transfer = keys_to_transfer if keys_after_transfer is None else keys_after_transfer
-        assert isinstance(keys_after_transfer, list) and len(keys_after_transfer) == len(keys_to_transfer), \
-            " Error. keys_after_transfer must be a lsit of the same length as keys_to_transfer "
-
         keys_at_destination = self.spot_properties_dict.keys()
-        for k_new in keys_after_transfer:
-            if k_new in keys_at_destination and not overwrite:
+        for key in keys_to_transfer:
+            if key in keys_at_destination and not overwrite:
                 print("The key {0} is already present in spot_properties_dict. \
                         Set overwrite=True to overwrite its value. \
-                        Nothing will be done.".format(k_new))
+                        Nothing will be done.".format(key))
                 return
-            elif k_new in keys_at_destination and overwrite:
-                print("The key {0} is already present in spot_properties_dict. \
-                        This value will be overwritten".format(k_new))
+            elif key in keys_at_destination and overwrite:
+                print("The key {0} is already present in spot_properties_dict and it will be overwritten".format(key))
 
-        for k_old, k_new in zip(keys_to_transfer, keys_after_transfer):
+        # actual calculation
+        for key in keys_to_transfer:
             if verbose:
-                print("working on ->", k_old)
-            image_quantity = self.image_properties_dict[k_old]
+                print("working on ->", key)
+            image_quantity = _to_torch(self.image_properties_dict[key])
 
             assert isinstance(image_quantity, torch.Tensor)
             assert len(image_quantity.shape) == 3 and image_quantity.shape[-2:] == self.shape[-2:]
@@ -951,7 +890,7 @@ class SparseImage:
                 image_quantity, x_pixel, y_pixel, strategy).cpu()
 
             assert len(interpolated_values.shape) == 2
-            self.spot_properties_dict[k_new] = interpolated_values.permute(dims=(1, 0))
+            self.spot_properties_dict[key] = interpolated_values.permute(dims=(1, 0)).cpu().numpy()
 
     def get_state_dict(self, include_anndata: bool = True):
         """ Return the dictionary with the state of the system """
@@ -1010,10 +949,10 @@ class SparseImage:
                 If it is not specified it will be chosen to be 1/3 of the median of the Nearest Neighbour distances
                 between spots. Explicitely setting this attribute ensures that the pixel_size will be consistent
                 across multiple images
-            categories_to_channels: dictionary with the mapping from the names (of cell_types or genes) to integer codes.
-                If not given, the caterogy_values will be inferred from the anndata object.
+            categories_to_channels: dictionary with the mapping from the names (of cell_types or genes) to channels.
                 Explicitely setting this attribute ensures that the encoding between category
-                and integer codes will be consistent across multiple images.
+                and channels codes will be consistent across multiple images.
+                If not given, the mapping will be inferred from the anndata object.
             padding: int, padding of the image so that the image has a bit of black around it
 
         Returns:
@@ -1233,134 +1172,3 @@ class SparseImage:
         dist, index = kdt.query(locations, k=2, return_distance=True)
         dist_nn = dist[:, 1]
         return numpy.mean(dist_nn), numpy.median(dist_nn)
-
-
-#    # TODO: add the other methods:
-#    #   spot_properties_to_image_properties   -> do it (for discrete you can make a sparse_tensor)
-#    #   spot_properties_to_patch properties   -> NO
-#    #   patch_properties_to_image_properties  -> implemented
-#    #   patch_properties_to_spot_properties   -> NO
-#    #   image_properties_to_patch_properties  -> NO
-#    #   image_properties_to_spot_properties   -> implemented
-#
-#    #TODO: Do I need these ones
-#    def get_spots_in_patch(self, patch_xywh: Union[torch.Tensor, Tuple[int, int, int, int]]):
-#        """ Given a patch, it returns a dictionary with all the spots inside that patch """
-#        x_patch, y_patch, w_patch, h_patch = self.__validate_patch_xywh__(patch_xywh)
-#        mask = self._are_spots_in_patch(x_patch, y_patch, w_patch, h_patch)
-#        return self._get_spots(mask)
-#
-#    def get_spots_not_in_patch(self, patch_xywh: Union[torch.Tensor, Tuple[int, int, int, int]]):
-#        """ Given a patch, it returns a dictionary with all the spots outside that patch """
-#        x_patch, y_patch, w_patch, h_patch = self.__validate_patch_xywh__(patch_xywh)
-#        mask = self._are_spots_in_patch(x_patch, y_patch, w_patch, h_patch)
-#        return self._get_spots(~mask)
-#
-#    def _are_spots_in_patch(self, x_patch, y_patch, w_patch, h_patch) -> torch.BoolTensor:
-#        x_raw = torch.from_numpy(self.x_raw).float()
-#        y_raw = torch.from_numpy(self.y_raw).float()
-#
-#        x_raw_1, y_raw_1 = self.pixel_to_raw(x_patch, y_patch)
-#        x_raw_2, y_raw_2 = self.pixel_to_raw(x_patch + w_patch, y_patch + h_patch)
-#
-#        mask: torch.BoolTensor = (x_raw >= x_raw_1) * (x_raw < x_raw_2) * (y_raw >= y_raw_1) * (y_raw < y_raw_2)
-#        return mask
-#
-#    def _get_spots(self, mask: torch.BoolTensor) -> dict:
-#        def _mask_select(_value, _mask):
-#            if isinstance(_value, torch.Tensor) or isinstance(_value, numpy.ndarray):
-#                return _value[_mask]
-#            elif isinstance(_value, list):
-#                return numpy.array(_value)[_mask].tolist()
-#            else:
-#                raise Exception("Expected type Union[torch.Tensor, numpy.ndarray, list]. \
-#                Received {0}".format(type(_value)))
-#
-#        tmp_dict = {}
-#        for k, v in self._spot_properties_dict:
-#            tmp_dict[k] = _mask_select(v, mask)
-#        return tmp_dict
-#
-#    def create_patches_centered_on_spots(
-#            self,
-#            spots_strategy: Union[str, torch.BoolTensor],
-#            patch_size: Union[int, Tuple[int, int]],
-#    ):
-#        """
-#        Create the patches coordinates (patches_xywh) centered on spots specified by :attr:'spots_strategy.
-#
-#        Args:
-#            spots_strategy: Cab be 'all' or a BoolTensor (i.e. a mask specifying which spots should be a
-#                patch associated with them)
-#            patch_size: int, the size (in pixel) of the patch
-#
-#        Returns:
-#             None, patches_xywh are written in self.spot_properties_dict
-#
-#        """
-#        assert "patch_xywh" not in self._patch_properties_dict.keys(), "The keyword 'patch_xywh' is already present \
-#        in patch_properties_dict. Before you can create new patches you need to call the 'clear_all' method"
-#
-#        if isinstance(patch_size, int):
-#            patch_width = patch_size
-#            patch_height = patch_size
-#        elif isinstance(patch_size, tuple) and len(patch_size) == 2:
-#            patch_width, patch_height = patch_size
-#        else:
-#            raise Exception("patch_size must be Union[int, Tuple[int,int]]. Received {0}".format(type(patch_size)))
-#
-#        assert isinstance(patch_height, int) and isinstance(patch_width, int), \
-#            "Patch weight and height must be integers. Received {0}, {1}".format(type(patch_width), type(patch_height))
-#
-#        x_raw = torch.from_numpy(self.x_raw).float()
-#        y_raw = torch.from_numpy(self.y_raw).float()
-#        x_pixel, y_pixel = self.raw_to_pixel(x_raw, y_raw)
-#        x1_pixel = torch.floor(x_pixel - 0.5 * patch_width).int()
-#        y1_pixel = torch.floor(y_pixel - 0.5 * patch_height).int()
-#        w = patch_width * torch.ones_like(x1_pixel)
-#        h = patch_height * torch.ones_like(x1_pixel)
-#        patch_xywh = torch.stack((x1_pixel, y1_pixel, w, h), dim=0)
-#
-#        if spots_strategy == 'all':
-#            assert self.n_spots <= 1000, \
-#                "Error. The number of requested patches ({0}) is too high.".format(self.n_spots)
-#            self._patch_properties_dict["patch_xywh"] = patch_xywh.cpu()
-#        elif isinstance(spots_strategy, torch.BoolTensor):
-#            assert spots_strategy.shape[0] == patch_xywh.shape[0]
-#            self._patch_properties_dict["patch_xywh"] = patch_xywh[spots_strategy].cpu()
-#
-#    @torch.no_grad()
-#    def extract_patches(self,
-#                        patches_xywh: torch.Tensor,
-#                        cropper: CropperSparseTensor,
-#                        transform: Callable = None):
-#        """ Return the patches corresponding to the coordinates xywh.
-#
-#        Args:
-#            patches_xywh: torch.tensor of shape (*, 4) with the x,y,w,h coordinates of the patches
-#            cropper: a cropper with the :method:'reapply_crops' method
-#            transform: a callable which is applied to the sparse tensors to generate a dense tensor. Default is None.
-#
-#        Returns:
-#            A list of patches
-#        """
-#        # TODO: Can I rewrite this using the equivalent of torch.narrow for sparse data?
-#        assert len(patches_xywh.shape) == 2 and patches_xywh.shape[-1] == 4
-#        n_patches_max = patches_xywh.shape[0]
-#
-#        batch_size = 32
-#        n_patches = 0
-#        all_patches = []
-#        while n_patches < n_patches_max:
-#            n_added = min(batch_size, n_patches_max - n_patches)
-#            crops, x_locs, y_locs = cropper.reapply_crops(self.data, patches_xywh[n_patches:n_patches + n_added])
-#            n_patches += n_added
-#
-#            if transform is not None:
-#                patches = transform(crops)
-#            else:
-#                patches = crops
-#
-#            all_patches.append(patches.detach().cpu())
-#
-#        return all_patches

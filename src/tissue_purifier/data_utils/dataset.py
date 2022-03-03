@@ -11,28 +11,6 @@ class MetadataCropperDataset(NamedTuple):
     moran: Union[float, None]
 
 
-class AddFakeMetadata(Dataset):
-    """
-    Takes a dataset and add a fake metadata.
-    If the original dataset returns (img, label)
-    The new dataset will return (img, label, metadata)
-    """
-    def __init__(self, dataset: Dataset) -> None:
-        self.original_dataset = dataset
-        self.list_fake_metadata = [MetadataCropperDataset(
-            f_name="fakename_"+str(n),
-            loc_x=0,
-            loc_y=0,
-            moran=-99) for n in range(dataset.__len__())]
-
-    def __getitem__(self, index):
-        a = self.original_dataset[index]
-        return a[0], a[1], self.list_fake_metadata[index]
-
-    def __len__(self):
-        return len(self.list_fake_metadata)
-
-
 class CropperTensor(torch.nn.Module):
     """
     Base class for cropping a tensor and returning the crops and its coordinates, i.e. (crops, x_loc, y_loc)

@@ -13,6 +13,7 @@ import bz2
 def anndata_from_expression_csv(filename: str, key: str, transpose: bool, top_n_rows: int = None):
     """
     Read a csv file with the expression data (i.e. count matrix) and returns an anndata object.
+    To be used when your (bad) collaborators give you a .csv file instead of a .h5ad file.
 
     If transpose == False:
         The csv is expected to have a header: 'barcode', 'gene_name_1', ..., 'gene_name_N'

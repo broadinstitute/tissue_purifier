@@ -10,20 +10,24 @@ from pytorch_lightning.profiler import SimpleProfiler, PassThroughProfiler, Adva
 from pytorch_lightning.trainer import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
-from tissue_purifier.misc_utils.misc import smart_bool
 from tissue_purifier.model_utils.logger import NeptuneLoggerCkpt
 
-from tissue_purifier.model_utils.barlow import BarlowModel
-from tissue_purifier.model_utils.dino import DinoModel
-from tissue_purifier.model_utils.vae import VaeModel
-from tissue_purifier.model_utils.simclr import SimclrModel
+from tissue_purifier.model_utils.ssl_models.barlow import BarlowModel
+from tissue_purifier.model_utils.ssl_models.dino import DinoModel
+from tissue_purifier.model_utils.ssl_models.vae import VaeModel
+from tissue_purifier.model_utils.ssl_models.simclr import SimclrModel
+from tissue_purifier.data_utils.datamodule import AnndataFolderDM
 
-from tissue_purifier.data_utils.datamodule import (
-    DinoDM,
-    SlideSeqTestisDM,
-    SlideSeqKidneyDM,
-    DummyDM
-)
+
+def smart_bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
 def initialization(
@@ -233,7 +237,7 @@ def initialization(
     return pl_model, pl_trainer, new_dict, ckpt_file_for_trainer
 
 
-def run_simulation(config_dict: dict, datamodule: DinoDM):
+def run_simulation(config_dict: dict, datamodule: AnndataFolderDM):
     """
     This is where most of the work ois done.
     Log info, train the model, save the checkpoint.

@@ -2,7 +2,10 @@ from typing import List, Any
 import numpy
 import torch
 from sklearn.neighbors import KDTree
-from tissue_purifier.misc_utils.nms import NonMaxSuppression
+from tissue_purifier.misc_utils.nms_util import NonMaxSuppression
+
+
+# Set of simple helper functions to manipulate dictionaries
 
 
 def are_dicts_equal(
@@ -78,8 +81,9 @@ def transfer_annotations_between_dict(
         dest_dict: destination dictionary where the annotation will be written
         annotation_keys: List of keys. It is assumed that these keys are present in the source_dictionary
         anchor_key: The key of the element to be used to measure distances.
-            It must be present in BOTH source and destination dictionary.
-        metric: the distance metric to measure distance between elements in the source and destination dictionaries
+            It must be present in BOTH source and destination dictionaries.
+        metric: the distance metric to measure distance between elements in the source and destination dictionaries.
+            It defaults to 'euclidian'.
 
     Returns:
         The updated destination dictionary

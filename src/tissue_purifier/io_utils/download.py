@@ -1,12 +1,16 @@
 import os
-import sys
 from google.cloud import storage
 
 
 def download_from_bucket(bucket_name: str, source_path: str, destination_path: str):
-    # bucket_name = "ld-data-bucket"
-    # source_blob_name = "tissue-purifier/slideseq_testis_anndata_h5ad.tar.gz"
-    # destination_file_name = os.path.join(self._data_dir, "slideseq_testis_anndata_h5ad.tar.gz")
+    """
+    Helper function to download files from google buckets.
+
+    Args:
+        bucket_name: the name of the google bucket. For example: "ld-data-bucket"
+        source_path: path to the file in the bucket. For example "tissue-purifier/slideseq_testis_anndata_h5ad.tar.gz"
+        destination_path: path in the local filesystem to save file. For example "my_dir/my_file_h5ad.tar.gz"
+    """
 
     # create the directory where the file will be written
     dirname_tmp = os.path.dirname(destination_path)

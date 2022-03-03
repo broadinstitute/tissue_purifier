@@ -3,7 +3,6 @@ import torch
 import torch.nn.functional as F
 import torchvision
 import math
-from functools import lru_cache
 
 
 class TransformForList(torch.nn.Module):
@@ -98,30 +97,30 @@ class RandomHFlip(torch.nn.Module):
 class DropoutSparseTensor(torch.nn.Module):
     """ Perform dropout on a sparse tensor. """
 
-    def __init__(self, p: float, dropouts: Union[float, Iterable[float]]):
+    def __init__(self, p: float, dropout_rate: Union[float, Iterable[float]]):
         """
         Args:
             p: the probability of applying dropout.
-            dropouts: the probabilities of dropping out entry from the sparse tensor
+            dropout_rate: the probabilities of dropping out entries from the sparse tensor.
         """
         super().__init__()
         self.p = p
-        if isinstance(dropouts, float):
-            self.dropouts = (dropouts,)
-        elif isinstance(dropouts, Iterable):
-            self.dropouts = tuple(dropouts)
+        if isinstance(dropout_rate, float):
+            self.dropout_rate = (dropout_rate,)
+        elif isinstance(dropout_rate, Iterable):
+            self.dropout_rate = tuple(dropout_rate)
         else:
-            raise Exception("Expected float or iterable. Received {0}".format(type(dropout_rates)))
+            raise Exception("Expected float or iterable. Received {0}".format(type(dropout_rate)))
 
-        assert min(dropouts) > 0.0, \
+        assert min(dropout_rate) > 0.0, \
             "The minimum value of dropout rates should be > 0.0. If you want dropout = 0 set p=0.0"
-        assert max(dropouts) < 1.0, \
+        assert max(dropout_rate) < 1.0, \
             "The maximum value of dropout rates should be < 1.0"
 
-        self.dropouts_len = len(self.dropouts)
+        self.dropouts_len = len(self.dropout_rate)
 
     def __repr__(self):
-        return self.__class__.__name__ + '(p={0}, dropouts=({1})'.format(self.p, self.dropouts)
+        return self.__class__.__name__ + '(p={0}, dropout_rate=({1})'.format(self.p, self.dropout_rate)
 
     def forward(self, sp_tensor: torch.sparse.Tensor):
         assert isinstance(sp_tensor, torch.sparse.Tensor)
@@ -133,7 +132,7 @@ class DropoutSparseTensor(torch.nn.Module):
             return sp_tensor
         else:
             index = torch.randint(low=0, high=self.dropouts_len, size=[1]).item()
-            success_probability = 1.0 - self.dropouts[index]
+            success_probability = 1.0 - self.dropout_rate[index]
 
             values = sp_tensor.values()
             values_new = torch.distributions.binomial.Binomial(total_count=values.float(),
@@ -154,7 +153,8 @@ class SparseToDense(torch.nn.Module):
     def __repr__(self):
         return self.__class__.__name__
 
-    def forward(self, sp_tensor: torch.sparse.Tensor):
+    @staticmethod
+    def forward(sp_tensor: torch.sparse.Tensor):
         assert isinstance(sp_tensor, torch.sparse.Tensor)
         return sp_tensor.to_dense().float()
 
@@ -169,8 +169,9 @@ class Rasterize(torch.nn.Module):
                 uniformly from these values.
         """
         super().__init__()
+
         if isinstance(sigmas, float):
-            self.sigmas = tuple(sigmas)
+            self.sigmas = (sigmas, )
         elif isinstance(sigmas, Iterable):
             self.sigmas = tuple(sigmas)
         else:
@@ -183,7 +184,7 @@ class Rasterize(torch.nn.Module):
         self.kernels_len = len(self.kernels)
 
     def make_kernels(self) -> Tuple[torch.Tensor]:
-        kernels = []
+        kernel_list: list = []
         for sigma in self.sigmas:
             n = int(1 + 2 * math.ceil(4.0 * sigma))
             dx_over_sigma = torch.linspace(-4.0, 4.0, 2 * n + 1).view(-1, 1)
@@ -191,10 +192,10 @@ class Rasterize(torch.nn.Module):
             d2_over_sigma2 = (dx_over_sigma.pow(2) + dy_over_sigma.pow(2)).float()
             kernel = torch.exp(-0.5 * d2_over_sigma2)
             if self.normalize:
-                kernels.append(kernel / kernel.sum())
+                kernel_list.append(kernel / kernel.sum())
             else:
-                kernels.append(kernel)
-        return tuple(kernels)
+                kernel_list.append(kernel)
+        return tuple(kernel_list)
 
     def __repr__(self):
         return self.__class__.__name__ + '(normalize={0}, sigmas=({1}))'.format(self.normalize,
@@ -306,7 +307,7 @@ class RandomStraightCut(torch.nn.Module):
 
     def __init__(self,
                  p: float = 0.5,
-                 occlusion_fraction: Iterable[float] = (0.25, 0.45)):
+                 occlusion_fraction: Tuple[float, float] = (0.25, 0.45)):
         """
         Args:
             p: Probability of the transform being applied
@@ -314,8 +315,8 @@ class RandomStraightCut(torch.nn.Module):
         """
         super().__init__()
         self.p = p
-        assert isinstance(occlusion_fraction, Iterable) and len(tuple(occlusion_fraction)) == 2, \
-            "Occlusion fraction must be a Iterable of length 2. Received {0}".format(len(tuple(occlusion_fraction)))
+        assert isinstance(occlusion_fraction, Tuple) and len(occlusion_fraction) == 2, \
+            "Occlusion fraction must be a tuple of length 2. Received {0}".format(len(occlusion_fraction))
         self.occlusion_min = float(occlusion_fraction[0])
         self.occlusion_max = float(occlusion_fraction[1])
         assert 0.0 <= self.occlusion_min < self.occlusion_max <= 1.0
@@ -503,22 +504,6 @@ class RandomStraightCut(torch.nn.Module):
 #             return warped
 #
 #
-# class ToRgb(torch.nn.Module):
-#     """ Convert any image to having 3 channels """
-#     def forward(self, x):
-#         if x.shape[-3] >= 3:
-#             # take the first 3 channels
-#             return x[..., :3, :, :]
-#         else:
-#             # duplicate the first channel 3 times
-#             new_shapes = list(x.shape)
-#             new_shapes[-3] = 3
-#             return x[..., :1, :, :].expand(new_shapes)
-#
-#     def __repr__(self):
-#         return self.__class__.__name__
-#
-#
 # class LargestSquareCrop(torch.nn.Module):
 #     """ Get the largest possible square crop fully contained in the image and rescale it to the desired size """
 #     def __init__(self, size: int):
@@ -533,4 +518,3 @@ class RandomStraightCut(torch.nn.Module):
 #
 #     def __repr__(self):
 #         return self.__class__.__name__ + '(size={0})'.format(self.size)
-#
