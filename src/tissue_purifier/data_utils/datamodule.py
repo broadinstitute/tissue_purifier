@@ -460,13 +460,11 @@ class AnndataFolderDM(SparseSslDM):
                  n_neighbours_moran: int,
                  **kargs):
 
-        print(categories_to_channels)
-
         assert isinstance(categories_to_channels, dict) and len(categories_to_channels.keys()) >= 1, \
             "Error. Specify a valid categories_to_channels mapping. Received {}".format(categories_to_channels)
 
         set_chs = set(categories_to_channels.values())
-        set_chs_should_be = set([i for i in range(len(set_chs))])
+        set_chs_should_be = set([i for i in range(max(set_chs)+1)])
         assert set_chs == set_chs_should_be, \
             "The values of the categories_to_channels must be integers starting at zero. Received {}".format(set_chs)
 

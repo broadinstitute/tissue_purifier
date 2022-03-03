@@ -315,8 +315,9 @@ class RandomStraightCut(torch.nn.Module):
         """
         super().__init__()
         self.p = p
-        assert isinstance(occlusion_fraction, Tuple) and len(occlusion_fraction) == 2, \
-            "Occlusion fraction must be a tuple of length 2. Received {0}".format(len(occlusion_fraction))
+        assert isinstance(occlusion_fraction, Tuple), "Received {0}".format(type(occlusion_fraction))
+        assert len(occlusion_fraction) == 2, \
+            "Occlusion fraction must have length 2. Received {0}".format(len(occlusion_fraction))
         self.occlusion_min = float(occlusion_fraction[0])
         self.occlusion_max = float(occlusion_fraction[1])
         assert 0.0 <= self.occlusion_min < self.occlusion_max <= 1.0
