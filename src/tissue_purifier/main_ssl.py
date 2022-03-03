@@ -371,7 +371,7 @@ def parse_args(argv: List[str]) -> dict:
         yaml_config_dict = dict()
 
     # Decide which ssl_model to use
-    ssl_model_from_yaml = yaml_config_dict.get(key="ssl_model", default=None)
+    ssl_model_from_yaml = yaml_config_dict.get("ssl_model", None)
     ssl_model = args.ssl_model if ssl_model_from_yaml is None else ssl_model_from_yaml
 
     # Update the parser with model params
