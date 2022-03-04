@@ -2,7 +2,7 @@ import torch
 import matplotlib
 from matplotlib import pyplot as plt
 from typing import Tuple, Union, List
-from tissue_purifier.misc_utils.misc import compute_distance_embedding
+from tissue_purifier.misc_utils.validation_util import compute_distance_embedding
 from tissue_purifier.plot_utils.plot_images import _show_raw_all_channels, _get_color_tensor
 
 
@@ -38,6 +38,8 @@ def plot_knn_examples(
     Return:
         a matplotlib figure with example fo knn neighbours.
     """
+    # TODO: need to be rearranged b/c interface has changed
+    raise NotImplementedError
 
     assert embedding_key in input_dict.keys(), "Embedding_key = {0} is not present in input_dict.".format(embedding_key)
     assert image_key in input_dict.keys(), "Image_key = {0} is not present in input_dict.".format(image_key)

@@ -1,16 +1,24 @@
 __version__ = "0.0.1"
 
-from tissue_purifier.model_utils.ssl_models.barlow import BarlowModel
-from tissue_purifier.model_utils.ssl_models.vae import VaeModel
-from tissue_purifier.model_utils.ssl_models.dino import DinoModel
-from tissue_purifier.model_utils.ssl_models.simclr import SimclrModel
+# The actual API
+from tissue_purifier import data_utils as data
+from tissue_purifier import gene_regression as genex
+from tissue_purifier import io_utils as io
+from tissue_purifier import model_utils as models
+from tissue_purifier import plot_utils as plot
+from tissue_purifier import misc_utils as utils
 
-from tissue_purifier.io_utils.download import download_from_bucket
 
 __all__ = [
-        "BarlowModel",
-        "VaeModel",
-        "DinoModel",
-        "SimclrModel",
-        "download_from_bucket"
+    "data",
+    "genex",
+    "utils",
+    "io",
+    "models",
+    "plot",
 ]
+
+# it means that you can do
+# import tissue_purifier as tp
+# a = tp.data.AnndatFolderDM
+
