@@ -1,4 +1,3 @@
-# decide that to expose
 from .plot_embeddings import plot_embeddings
 from .plot_images import (
     pad_and_crop_and_stack,

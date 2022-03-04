@@ -1,4 +1,3 @@
-# Decide what to expose
 from .nms_util import NonMaxSuppression as NMS
 
 from .dict_util import (
