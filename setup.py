@@ -38,7 +38,7 @@ setup(
             "pytest>=5.0",
         ],
     },
-    python_requires=">=3.9",
+    python_requires=">=3.7.12",
     keywords="self supervised learning, tissue analysis",
     license="Apache 2.0",
     classifiers=[
@@ -47,6 +47,6 @@ setup(
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: POSIX :: Linux",
         "Operating System :: MacOS :: MacOS X",
-        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.7",
     ],
 )
