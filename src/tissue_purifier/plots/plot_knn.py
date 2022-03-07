@@ -2,8 +2,8 @@ import torch
 import matplotlib
 from matplotlib import pyplot as plt
 from typing import Tuple, Union, List
-from tissue_purifier.misc_utils.validation_util import compute_distance_embedding
-from tissue_purifier.plot_utils.plot_images import _show_raw_all_channels, _get_color_tensor
+from tissue_purifier.utils.validation_util import compute_distance_embedding
+from .plot_images import _show_raw_all_channels, _get_color_tensor
 
 
 def plot_knn_examples(
