@@ -102,6 +102,7 @@ class DropoutSparseTensor(torch.nn.Module):
         Args:
             p: the probability of applying dropout.
             dropout_rate: the probabilities of dropping out entries from the sparse tensor.
+                If an iterable, a random value from the iterable is chosen every time.
         """
         super().__init__()
         self.p = p
