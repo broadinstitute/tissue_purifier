@@ -30,7 +30,7 @@ encoder_hidden_dims: # used only if backbone_type is 'vanilla'
 - 128
 - 256
 - 512
-latent_dim: 256
+latent_dim: 512
 decoder_output_activation: identity
 
 # loss
@@ -39,12 +39,12 @@ momentum_beta_vae: 0.999
 
 # optimizers
 optimizer_type: adam
-min_learning_rate: 1.0e-05
-max_learning_rate: 0.0005
-min_weight_decay: 0.04
-max_weight_decay: 0.4
+min_learning_rate: 1.0E-5
+max_learning_rate: 5.0E-4
+min_weight_decay: 0.0
+max_weight_decay: 0.0
 warm_up_epochs: 100
-warm_down_epochs: 500
+warm_down_epochs: 100
 max_epochs: 1000
 
 # dataset

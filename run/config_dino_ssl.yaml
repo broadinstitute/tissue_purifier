@@ -32,23 +32,23 @@ head_out_ch: 512
 head_use_bn: true
 
 # update rules
-set_temperature_using_ipr_init: true
+set_temperature_using_ipr_init: False
 temperature_student_init: 0.1   # overwritten if set_temperature_using_ipr_init == True
 temperature_teacher_init: 0.04  # overwritten if set_temperature_using_ipr_init == True
-ipr_student_init: 80.0
-ipr_teacher_init: 40.0
+ipr_student_init: 80.0  # used only if set_temperature_using_ipr_init == True
+ipr_teacher_init: 40.0  # used only if set_temperature_using_ipr_init == True
 param_momentum_final: 0.996
 param_momentum_init: 0.996
 param_momentum_epochs_end: 1000
 
 # optimizers
 optimizer_type: adam
-min_learning_rate: 1.0e-05
-max_learning_rate: 0.0005
-min_weight_decay: 0.04
-max_weight_decay: 0.4
+min_learning_rate: 1.0E-5
+max_learning_rate: 5.0E-4
+min_weight_decay: 0.0
+max_weight_decay: 0.0
 warm_up_epochs: 100
-warm_down_epochs: 500
+warm_down_epochs: 100
 max_epochs: 1000
 
 # dataset

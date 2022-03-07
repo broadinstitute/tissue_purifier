@@ -26,18 +26,18 @@ ssl_model: simclr
 backbone_type: resnet34
 image_in_ch: 9
 head_hidden_chs:
-- 128
 - 256
-head_out_ch: 128
+- 512
+head_out_ch: 512
 
 # optimizers
 optimizer_type: adam
-min_learning_rate: 1.0E-4
+min_learning_rate: 1.0E-5
 max_learning_rate: 5.0E-4
-min_weight_decay: 0.04
-max_weight_decay: 0.4
+min_weight_decay: 0.0
+max_weight_decay: 0.0
 warm_up_epochs: 100
-warm_down_epochs: 500
+warm_down_epochs: 100
 max_epochs: 1000
 
 # dataset
