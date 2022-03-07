@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# This script 
+# This script trains a Self-Supervised Model using a folder containing anndata.h5ad files
 
 import argparse
 import torch
@@ -290,6 +290,10 @@ def run_simulation(config_dict: dict, datamodule: AnndataFolderDM):
     else:
         trainer.fit(model=model, datamodule=datamodule)
 
+    # save the checkpint at the end of training
+    # This is redundant if the Trainer has the ModelCHeckpoint callbacks
+    trainer.save_checkpoint(config_dict.get("ckpt_out", "ckpt_last.pt"))
+
     # at the end close connection to neptune database
     if model.global_rank == 0:
         trainer.logger.finalize(status='completed')
@@ -323,7 +327,9 @@ def parse_args(argv: List[str]) -> dict:
                         help="If provided read the configuration file *.yaml. The parameters passed from config file \
                               have precedence over the one from the CLI")
     parser.add_argument("--to_yaml", type=str, default=None,
-                        help="If provided write a yaml file with the parameters and exit")
+                        help="If provided write a yaml file with the parameters and exit.")
+    parser.add_argument("--ckpt_out", type=str, default="ckpt_last.pt",
+                        help="The path to save the checkpoint at the end of training.")
 
     # parameters for Neptune and random seed
     parser.add_argument("--random_seed", type=int, default=1, help="Integer specifying the global random seed")

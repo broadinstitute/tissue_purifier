@@ -92,7 +92,9 @@ def show_batch(
         figsize: size of the figure
     """
     assert len(tensor.shape) >= 4  # *, ch, width, height
-    tensor = tensor.flatten(end_dim=-4).float()  # -1, ch, width, height
+
+    # upgrade to full precision in case I am working in half precision.
+    tensor = tensor.flatten(end_dim=-4).to(dtype=torch.float32)  # -1, ch, width, height
     ch = tensor.shape[-3]
 
     if ch > 3:
