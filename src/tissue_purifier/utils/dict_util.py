@@ -2,7 +2,7 @@ from typing import List, Any
 import numpy
 import torch
 from sklearn.neighbors import KDTree
-from tissue_purifier.misc_utils.nms_util import NonMaxSuppression
+from .nms_util import NonMaxSuppression
 
 
 # Set of simple helper functions to manipulate dictionaries

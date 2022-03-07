@@ -12,7 +12,7 @@ import pandas as pd
 import pyro.poutine
 import pyro.optim
 import matplotlib.pyplot as plt
-from tissue_purifier.gene_regression.gene_utils import GeneDataset
+from .gene_utils import GeneDataset
 
 
 class LogNormalPoisson(TorchDistribution):

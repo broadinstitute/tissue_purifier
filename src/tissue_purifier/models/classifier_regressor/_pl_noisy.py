@@ -5,8 +5,8 @@ from pytorch_lightning import LightningModule
 import torch
 import torch.nn.functional
 from typing import List, Tuple
-from tissue_purifier.model_utils.classifier_regressor._mlp import make_mlp_torch
-from tissue_purifier.model_utils._optim_scheduler import linear_warmup_and_cosine_protocol
+from ._mlp import make_mlp_torch
+from .._optim_scheduler import linear_warmup_and_cosine_protocol
 
 
 class PlMlpNoisy(LightningModule):

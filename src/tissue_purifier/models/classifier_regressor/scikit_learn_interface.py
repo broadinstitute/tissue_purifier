@@ -7,8 +7,8 @@ from abc import ABC
 from pytorch_lightning import LightningModule
 from pytorch_lightning.trainer import Trainer
 from sklearn.metrics import r2_score, accuracy_score
-from tissue_purifier.model_utils.classifier_regressor._pl_clean import PlMlpClean
-from tissue_purifier.model_utils.classifier_regressor._pl_noisy import PlMlpNoisy
+from ._pl_clean import PlMlpClean
+from ._pl_noisy import PlMlpNoisy
 
 
 class BaseEstimator(ABC):

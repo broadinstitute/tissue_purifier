@@ -1,18 +1,6 @@
 from typing import NamedTuple, Tuple, Dict, Optional, Union, List, Any
 import torch
-import pyro
-import pyro.distributions as dist
-from pyro.distributions.torch_distribution import TorchDistribution
-from pyro.distributions.util import broadcast_shape
-from pyro.ops.special import get_quad_rule
-from torch.distributions import constraints
-from torch.distributions.utils import broadcast_all, lazy_property
-from pyro.infer import SVI, Trace_ELBO
-import pandas as pd
-import pyro.poutine
-import pyro.optim
 from sklearn.model_selection import StratifiedShuffleSplit, ShuffleSplit
-import matplotlib.pyplot as plt
 import numpy
 from scanpy import AnnData
 

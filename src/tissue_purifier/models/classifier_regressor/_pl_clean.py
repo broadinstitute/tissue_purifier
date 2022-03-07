@@ -1,8 +1,8 @@
 from pytorch_lightning import LightningModule
 from typing import List, Callable, Tuple
 import torch
-from tissue_purifier.model_utils.classifier_regressor._mlp import make_mlp_torch
-from tissue_purifier.model_utils._optim_scheduler import linear_warmup_and_cosine_protocol
+from ._mlp import make_mlp_torch
+from .._optim_scheduler import linear_warmup_and_cosine_protocol
 
 
 class PlMlpClean(LightningModule):
