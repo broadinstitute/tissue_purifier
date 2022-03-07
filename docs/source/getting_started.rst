@@ -123,6 +123,8 @@ Older versions are available at the same location, for example as
 
 How to run
 ----------
+There are 3 ways to run the code:
+
 You can run the notebooks sequentially:
 
 - `notebook1 <https://github.com/broadinstitute/tissue_purifier/blob/main/notebooks/notebook1.ipynb>`_.
@@ -131,30 +133,45 @@ You can run the notebooks sequentially:
 
 - `notebook3 <https://github.com/broadinstitute/tissue_purifier/blob/main/notebooks/notebook3.ipynb>`_.
 
-or from the command line:
-
-First download the example data locally.
+Or you can run the code locally from the command line:
+First download the example data and untar it in the "testis_anndata" directory.
 .. code-block::
     python -c
-        'import tissue_purifier as tp
+        'import tissue_purifier as tp;
         import tissue_purifier.io;
-        bucket_name = "ld-data-bucket"
-        data_source_path = "tissue-purifier/slideseq_testis_anndata_h5ad.tar.gz"
-        data_destination_path = "./slideseq_testis_anndata_h5ad.tar.gz"
-        data_destination_folder = "./testis_anndata"
-        tp.io.download_from_bucket(bucket_name, data_source_path, data_destination_path)
+        bucket_name = "ld-data-bucket";
+        data_source_path = "tissue-purifier/slideseq_testis_anndata_h5ad.tar.gz";
+        data_destination_path = "./slideseq_testis_anndata_h5ad.tar.gz";
+        tp.io.download_from_bucket(bucket_name, data_source_path, data_destination_path)'
 
-        with tarfile.open(data_destination_path, "r:gz") as fp:
-            fp.extractall(path=data_destination_folder)
-        '
+    mkdir -p ./testis_anndata
+    tar -xzf slideseq_testis_anndata_h5ad.tar.gz -C /testis_anndata.
 
-Next navigate to the run directory and execute the following commands:
+Next, navigate to the "tissue_purifier/run" directory and train the model (this will take about 6 hrs on a Nvidia p100):
+
 .. code-block::
     cd tissue_purifier/run
     python main_1_train_ssl.py --config config_barlow_ssl.yaml --data_folder testis_anndata
+
+    # or alternatively
+    # python main_1_train_ssl.py --config config_dino_ssl.yaml --data_folder slide_seq_testis --gpus 2
+    # python main_1_train_ssl.py --config config_simclr_ssl.yaml --data_folder slide_seq_testis --gpus 2
+    # python main_1_train_ssl.py --config config_vae_ssl.yaml --data_folder slide_seq_testis --gpus 2
+
+Next extract the features and evaluate them (this will take only few minutes to run):
+.. code-block::
     python main_2_featurize.py --anndata_in testis_anndata/XXX.h5ad --andata_out testis_anndata_processed/XXX.h5ad --ckpt XXX.pt
     python main_3_genex.py --anndata_in XXX --l1 0.1 --n_pca 9 --XXX # DOUBLE CHECK
 
+It might make sense to train your model remotely on google cloud.
+You can do this, in many ways, for example by using "cromshell":
+
+.. code-block::
+    cd tissue_purifier/run
+    ./submit_neptune_ml.sh neptune_ml.wdl --py main_1_train_ssl.py --wdl WDL_parameters.json --ml config_barlow_ssl.yaml
+    cromshell list -u -c
+
+Step 2 and 3 can be run locally since they are much shorter (see above).
 
 Features and Limitations
 ------------------------

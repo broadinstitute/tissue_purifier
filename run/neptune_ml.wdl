@@ -4,6 +4,7 @@ task train {
     input {
         File MAIN_PY
         File ML_CONFIG
+        File anndata_tar_gz
         File ckpt_previous_run
         File credentials_json
         String git_repo
@@ -38,7 +39,11 @@ task train {
         # 4. Install the package
         #    and create links from delocalized files and give them the name you expects
         pip install .  # this means that your package has a setup.py file
-        ln -s ~{MAIN_PY} ./main.py  
+
+        # 5. prepare the files
+        mkdir -p ./data_folder
+        tar -xzf ~{anndata_tar_gz} -C ./data_folder
+        ln -s ~{MAIN_PY} ./main.py
         ln -s ~{ML_CONFIG} ./config.yaml
         ln -s $exec_dir/my_checkpoint.ckpt ./preemption_ckpt.pt  # this is to resume a pre-empted run     (it has precedence)
         ln -s ~{ckpt_previous_run} ./old_run_ckpt.pt             # this is to resume from a previous run  (secondary)
@@ -50,12 +55,12 @@ task train {
         neptune_token=$(cat ~{credentials_json} | grep -o '"NEPTUNE_API_TOKEN"\s*:\s*"[^"]*"' | grep -o '"[^"]*"$')
         if [ ! -z $neptune_token ]; then
            export NEPTUNE_API_TOKEN=$neptune_token
-           python main.py --config ./config.yaml
+           python main.py --config ./config.yaml --data_folder data_folder --gpus ~{gpus_count}
         fi
     >>>
     
     runtime {
-         docker: "us.gcr.io/broad-dsde-methods/tissue_purifier:0.0.3"
+         docker: "us.gcr.io/broad-dsde-methods/tissue_purifier:0.0.4"
          bootDiskSizeGb: 200
          memory: "26G"
          cpu: cpus_count
@@ -73,7 +78,8 @@ workflow neptune_ml {
 
     input {
         File MAIN_PY
-        File ML_CONFIG 
+        File ML_CONFIG
+        File anndata_tar_gz
         File ckpt_previous_run
         File credentials_json
         String git_repo
@@ -87,6 +93,7 @@ workflow neptune_ml {
         input :
             MAIN_PY = MAIN_PY,
             ML_CONFIG = ML_CONFIG,
+            anndata_tar_gz = anndata_tar_gz,
             credentials_json = credentials_json,
             ckpt_previous_run = ckpt_previous_run,
             git_repo = git_repo,
