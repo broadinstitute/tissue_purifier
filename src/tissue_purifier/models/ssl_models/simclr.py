@@ -2,9 +2,9 @@ from typing import List, Any, Dict
 import torch
 from torch.nn import functional as F
 from argparse import ArgumentParser
-from tissue_purifier.model_utils.ssl_models._resnet_backbone import make_resnet_backbone
-from tissue_purifier.model_utils.ssl_models._ssl_base_model import SslModelBase
-from tissue_purifier.model_utils._optim_scheduler import LARS, linear_warmup_and_cosine_protocol
+from ._resnet_backbone import make_resnet_backbone
+from ._ssl_base_model import SslModelBase
+from tissue_purifier.models._optim_scheduler import LARS, linear_warmup_and_cosine_protocol
 
 
 class NTXentLoss(torch.nn.Module):

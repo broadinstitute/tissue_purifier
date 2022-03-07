@@ -4,9 +4,9 @@ from torch.nn import functional as F
 import math
 from argparse import ArgumentTypeError as ArgparseArgumentTypeError
 from argparse import ArgumentParser
-from tissue_purifier.model_utils.ssl_models._resnet_backbone import make_resnet_backbone
-from tissue_purifier.model_utils.ssl_models._ssl_base_model import SslModelBase
-from tissue_purifier.model_utils._optim_scheduler import LARS, linear_warmup_and_cosine_protocol
+from ._resnet_backbone import make_resnet_backbone
+from ._ssl_base_model import SslModelBase
+from tissue_purifier.models._optim_scheduler import LARS, linear_warmup_and_cosine_protocol
 
 
 def smart_bool(v):

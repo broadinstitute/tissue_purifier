@@ -3,10 +3,10 @@ import torch
 from argparse import ArgumentParser
 from pytorch_lightning.utilities.distributed import sync_ddp_if_available  # wrapper around torch.distributed.all_reduce
 from neptune.new.types import File
-from tissue_purifier.model_utils.ssl_models._resnet_backbone import make_resnet_backbone
-from tissue_purifier.model_utils.ssl_models._ssl_base_model import SslModelBase
-from tissue_purifier.plot_utils.plot_misc import show_corr_matrix
-from tissue_purifier.model_utils._optim_scheduler import LARS, linear_warmup_and_cosine_protocol
+from ._resnet_backbone import make_resnet_backbone
+from ._ssl_base_model import SslModelBase
+from tissue_purifier.plots.plot_misc import show_corr_matrix
+from tissue_purifier.models._optim_scheduler import LARS, linear_warmup_and_cosine_protocol
 
 
 class BarlowModel(SslModelBase):

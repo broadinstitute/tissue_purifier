@@ -10,15 +10,15 @@ from sklearn.model_selection import RepeatedStratifiedKFold, RepeatedKFold
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.linear_model import RidgeClassifierCV, RidgeCV
 
-from tissue_purifier.data_utils.dataset import MetadataCropperDataset
-from tissue_purifier.plot_utils.plot_images import show_raw_all_channels
-from tissue_purifier.plot_utils.plot_embeddings import plot_embeddings
-from tissue_purifier.misc_utils.nms_util import NonMaxSuppression
-from tissue_purifier.misc_utils.dict_util import (
+from tissue_purifier.data.dataset import MetadataCropperDataset
+from tissue_purifier.plots.plot_images import show_raw_all_channels
+from tissue_purifier.plots.plot_embeddings import plot_embeddings
+from tissue_purifier.utils.nms_util import NonMaxSuppression
+from tissue_purifier.utils.dict_util import (
     concatenate_list_of_dict,
     subset_dict)
 
-from tissue_purifier.misc_utils.validation_util import (
+from tissue_purifier.utils.validation_util import (
     SmartPca,
     SmartUmap)
 
