@@ -2,8 +2,8 @@ from typing import List, Optional, Tuple, Union
 import numpy
 import copy
 import torch
-from tissue_purifier.model_utils.patch_analyzer.patch_analyzer import SpatialAutocorrelation
-from tissue_purifier.data_utils.dataset import CropperSparseTensor
+from tissue_purifier.models.patch_analyzer import SpatialAutocorrelation
+from tissue_purifier.data.dataset import CropperSparseTensor
 from scanpy import AnnData
 import matplotlib.cm
 import matplotlib.colors
