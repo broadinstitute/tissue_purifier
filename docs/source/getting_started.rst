@@ -22,9 +22,12 @@ a discrete cell-type (such as Macrophage, B-Cells, ...) to each cell.
 This type of data can be nicely organized into anndata objects, which are data-structure 
 specifically designed for transcriptomic data. 
 Each anndata object contains a list of all the cells in a tissue together with (at the minimum):
+
 1. the gene expression profile 
+
 2. the cell-type label
-3. the spatial coordinates (either in 2D or 3D) 
+
+3. the spatial coordinates (either in 2D or 3D)
 
 This rich data can unlock interesting scientific discoveries, but it is difficult to analyze.
 Here is where *Tissue Purifier* comes in.
@@ -116,10 +119,12 @@ A GPU-enabled docker image is available from the Google Container Registry (GCR)
 
 Older versions are available at the same location, for example as
 
-``us.gcr.io/broad-dsde-methods/tissuepurifier:0.0.4``
+``us.gcr.io/broad-dsde-methods/tissuepurifier:0.0.5``
 
 How to run
 ----------
+There are 3 ways to run the code:
+
 You can run the notebooks sequentially:
 
 - `notebook1 <https://github.com/broadinstitute/tissue_purifier/blob/main/notebooks/notebook1.ipynb>`_.
@@ -128,14 +133,45 @@ You can run the notebooks sequentially:
 
 - `notebook3 <https://github.com/broadinstitute/tissue_purifier/blob/main/notebooks/notebook3.ipynb>`_.
 
-or from the command line:
+Or you can run the code locally from the command line:
+First download the example data and untar it in the "testis_anndata" directory.
+.. code-block::
+    python -c
+        'import tissue_purifier as tp;
+        import tissue_purifier.io;
+        bucket_name = "ld-data-bucket";
+        data_source_path = "tissue-purifier/slideseq_testis_anndata_h5ad.tar.gz";
+        data_destination_path = "./slideseq_testis_anndata_h5ad.tar.gz";
+        tp.io.download_from_bucket(bucket_name, data_source_path, data_destination_path)'
+
+    mkdir -p ./testis_anndata
+    tar -xzf slideseq_testis_anndata_h5ad.tar.gz -C /testis_anndata.
+
+Next, navigate to the "tissue_purifier/run" directory and train the model (this will take about 6 hrs on a Nvidia p100):
 
 .. code-block::
+    cd tissue_purifier/run
+    python main_1_train_ssl.py --config config_barlow_ssl.yaml --data_folder testis_anndata
 
-    python ssl.py --from_yaml config.from_yaml  # train ssl
-    python analyze.py --anndata_in XXX --ckpt_file XXX.pt  # DOUBLE CHECK
-    python genex.py --anndata_in XXX --l1  --l2 # DOUBLE CHECK
+    # or alternatively
+    # python main_1_train_ssl.py --config config_dino_ssl.yaml --data_folder slide_seq_testis --gpus 2
+    # python main_1_train_ssl.py --config config_simclr_ssl.yaml --data_folder slide_seq_testis --gpus 2
+    # python main_1_train_ssl.py --config config_vae_ssl.yaml --data_folder slide_seq_testis --gpus 2
 
+Next extract the features and evaluate them (this will take only few minutes to run):
+.. code-block::
+    python main_2_featurize.py --anndata_in testis_anndata/XXX.h5ad --andata_out testis_anndata_processed/XXX.h5ad --ckpt XXX.pt
+    python main_3_genex.py --anndata_in XXX --l1 0.1 --n_pca 9 --XXX # DOUBLE CHECK
+
+It might make sense to train your model remotely on google cloud.
+You can do this, in many ways, for example by using "cromshell":
+
+.. code-block::
+    cd tissue_purifier/run
+    ./submit_neptune_ml.sh neptune_ml.wdl --py main_1_train_ssl.py --wdl WDL_parameters.json --ml config_barlow_ssl.yaml
+    cromshell list -u -c
+
+Step 2 and 3 can be run locally since they are much shorter (see above).
 
 Features and Limitations
 ------------------------
@@ -157,12 +193,26 @@ Future Improvements
 2. probabilistic cell-type assignment
 3. pairing with histopathology (i.e. dense-image) 
 
+
+
+Contributing
+------------
+We aspire to make TissuePurifier an easy-to-use, robust, and accurate software package for the bioinformatics community.
+While we test and improve TissuePurifier together with our research collaborators, your feedback is invaluable to us
+and allow us to steer CellBender in the direction that you find most useful in your research.
+If you have an interesting idea or suggestion, please do not hesitate to reach out to us.
+
+If you encounter a bug, please file a detailed github `issue <https://github.com/broadinstitute/TissuePurifier/issues>`_
+and we will get back to you as soon as possible.
+
 Citation
 --------
-This software package was developed by `Luca D'Alessio <dalessioluca@gmail.com>`_ and
-`Fedor Grab <grab.f@northeastern.edu>`_.
+This software package was developed by *Luca D'Alessio* and *Fedor Grab*.
 
-::
+..
+  If you use TissuePurifier please consider citing:
+
+  ::
     @article{YourName,
     title={Your Title},
     author={Your team},

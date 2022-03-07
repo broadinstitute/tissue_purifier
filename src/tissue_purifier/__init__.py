@@ -1,13 +1,11 @@
 __version__ = "0.0.1"
 
-from tissue_purifier.model_utils.ssl_models.barlow import BarlowModel
-from tissue_purifier.model_utils.ssl_models.vae import VaeModel
-from tissue_purifier.model_utils.ssl_models.dino import DinoModel
-from tissue_purifier.model_utils.ssl_models.simclr import SimclrModel
-
+# The actual API
 __all__ = [
-        "BarlowModel",
-        "VaeModel",
-        "DinoModel",
-        "SimclrModel",
+    "data",
+    "genex",
+    "utils",
+    "io",
+    "models",
+    "plots",
 ]

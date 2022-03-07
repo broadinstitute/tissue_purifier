@@ -10,5 +10,5 @@ Note that the samplers are only partially documented. For example usage see
 
 
 
-.. autoclass:: tissue_purifier.data_utils.sparse_image.SparseImage
+.. autoclass:: tissue_purifier.data.sparse_image.SparseImage
    :members:
