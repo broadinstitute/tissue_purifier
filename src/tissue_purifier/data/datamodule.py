@@ -11,9 +11,9 @@ import torchvision
 from os import cpu_count
 from scanpy import AnnData
 
-from tissue_purifier.data_utils.sparse_image import SparseImage
-from tissue_purifier.model_utils.patch_analyzer.patch_analyzer import SpatialAutocorrelation
-from tissue_purifier.data_utils.transforms import (
+from tissue_purifier.models.patch_analyzer import SpatialAutocorrelation
+from .sparse_image import SparseImage
+from .transforms import (
     DropoutSparseTensor,
     SparseToDense,
     TransformForList,
@@ -26,7 +26,7 @@ from tissue_purifier.data_utils.transforms import (
     # LargestSquareCrop,
     # ToRgb,
 )
-from tissue_purifier.data_utils.dataset import (
+from .dataset import (
     CropperDataset,
     DataLoaderWithLoad,
     CollateFnListTuple,
