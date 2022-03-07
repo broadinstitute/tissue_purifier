@@ -22,9 +22,12 @@ a discrete cell-type (such as Macrophage, B-Cells, ...) to each cell.
 This type of data can be nicely organized into anndata objects, which are data-structure 
 specifically designed for transcriptomic data. 
 Each anndata object contains a list of all the cells in a tissue together with (at the minimum):
+
 1. the gene expression profile 
+
 2. the cell-type label
-3. the spatial coordinates (either in 2D or 3D) 
+
+3. the spatial coordinates (either in 2D or 3D)
 
 This rich data can unlock interesting scientific discoveries, but it is difficult to analyze.
 Here is where *Tissue Purifier* comes in.
@@ -130,11 +133,27 @@ You can run the notebooks sequentially:
 
 or from the command line:
 
+First download the example data locally.
 .. code-block::
+    python -c
+        'import tissue_purifier as tp
+        import tissue_purifier.io;
+        bucket_name = "ld-data-bucket"
+        data_source_path = "tissue-purifier/slideseq_testis_anndata_h5ad.tar.gz"
+        data_destination_path = "./slideseq_testis_anndata_h5ad.tar.gz"
+        data_destination_folder = "./testis_anndata"
+        tp.io.download_from_bucket(bucket_name, data_source_path, data_destination_path)
 
-    python ssl.py --from_yaml config.from_yaml  # train ssl
-    python analyze.py --anndata_in XXX --ckpt_file XXX.pt  # DOUBLE CHECK
-    python genex.py --anndata_in XXX --l1  --l2 # DOUBLE CHECK
+        with tarfile.open(data_destination_path, "r:gz") as fp:
+            fp.extractall(path=data_destination_folder)
+        '
+
+Next navigate to the run directory and execute the following commands:
+.. code-block::
+    cd tissue_purifier/run
+    python main_1_train_ssl.py --config config_barlow_ssl.yaml --data_folder testis_anndata
+    python main_2_featurize.py --anndata_in testis_anndata/XXX.h5ad --andata_out testis_anndata_processed/XXX.h5ad --ckpt XXX.pt
+    python main_3_genex.py --anndata_in XXX --l1 0.1 --n_pca 9 --XXX # DOUBLE CHECK
 
 
 Features and Limitations
