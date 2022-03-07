@@ -164,14 +164,13 @@ class SparseSslDM(SslDM):
                  local_scale: Tuple[float] = (0.5, 0.8),
                  global_intensity: Tuple[float, float] = (0.8, 1.2),
                  n_element_min_for_crop: int = 200,
-                 dropouts: Tuple[float] = (0.1, 0.2, 0.3),
+                 drop_spot_probs: Tuple[float] = (0.1, 0.2, 0.3),
                  rasterize_sigmas: Tuple[float] = (1.0, 1.5),
                  occlusion_fraction: Tuple[float, float] = (0.1, 0.3),
                  drop_channel_prob: float = 0.0,
                  drop_channel_relative_freq: Iterable[float] = None,
                  n_crops_for_tissue_test: int = 50,
                  n_crops_for_tissue_train: int = 50,
-                 # batch_size
                  batch_size_per_gpu: int = 64,
                  **kargs):
         """
@@ -184,7 +183,7 @@ class SparseSslDM(SslDM):
             local_scale: in RandomResizedCrop the scale of global crops will be drawn uniformly between these values
             global_intensity: all channels will be multiplied by a number in this range
             n_element_min_for_crop: minimum number of beads/cell in a crop
-            dropouts: Possible values of the dropout. Should be > 0.0
+            drop_spot_probs: Probability of dropping out spots (in sparse image). Should be > 0.0
             rasterize_sigmas: Possible values of the sigma of the gaussian kernel used for rasterization.
             occlusion_fraction: Fraction of the sample which is occluded is drawn uniformly between these values
             drop_channel_prob: Probability that a channel will be set to zero,
@@ -206,7 +205,7 @@ class SparseSslDM(SslDM):
         self._global_scale = global_scale
         self._local_scale = local_scale
         self._global_intensity = global_intensity
-        self._dropouts = dropouts
+        self._drop_spot_probs = drop_spot_probs
         self._rasterize_sigmas = rasterize_sigmas
         self._occlusion_fraction = occlusion_fraction
         self._drop_channel_prob = drop_channel_prob
@@ -238,8 +237,9 @@ class SparseSslDM(SslDM):
                             help="All channels will be multiplied by a value within this range")
         parser.add_argument("--n_element_min_for_crop", type=int, default=200,
                             help="minimum number of beads/cell in a crop")
-        parser.add_argument("--dropouts", type=float, nargs='*', default=[0.1, 0.2, 0.3],
-                            help="Possible values of the dropout. Should be > 0.0")
+        parser.add_argument("--drop_spot_probs", type=float, nargs='*', default=[0.1, 0.2, 0.3],
+                            help="Probability of dropping out spots in the sparse image. Should be in (0.0, 1.0). \
+                                  If a tuple is given. A random value for the tuple is chosen.")
         parser.add_argument("--rasterize_sigmas", type=float, nargs='*', default=[1.0, 1.5],
                             help="Possible values of the sigma of the gaussian kernel used for rasterization")
         parser.add_argument("--occlusion_fraction", type=float, nargs=2, default=[0.1, 0.3],
@@ -300,7 +300,7 @@ class SparseSslDM(SslDM):
     def trsfm_test(self) -> Callable:
         return TransformForList(
             transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropout_rate=self._dropouts),
+                DropoutSparseTensor(p=0.5, dropout_rate=self._drop_spot_probs),
                 SparseToDense(),
                 Rasterize(sigmas=self._rasterize_sigmas, normalize=False),
                 RandomVFlip(p=0.5),
@@ -314,7 +314,7 @@ class SparseSslDM(SslDM):
     def trsfm_train_global(self) -> Callable:
         return TransformForList(
             transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropout_rate=self._dropouts),
+                DropoutSparseTensor(p=0.5, dropout_rate=self._drop_spot_probs),
                 SparseToDense(),
                 RandomGlobalIntensity(f_min=self._global_intensity[0], f_max=self._global_intensity[1])
             ]),
@@ -342,7 +342,7 @@ class SparseSslDM(SslDM):
     def trsfm_train_local(self) -> Callable:
         return TransformForList(
             transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropout_rate=self._dropouts),
+                DropoutSparseTensor(p=0.5, dropout_rate=self._drop_spot_probs),
                 SparseToDense(),
                 RandomGlobalIntensity(f_min=self._global_intensity[0], f_max=self._global_intensity[1])
             ]),
