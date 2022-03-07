@@ -1,6 +1,3 @@
-# to remove
-to_yaml: null
-
 # general 
 random_seed: 1
 neptune_project: cellarium/tissue-purifier
@@ -12,10 +9,10 @@ gradient_clip_algorithm: value
 gradient_clip_val: 0.5
 initialization_type: scratch
 remote_logging: true
-gpus: 1 
+# gpus: 2 update with the number of GPUs available on your system
 precision: 16
 num_workers: 4
-# debugging options
+#---- debugging options
 profiler: passthrough
 overfit_batches: 0
 detect_anomaly: false
@@ -25,21 +22,18 @@ deterministic: false
 val_iomin_threshold: 0.0
 
 # architecture
-ssl_model: barlow
+ssl_model: simclr
 backbone_type: resnet34
 image_in_ch: 9
 head_hidden_chs:
-- 2048
-- 2048
-head_out_ch: 2048
-
-# loss
-lambda_off_diagonal: 0.005
+- 128
+- 256
+head_out_ch: 128
 
 # optimizers
 optimizer_type: adam
-min_learning_rate: 1.0e-05
-max_learning_rate: 0.0005
+min_learning_rate: 1.0E-4
+max_learning_rate: 5.0E-4
 min_weight_decay: 0.04
 max_weight_decay: 0.4
 warm_up_epochs: 100
@@ -47,7 +41,7 @@ warm_down_epochs: 500
 max_epochs: 1000
 
 # dataset
-data_folder: ./slide_seq_testis
+# data_folder: update with the path to the folder with the anndata.h5ad files
 n_crops_for_tissue_test: 1000
 n_crops_for_tissue_train: 1000
 n_element_min_for_crop: 200
