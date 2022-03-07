@@ -399,6 +399,8 @@ def parse_args(argv: List[str]) -> dict:
     # Process everything
     args = parser.parse_args(argv)
     config_dict_full = vars(args)
+    # remove next line. It is here just to check that the config file is complete.
+    config_dict_full = dict()
     config_dict_full.update(yaml_config_dict)  # yaml config has priority
 
     return config_dict_full
@@ -410,6 +412,7 @@ if __name__ == '__main__':
 
     to_yaml_file = config_dict_["to_yaml"]
     if to_yaml_file is not None:
+        print("Writing the config parameters to file ->", to_yaml_file)
         config_dict_.pop('to_yaml', None)
         config_dict_.pop('config', None)
         import yaml

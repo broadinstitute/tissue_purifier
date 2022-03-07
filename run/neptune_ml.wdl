@@ -50,7 +50,7 @@ task train {
         neptune_token=$(cat ~{credentials_json} | grep -o '"NEPTUNE_API_TOKEN"\s*:\s*"[^"]*"' | grep -o '"[^"]*"$')
         if [ ! -z $neptune_token ]; then
            export NEPTUNE_API_TOKEN=$neptune_token
-           python main.py --from_yaml ./config.yaml
+           python main.py --config ./config.yaml
         fi
     >>>
     
