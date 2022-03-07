@@ -396,13 +396,12 @@ def parse_args(argv: List[str]) -> dict:
     # Add help at the very end
     parser = argparse.ArgumentParser(parents=[parser], add_help=True)
 
-    # Process everything
+    # Process everything.
+    # Note that the priority order is:
+    # config.yaml > CLI params > defaults value
     args = parser.parse_args(argv)
-    config_dict_full = vars(args)
-    # remove next line. It is here just to check that the config file is complete.
-    config_dict_full = dict()
-    config_dict_full.update(yaml_config_dict)  # yaml config has priority
-
+    config_dict_full = vars(args)  # this contains CLI params or their default
+    config_dict_full.update(yaml_config_dict)  # override with the yaml config params
     return config_dict_full
 
 
