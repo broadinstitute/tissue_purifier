@@ -15,12 +15,12 @@ from pytorch_lightning.trainer import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 from tissue_purifier.data import AnndataFolderDM
-from tissue_purifier.models import (
+from tissue_purifier.models import NeptuneLoggerCkpt
+from tissue_purifier.models.ssl_models import (
     Barlow,
     Dino,
     Vae,
     Simclr,
-    NeptuneLoggerCkpt,
 )
 
 
