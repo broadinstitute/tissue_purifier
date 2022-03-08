@@ -92,9 +92,7 @@ def show_batch(
         figsize: size of the figure
     """
     assert len(tensor.shape) >= 4  # *, ch, width, height
-
-    # upgrade to full precision in case I am working in half precision.
-    tensor = tensor.flatten(end_dim=-4).to(dtype=torch.float32)  # -1, ch, width, height
+    tensor = tensor.flatten(end_dim=-4)  # -1, ch, width, height
     ch = tensor.shape[-3]
 
     if ch > 3:
@@ -106,7 +104,7 @@ def show_batch(
     else:
         images = tensor[..., :1, :, :]
 
-    images = images.cpu()
+    images = images.cpu().to(dtype=torch.float32)  # upgrade to full precision if working in half precision.
     n_images = images.shape[-4]
     n_row = int(numpy.ceil(float(n_images) / n_col))
 
