@@ -296,7 +296,7 @@ def show_corr_matrix(data: torch.Tensor, show_colorbar: bool = True, sup_title: 
     _ = axes[0, 0].set_title("Diagonal and off-diagonal")
 
     diagonal = data[mask].flatten().numpy()
-    _ = seaborn.histplot(x=diagonal, kde=True, bins=100, axes=[1, 0])
+    _ = seaborn.histplot(x=diagonal, kde=True, bins=100, ax=axes[1, 0])
     _ = axes[1, 0].set_title("Histogram of the diagonal element")
 
     data_overwritten = data.clone()
@@ -312,7 +312,7 @@ def show_corr_matrix(data: torch.Tensor, show_colorbar: bool = True, sup_title: 
     _ = axes[0, 1].set_title("Off-diagonal only")
 
     off_diagonal = data[~mask].flatten().numpy()
-    _ = seaborn.histplot(x=off_diagonal, kde=True, bins=100, axes=[1, 1])
+    _ = seaborn.histplot(x=off_diagonal, kde=True, bins=100, ax=axes[1, 1])
     _ = axes[1, 1].set_title("Histogram of the off-diagonal element")
 
     if sup_title:
