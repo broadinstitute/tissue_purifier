@@ -1,20 +1,20 @@
+import numpy
 import torch
 import matplotlib.pyplot as plt
-import numpy
 
 
-def plot_few_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
+def plot_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
     """
-    Plot the per cell-type histogram.
+    Plot the per cell-type histogram. If :attr:`value2_ng` is defined the two histogram are interlieved.
 
     Args:
-        cell_types_n: tensor of shape N with the cell type information
-        value1_ng: first quantity to plot of shape (N,G)
-        value2_ng: the secont quantity to plot of shape (N,G)
+        cell_types_n: tensor of shape N with the cell type labels (with K distinct values)
+        value1_ng: the first quantity to whose histogram is computed lot of shape (N,G)
+        value2_ng: the second quantity to plot of shape (N,G) (optional)
         bins: number of bins in the histogram
 
     Returns:
-        A figure with G rows and K columns where K is the number of distinct cell types
+        A figure with G rows and K columns where K is the number of distinct cell types.
     """
 
     assert len(cell_types_n.shape) == 1

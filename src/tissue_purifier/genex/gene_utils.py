@@ -1,8 +1,9 @@
-from typing import NamedTuple, Tuple, Dict, Optional, Union, List, Any
 import torch
-from sklearn.model_selection import StratifiedShuffleSplit, ShuffleSplit
 import numpy
 from scanpy import AnnData
+from typing import NamedTuple, Union, List, Any
+from sklearn.model_selection import StratifiedShuffleSplit, ShuffleSplit
+from tissue_purifier.utils.validation_util import SmartPca
 
 
 def _make_labels(y: Union[torch.Tensor, numpy.ndarray, List[Any]]) -> torch.Tensor:
@@ -43,35 +44,68 @@ class GeneDataset(NamedTuple):
 def make_gene_dataset_from_anndata(
         anndata: AnnData,
         cell_type_key: str,
-        covariate_key: str) -> GeneDataset:
+        covariate_key: str,
+        preprocess_strategy: str = 'raw',
+        apply_pca: bool = False,
+        n_components: Union[int, float] = 0.9) -> GeneDataset:
     """
-    Convert a anndata object into a GeneDataset object which can be used for gene regression
+    Convert a anndata object into a GeneDataset object which can be used for gene regression.
 
     Args:
-        anndata: AnnData object with the count data
+        anndata: AnnData object with the raw counts stored in anndata.X
         cell_type_key: key corresponding to the cell type, i.e. cell_types = anndata.obs[cell_type_key]
         covariate_key: key corresponding to the covariate, i.e. covariates = anndata.obsm[covariate_key]
+        preprocess_strategy: either 'center', 'z_score' or 'raw'. It describes how to process the covariate.
+            'raw' (default) means no preprocessing.
+        apply_pca: if True, we compute the pca of the covariate. This operation happens after the preprocessing.
+        n_components: Used only if :attr:`apply_pca` == True.
+            If integer specifies the dimensionality of the data after PCA.
+            If float in (0, 1) it auto selects the dimensionality so that the explained variance is at least that value.
 
     Returns:
         a GeneDataset object
     """
 
+    assert preprocess_strategy in {'center', 'z_score', 'raw'}, \
+        'Preprocess strategy must be either "center", "z_score" or "raw"'
+
+    assert (isinstance(n_components, int) and n_components >= 1) or \
+        (isinstance(n_components, float) and 0.0 < n_components < 1.0), \
+        "n_components must be a positive integer or a float in (0.0, 1.0)"
+
+    assert cell_type_key in set(anndata.obs.keys()), "Cell_type_key is not present in anndata.obs.keys()"
+    assert covariate_key in set(anndata.obsm.keys()), "Covariate_key is not present in anndata.obsm.keys()"
+
     cell_types = list(anndata.obs[cell_type_key].values)
     cell_type_ids_n = _make_labels(cell_types)
     counts_ng = torch.tensor(anndata.X.toarray()).long()
-    covariates_nl = torch.tensor(anndata.obsm[covariate_key])
+    covariates_nl_raw = torch.tensor(anndata.obsm[covariate_key])
 
     assert len(counts_ng.shape) == 2
-    assert len(covariates_nl.shape) == 2
+    assert len(covariates_nl_raw.shape) == 2
     assert len(cell_type_ids_n.shape) == 1
 
-    assert counts_ng.shape[0] == covariates_nl.shape[0] == cell_type_ids_n.shape[0]
+    assert counts_ng.shape[0] == covariates_nl_raw.shape[0] == cell_type_ids_n.shape[0]
 
     k_cell_types = cell_type_ids_n.max().item() + 1  # +1 b/c ids start from zero
 
+    if apply_pca:
+        new_covariate = SmartPca(preprocess_strategy=preprocess_strategy).fit_transform(data=covariates_nl_raw,
+                                                                                        n_components=n_components)
+    elif preprocess_strategy == 'z_score':
+        std, mean = torch.std_mean(covariates_nl_raw, dim=-2, unbiased=True, keepdim=True)
+        mask = (std == 0.0)
+        std[mask] = 1.0
+        new_covariate = (covariates_nl_raw - mean) / std
+    elif preprocess_strategy == 'center':
+        mean = torch.mean(covariates_nl_raw, dim=-2, keepdim=True)
+        new_covariate = covariates_nl_raw - mean
+    else:
+        new_covariate = covariates_nl_raw
+
     return GeneDataset(
         cell_type_ids=cell_type_ids_n.detach().cpu(),
-        covariates=covariates_nl.detach().cpu(),
+        covariates=new_covariate.detach().cpu(),
         counts=counts_ng.detach().cpu(),
         k_cell_types=k_cell_types)
 
@@ -81,9 +115,9 @@ def generate_fake_data(
         genes: int = 500,
         covariates: int = 20,
         cell_types: int = 9,
-        alpha_scale: float = 0.01,
-        alpha0_loc: float = -5.0,
-        alpha0_scale: float = 0.5,
+        beta_scale: float = 0.01,
+        beta0_loc: float = -5.0,
+        beta0_scale: float = 0.5,
         noise_scale: float = 0.1):
     """
     Helper function to generate synthetic count data
@@ -93,16 +127,16 @@ def generate_fake_data(
         genes: number of genes
         covariates: number of covariates
         cell_types: number of cell types
-        alpha_scale: scale for alpha (i.e. the regression coefficients)
-        alpha0_loc: loc of alpha0 (mean value for the zero regression coefficients, i.e. offset)
-        alpha0_scale: scale for alpha0 (i.e. variance of the zero regression coefficients, i.e. offset)
+        beta_scale: variance of the regression coefficients)
+        beta0_loc: mean value of the offset.
+        beta0_scale: variance of the offset
         noise_scale: noise scale (gene-specific overdispersion)
     """
     cov_nl = torch.randn((cells, covariates))
     cell_ids_n = torch.randint(low=0, high=cell_types, size=[cells])
 
-    alpha_klg = alpha_scale * torch.randn((cell_types, covariates, genes))
-    alpha0_kg = alpha0_loc + alpha0_scale * torch.randn((cell_types, genes))
+    alpha_klg = beta_scale * torch.randn((cell_types, covariates, genes))
+    alpha0_kg = beta0_loc + beta0_scale * torch.randn((cell_types, genes))
     eps_g = torch.randn(genes).abs() * noise_scale + 1E-4  # std per gene
     eps_ng = torch.randn(cells, genes) * eps_g
 
@@ -140,6 +174,8 @@ def train_test_val_split(
         random_state: int = None,
         stratify: bool = True):
     """
+    Utility function used to split the data into train/test/val.
+
     Args:
         data: the data to split into train/test/val
         train_size: the relative size of the train dataset

@@ -1,4 +1,5 @@
-from typing import List, Optional, Tuple, Union
+from __future__ import annotations
+from typing import List, Optional, Tuple, Union, TYPE_CHECKING
 import numpy
 import copy
 import torch
@@ -10,8 +11,9 @@ import matplotlib.colors
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 
-# comment this out otherwise circular imports
-# from tissue_purifier.data_utils.datamodule import AnndataFolderDM
+# trick to avoid circular imports
+if TYPE_CHECKING:
+    from .datamodule import AnndataFolderDM
 
 
 class SparseImage:
@@ -559,7 +561,7 @@ class SparseImage:
     def compute_patch_features(
             self,
             feature_name: str,
-            datamodule: "AnndataFolderDM",
+            datamodule: AnndataFolderDM,
             model: torch.nn.Module,
             apply_transform: bool = True,
             batch_size: int = 64,
@@ -573,7 +575,8 @@ class SparseImage:
 
         Args:
             feature_name: the key under which the results will be stored.
-            datamodule: the datamodule used for training the model. This guarantees that the cropping strategy and
+            datamodule: Datamodule used for training the model.
+                Passing it here guarantees that the cropping strategy and
                 the data augmentations are identical to the one used during training.
             model: the trained model will ingest the patch and produce the features.
             apply_transform: if True (defaults) the datamodule.test_trasform will be applied to the crops before
