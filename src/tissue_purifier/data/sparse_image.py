@@ -1066,15 +1066,13 @@ class SparseImage:
 
         return sparse_img_obj
 
-    def to_anndata(self, export_full_state: bool = False, overwrite: bool = False, verbose: bool = False):
+    def to_anndata(self, export_full_state: bool = False, verbose: bool = False):
         """
         Export the spot_properties (and optionally the entire state dict) to the anndata object.
 
         Args:
             export_full_state: if True (default is False) the entire state_dict is exported into the anndata.uns
-            overwrite: if True (default is Flase) some entries in adata.obs and/or adata.obsm might be overwritten.
-                Set to False to avoid overwriting.
-            verbose: if True (default is False) it print some intermediate statements
+            verbose: if True (default is False) prints some intermediate statements
 
         Returns:
              AnnData: object containing the spot_properties_dict (and optionally the full state).
@@ -1106,9 +1104,14 @@ class SparseImage:
         else:
             adata = copy.deepcopy(self.anndata)
 
-        # add the OTHER spot properties to either adata.obs or adata.obsm
+        # add the OTHER (missing) spot properties to either adata.obs or adata.obsm
+        set_obs_keys = set(adata.obs_keys())
+        set_obsm_keys = set(adata.obsm_keys())
         for k, v in self._spot_properties_dict.items():
-            if (k not in self._x_key) and (k not in self._y_key) and (k not in self._cat_key):
+            if k not in {self._x_key, self._y_key, self._cat_key} and \
+                    k not in set_obs_keys and \
+                    k not in set_obsm_keys:
+
                 v_np = _to_numpy(v)
 
                 # squeeze if possible
@@ -1119,26 +1122,9 @@ class SparseImage:
                     print("working on {0} of shape {1}".format(k, v.shape))
 
                 if len(v_np.shape) == 1:
-                    if k in adata.obs.keys() and overwrite:
-                        print("adata.obs[{0}] will be overwritten. \
-                        To change this behavior set overwrite to True".format(k))
-                        adata.obs[k] = v_np
-                    elif k in adata.obs.keys() and not overwrite:
-                        print("adata.obs[{0}] is alaready present. \
-                        Nothing will be done. To change this behavior set overwrite to True")
-                    else:
-                        adata.obs[k] = v_np
-
+                    adata.obs[k] = v_np
                 else:
-                    if k in adata.obsm.keys() and overwrite:
-                        print("adata.obsm[{0}] will be overwritten. \
-                        To change this behavior set overwrite to True".format(k))
-                        adata.obsm[k] = v_np
-                    elif k in adata.obsm.keys() and not overwrite:
-                        print("adata.obsm[{0}] is already present. \
-                        Nothing will be done. To change this behavior set overwrite to True")
-                    else:
-                        adata.obsm[k] = v_np
+                    adata.obsm[k] = v_np
 
         # Add everything else to adata.uns
         if export_full_state:

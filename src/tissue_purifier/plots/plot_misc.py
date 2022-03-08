@@ -281,26 +281,39 @@ def plot_multiple_barplots(
 
 def show_corr_matrix(data: torch.Tensor, show_colorbar: bool = True, sup_title: str = None):
     data = data.detach().cpu().clone()
-    data_subtracted = data - torch.eye(data.shape[0])
+    mask = torch.eye(data.shape[0]).bool()
 
-    fig, ax = plt.subplots(ncols=2, figsize=(12, 4))
-    seaborn.heatmap(data=data,
+    fig, axes = plt.subplots(ncols=2, nrows=2, figsize=(12, 8))
+    _ = seaborn.heatmap(
+        data=data,
+        square=True,
+        xticklabels=False,
+        yticklabels=False,
+        center=0.0,
+        robust=False,  # so that I can see the full scale of diagonal and off-diagonal
+        cbar=show_colorbar,
+        ax=axes[0, 0])
+    _ = axes[0, 0].set_title("Diagonal and off-diagonal")
+
+    diagonal = data[mask].flatten().numpy()
+    _ = seaborn.histplot(x=diagonal, kde=True, bins=100, axes=[1, 0])
+    _ = axes[1, 0].set_title("Histogram of the diagonal element")
+
+    data_overwritten = data.clone()
+    data_overwritten[mask] = 0.0
+    seaborn.heatmap(data=data_overwritten,
                     square=True,
                     xticklabels=False,
                     yticklabels=False,
                     center=0.0,
                     robust=True,
                     cbar=show_colorbar,
-                    ax=ax[0])
+                    ax=axes[0, 1])
+    _ = axes[0, 1].set_title("Off-diagonal only")
 
-    seaborn.heatmap(data=data_subtracted,
-                    square=True,
-                    xticklabels=False,
-                    yticklabels=False,
-                    center=0.0,
-                    robust=True,
-                    cbar=show_colorbar,
-                    ax=ax[1])
+    off_diagonal = data[~mask].flatten().numpy()
+    _ = seaborn.histplot(x=off_diagonal, kde=True, bins=100, axes=[1, 1])
+    _ = axes[1, 1].set_title("Histogram of the off-diagonal element")
 
     if sup_title:
         _ = fig.suptitle(sup_title)
