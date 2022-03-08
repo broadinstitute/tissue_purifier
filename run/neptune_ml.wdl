@@ -67,7 +67,7 @@ task train {
          zones: "us-east1-d us-east1-c"
          gpuCount: gpus_count
          gpuType: gpus_type
-         maxRetries: 0
+         maxRetries: 1
          preemptible: 3
          checkpointFile: "my_checkpoint.ckpt"  # don't change this name. The code above and the logger in pytorch-lightining rely on it
     }
