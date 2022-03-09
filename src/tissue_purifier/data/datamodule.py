@@ -52,12 +52,13 @@ class ParseDict(ArgparseAction):
 
 class SslDM(pl.LightningDataModule):
     """
-    Abstract class to inherit from to make a DataModule which can be used with any
+    Base class to inherit from to make a DataModule which can be used with any
     Self Supervised Learning framework
     """
 
     @classmethod
     def get_default_params(cls) -> dict:
+        # Get the default parameters to instantiate an object
         parser = ArgumentParser()
         parser = cls.add_specific_args(parser)
         args = parser.parse_args(args=[])
@@ -65,93 +66,100 @@ class SslDM(pl.LightningDataModule):
 
     @classmethod
     def add_specific_args(cls, parent_parser):
+        # Utility functions which add parameters to argparse to simplify setting up a CLI
         raise NotImplementedError
 
     def get_metadata_to_regress(self, metadata) -> Dict[str, float]:
-        """ Extract one or more quantities to regress from the metadata """
+        # Extract one or more quantities to regress from the metadata """
         raise NotImplementedError
 
     def get_metadata_to_classify(self, metadata) -> Dict[str, int]:
-        """ Extract one or more quantities to classify from the metadata """
+        # Extract one or more quantities to classify from the metadata """
         raise NotImplementedError
 
     @property
     def ch_in(self) -> int:
+        # How many channels will be present in the images returned by the train/test/val dataloaders?
         raise NotImplementedError
 
     @property
     def local_size(self) -> int:
-        """ Size in pixel of the local crops """
+        # Size in pixel of the local crops (used only for Dino)
         raise NotImplementedError
 
     @property
     def global_size(self) -> int:
-        """ Size in pixel of the global crops """
+        # Size in pixel of the global crops
         raise NotImplementedError
 
     @property
     def n_local_crops(self) -> int:
-        """ Number of local crops for each image to use for training """
+        # Number of local crops for each image to use for training (used only for Dino)
         raise NotImplementedError
 
     @property
     def n_global_crops(self) -> int:
-        """ Number of global crops for each image to use for training """
+        # Number of global crops for each image to use for training (used only for Dino)
         raise NotImplementedError
 
     @property
     def cropper_test(self) -> CropperTensor:
-        """ Cropper to be used at test time ."""
+        # Cropper to be used at test time. This specify the cropping strategy to use at test time.
         raise NotImplementedError
 
     @property
     def trsfm_test(self) -> Callable:
-        """ Transformation to be applied at test time """
+        # Transformation to be applied at test time. This specify the data-augmentation at test time.
         raise NotImplementedError
 
     @property
     def cropper_train(self) -> CropperTensor:
-        """ Cropper to be used at train time."""
+        # Cropper to be used at train time. This specify the cropping strategy to use at train time.
         raise NotImplementedError
 
     @property
     def trsfm_train_local(self) -> Callable:
-        """ Local Transformation to be applied at train time """
+        # Local Transformation to be applied at train time. This specify the data augmentation for the local crops.
+        # Used by Dino only.
         raise NotImplementedError
 
     @property
     def trsfm_train_global(self) -> Callable:
-        """ Global Transformation to be applied at train time """
+        # Global Transformation to be applied at train time. This specify the data augmentation for the global crops.
         raise NotImplementedError
 
     def prepare_data(self):
-        # these are things to be done only once in distributed settings
-        # good for writing stuff to disk and avoid corruption
+        # Use this to download and prepare the data.
+        # These operations will be done only once in distributed settings.
+        # For example, one GPU might be used to prepare data and write the results to disk so that the other
+        # GPUs can read the pre-process data.
         raise NotImplementedError
 
     def setup(self, stage: Optional[str] = None) -> None:
-        # these are things that run on each gpus.
-        # Surprisingly, here self.trainer.model.device == cpu
-        # while later in dataloader self.trainer.model.device == cuda:0
-        # stage: either 'fit', 'validate', 'test', or 'predict'
+        # Called on every GPU at the beginning of fit (train + validate), validate, test, and predict.
+        # This is a good place to set the internal state, i.e. self.something = something_else
         raise NotImplementedError
 
     def train_dataloader(self) -> DataLoaderWithLoad:
+        # Returns the train dataloader.
         raise NotImplementedError
 
     def val_dataloader(self) -> List[DataLoaderWithLoad]:
+        # Returns the validation dataloader.
         raise NotImplementedError
 
     def test_dataloader(self) -> List[DataLoaderWithLoad]:
+        # Returns the test dataloader.
         raise NotImplementedError
 
     def predict_dataloader(self) -> List[DataLoaderWithLoad]:
+        # Returns the predict dataloader.
         raise NotImplementedError
 
 
 class SparseSslDM(SslDM):
     """
-    SslDM for sparse Images with the parameter for the transform (i.e. data augmentation) specified.
+    Datamodule for sparse Images with the parameter for the transform (i.e. data augmentation) specified.
     If you are inheriting from this class then you only have to overwrite:
     'prepara_data', 'setup', 'get_metadata_to_classify' and 'get_metadata_to_regress'.
     """
@@ -189,9 +197,11 @@ class SparseSslDM(SslDM):
             drop_channel_prob: Probability that a channel will be set to zero,
             drop_channel_relative_freq: Relative probability of each channel to be set to zero. If None (default) all
                 channels are equally likely to be set to zero.
-            n_crops_for_tissue_test: The number of crops in each validation epoch will be: n_tissue * n_crops
-            n_crops_for_tissue_train: The number of crops in each training epoch will be: n_tissue * n_crops
-            batch_size_per_gpu: batch size FOR EACH GPUs.
+            n_crops_for_tissue_test: The number of crops in each validation epoch will be
+                :math:`n_{tissue} \\times \\text{n_crops_for_tissue_test}`
+            n_crops_for_tissue_train: The number of crops in each training epoch will be
+                :math:`n_{tissue} \\times \\text{n_crops_for_tissue_train}`
+            batch_size_per_gpu: batch size for EACH GPUs.
         """
         super(SparseSslDM, self).__init__()
         
@@ -221,6 +231,16 @@ class SparseSslDM(SslDM):
 
     @classmethod
     def add_specific_args(cls, parent_parser) -> ArgumentParser:
+        """
+        Utility functions which add parameters to argparse to simplify setting up a CLI
+
+        Example:
+            >>> import sys
+            >>> import argparse
+            >>> parser = argparse.ArgumentParser(add_help=False, conflict_handler='resolve')
+            >>> parser = SslDM.add_specific_args(parser)
+            >>> args = parser.parse_args(sys.argv[1:])
+        """
         parser = ArgumentParser(parents=[parent_parser], add_help=False, conflict_handler='resolve')
 
         parser.add_argument("--global_size", type=int, default=96, help="size in pixel of the global crops")
@@ -256,28 +276,39 @@ class SparseSslDM(SslDM):
                             help="The number of crops in each test epoch will be: n_tissue * n_crops. \
                                Set small for rapid prototyping")
         parser.add_argument("--batch_size_per_gpu", type=int, default=64,
-                            help="Batch size FOR EACH GPUs. Set small for rapid prototyping. \
+                            help="Batch size for EACH GPUs. Set small for rapid prototyping. \
                             The total batch_size will increase linearly with the number of GPUs.")
         return parser
 
     @property
     def global_size(self) -> int:
+        """
+        Size in pixel of the global crops.
+        This specify the size of the patch processed by the ssl model.
+        """
         return self._global_size
 
     @property
     def local_size(self) -> int:
+        """
+        Size in pixel of the local crops (used only for Dino).
+        This specify the size of the patch processed by the ssl model.
+        """
         return self._local_size
 
     @property
     def n_global_crops(self) -> int:
+        """ Number of global crops for each image to use for training (used only for Dino). """
         return self._n_global_crops
 
     @property
     def n_local_crops(self) -> int:
+        """ Number of local crops for each image to use for training (used only for Dino). """
         return self._n_local_crops
 
     @property
     def cropper_test(self):
+        """ Cropper to be used at test time. This specify the cropping strategy to use at test time. """
         return CropperSparseTensor(
             strategy='random',
             crop_size=self._global_size,
@@ -288,6 +319,7 @@ class SparseSslDM(SslDM):
 
     @property
     def cropper_train(self):
+        """ Cropper to be used at train time. This specify the cropping strategy to use at train time. """
         return CropperSparseTensor(
             strategy='random',
             crop_size=int(self._global_size * 1.5),
@@ -298,6 +330,7 @@ class SparseSslDM(SslDM):
 
     @property
     def trsfm_test(self) -> Callable:
+        """ Transformation to be applied at test time. This specify the data-augmentation at test time. """
         return TransformForList(
             transform_before_stack=torchvision.transforms.Compose([
                 DropoutSparseTensor(p=0.5, dropout_rate=self._drop_spot_probs),
@@ -312,6 +345,10 @@ class SparseSslDM(SslDM):
 
     @property
     def trsfm_train_global(self) -> Callable:
+        """
+        Global Transformation to be applied at train time.
+        This specify the data augmentation for the global crops.
+        """
         return TransformForList(
             transform_before_stack=torchvision.transforms.Compose([
                 DropoutSparseTensor(p=0.5, dropout_rate=self._drop_spot_probs),
@@ -340,6 +377,10 @@ class SparseSslDM(SslDM):
 
     @property
     def trsfm_train_local(self) -> Callable:
+        """
+        Local Transformation to be applied at train time. This specify the data augmentation for the local crops.
+        Used by Dino only.
+        """
         return TransformForList(
             transform_before_stack=torchvision.transforms.Compose([
                 DropoutSparseTensor(p=0.5, dropout_rate=self._drop_spot_probs),
@@ -444,7 +485,7 @@ class SparseSslDM(SslDM):
 class AnndataFolderDM(SparseSslDM):
     """
     Create a Datamodule ready for Self-supervised learning starting
-    from a folder full of anndata file in h5ad format.
+    from a folder full of anndata files in .h5ad format.
     """
     def __init__(self,
                  data_folder: str,
@@ -459,6 +500,24 @@ class AnndataFolderDM(SparseSslDM):
                  gpus: int,
                  n_neighbours_moran: int,
                  **kargs):
+        """
+        Args:
+            data_folder: path to folder with the anndata in h5ad format
+            pixel_size: size of the pixel (used to convert raw_coordinates to pixel_coordinates)
+            x_key: key associated with the x_coordinate in the AnnData object
+            y_key: key associated with the y_coordinate in the AnnData object
+            category_key: key associated with the the categorical values (cell_types or gene_identities)
+                in the AnnData object
+            categories_to_channels: dictionary with the mapping from categorical values to channels in the image.
+                The values must be non-negative integers
+            metadata_to_classify: callable which defines the values to classify during training
+            metadata_to_regress: callable which defines the values to regress during training
+            num_workers: number of worker to load data. Meaningful only if dataset is on disk.
+                Set to zero if data in memory
+            gpus: number of gpus to use for training.
+            n_neighbours_moran: number of neighbours used to compute Moran's I score
+            kargs: all these parameters will be passed to :class:`SparseSslDM`
+        """
 
         assert isinstance(categories_to_channels, dict) and len(categories_to_channels.keys()) >= 1, \
             "Error. Specify a valid categories_to_channels mapping. Received {}".format(categories_to_channels)
@@ -494,6 +553,16 @@ class AnndataFolderDM(SparseSslDM):
 
     @classmethod
     def add_specific_args(cls, parent_parser) -> ArgumentParser:
+        """
+        Utility functions which add parameters to argparse to simplify setting up a CLI
+
+        Example:
+            >>> import sys
+            >>> import argparse
+            >>> parser = argparse.ArgumentParser(add_help=False, conflict_handler='resolve')
+            >>> parser = AnndataFolderDM.add_specific_args(parser)
+            >>> args = parser.parse_args(sys.argv[1:])
+        """
         parser_from_super = super().add_specific_args(parent_parser)
         parser = ArgumentParser(parents=[parser_from_super], add_help=False, conflict_handler='resolve')
 
@@ -518,18 +587,19 @@ class AnndataFolderDM(SparseSslDM):
         parser.add_argument("--num_workers", default=cpu_count(), type=int,
                             help="number of worker to load data. Meaningful only if dataset is on disk. \
                             Set to zero if data in memory")
-        parser.add_argument("--gpus", default=None, type=int,
-                            help="number of gpus to use for training. If None (defaults) uses all available gpus.")
+        parser.add_argument("--gpus", default=torch.cuda.device_count(), type=int,
+                            help="number of gpus to use for training.")
         parser.add_argument("--n_neighbours_moran", type=int, default=6,
-                            help="number of neighbours used to compute moran")
+                            help="number of neighbours used to compute Moran's I score")
         return parser
 
     @property
     def ch_in(self) -> int:
+        """ How many channels will be present in the images returned by the train/test/val dataloaders? """
         return numpy.max(list(self._categories_to_channels.values())) + 1
 
     def anndata_to_sparseimage(self, anndata: AnnData):
-        """ Method which converts a anndata object to sparse image """
+        """ Method which converts a anndata object to :class:`SparseImage`. """
         return SparseImage.from_anndata(
             anndata=anndata,
             x_key=self._x_key,
@@ -540,9 +610,6 @@ class AnndataFolderDM(SparseSslDM):
             padding=10)
 
     def prepare_data(self):
-        # these are things to be done only once in distributed settings
-        # good for writing stuff to disk and avoid corruption
-
         # create train_dataset_random and write to file
         all_metadatas = []
         all_sparse_images = []
@@ -592,12 +659,14 @@ class AnndataFolderDM(SparseSslDM):
         print("saved the file", os.path.join(self._data_folder, "test_dataset.pt"))
 
     def get_metadata_to_classify(self, metadata) -> Dict[str, int]:
+        """ Extract one or more quantities to classify from the metadata """
         if self._metadata_to_classify is None:
             return {"tissue_label": self._all_filenames.index(metadata.f_name)}
         else:
             return self._metadata_to_classify(metadata)
 
     def get_metadata_to_regress(self, metadata) -> Dict[str, float]:
+        """ Extract one or more quantities to regress from the metadata """
         if self._metadata_to_regress is None:
             return {
                 "moran": float(metadata.moran),

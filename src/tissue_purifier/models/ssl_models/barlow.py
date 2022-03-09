@@ -11,9 +11,9 @@ from tissue_purifier.models._optim_scheduler import LARS, linear_warmup_and_cosi
 
 class BarlowModel(SslModelBase):
     """
-    See
-    official: https://github.com/facebookresearch/barlowtwins
-    implementation for tiny datasets: https://github.com/IgorSusmelj/barlowtwins/blob/main/main.py
+    BarlowTwin self supervised learning model.
+    See the `official implementation <https://github.com/facebookresearch/barlowtwins>`_
+    and a `pytorch lightning reimplementation <https://github.com/IgorSusmelj/barlowtwins/blob/main/main.py>`_
     """
     def __init__(
             self,
@@ -38,6 +38,26 @@ class BarlowModel(SslModelBase):
             val_iomin_threshold: float = 0.0,
             **kwargs,
             ):
+        """
+        Args:
+            backbone_type: Either 'resnet18', 'resnet34' or 'resnet50'
+            image_in_ch: number of channels in the input images, used to adjust the first
+                convolution filter in the backbone
+            head_hidden_chs: List of integers with the size of the hidden layers of the projection head
+            head_out_ch: output dimension of the projection head
+            lambda_off_diagonal: multiplicative factor for the off diagonal elements in the loss. Usually << 1.
+            optimizer_type: Either 'adamw', 'lars', 'sgd', 'adam' or 'rmsprop'
+            warm_up_epochs: epochs during which to linearly increase learning rate (at the beginning of training)
+            warm_down_epochs: epochs during which to anneal learning rate with cosine protocoll (at the end of training)
+            max_epochs: total number of epochs
+            min_learning_rate: minimum learning rate (at the very beginning and end of training)
+            max_learning_rate: maximum learning rate (after linear ramp)
+            min_weight_decay: minimum weight decay (during the entirety of the linear ramp)
+            max_weight_decay: maximum weight decay (reached at the end of training)
+            val_iomin_threshold: during validation, only patches with Intersection Over MinArea < IoMin_threshold
+                are used. Should be in [0.0, 1.0). If 0 only strictly non-overlapping patches are allowed.
+        """
+
         super(BarlowModel, self).__init__(val_iomin_threshold=val_iomin_threshold)
 
         # Next two lines will make checkpointing much simpler. Always keep them as-is
@@ -93,6 +113,17 @@ class BarlowModel(SslModelBase):
 
     @classmethod
     def add_specific_args(cls, parent_parser):
+        """
+        Utility functions which add parameters to argparse to simplify setting up a CLI
+
+        Example:
+            >>> import sys
+            >>> import argparse
+            >>> parser = argparse.ArgumentParser(add_help=False, conflict_handler='resolve')
+            >>> parser = BarlowModel.add_specific_args(parser)
+            >>> args = parser.parse_args(sys.argv[1:])
+        """
+
         parser = ArgumentParser(parents=[parent_parser], add_help=False, conflict_handler='resolve')
 
         # validation
@@ -135,6 +166,13 @@ class BarlowModel(SslModelBase):
 
     @classmethod
     def get_default_params(cls) -> dict:
+        """
+        Get the default configuration parameters for this model
+
+        Example:
+            >>> config = BarlowModel.get_default_params()
+            >>> my_barlow = BarlowModel(**config)
+        """
         parser = ArgumentParser()
         parser = BarlowModel.add_specific_args(parser)
         args = parser.parse_args(args=[])
@@ -148,7 +186,7 @@ class BarlowModel(SslModelBase):
             self.logger.run["corr_matrix"].log(File.as_image(corr_matrix_plot))
 
     def forward(self, x) -> torch.Tensor:
-        # this is the stuff that will generate the embeddings
+        # this is the stuff that will generate the backbone embeddings
         y = self.backbone(x)  # shape (batch, ch)
         return y
 
@@ -159,7 +197,6 @@ class BarlowModel(SslModelBase):
         return z, y
 
     def training_step(self, batch, batch_idx) -> dict:
-        # this is data augmentation
         with torch.no_grad():
             list_imgs, list_labels, list_metadata = batch
             x1 = self.trsfm_train_global(list_imgs)

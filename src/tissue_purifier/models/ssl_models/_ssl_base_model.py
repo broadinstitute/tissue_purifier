@@ -34,23 +34,23 @@ def classify_and_regress(
         n_repeats: int = 1,
         verbose: bool = False) -> [pandas.DataFrame, pandas.DataFrame]:
     """
-    Train a Classifier and a Regressor to use some featutes to predict other features.
+    Train a Classifier and a Regressor to use some features to classify/predict other annotations.
 
     Args:
-        input_dict: dict with both the feature to use and the one to predict
+        input_dict: dict with both the features and the annotations
         regressor: the regressor to train
         classifier: the classifier to train
-        feature_keys: keys corresponding to the independent variables
-        regress_keys: keys corresponding to the variables to regress
-        classify_keys: keys corresponding to the variables to classify
+        feature_keys: keys corresponding to the independent variables in the :attr:`input_dict`.
+        regress_keys: keys corresponding to the variables to regress in the :attr:`input_dict`.
+        classify_keys: keys corresponding to the variables to classify in the :attr:`input_dict`.
         n_splits: int, number of splits for RepeatedKFold (regressor) or RepeatedStratifiedKFold (classifier).
             If n_splits is 5 (defaults) then train_test_split is 80% - 20%.
         n_repeats: int, number of repeats for RepeatedKFold (regressor) or RepeatedStratifiedKFold (classifier).
             The total number of trained model is n_plists * n_repeats.
-        verbose: bool, if true print some intermediate statements
+        verbose: if True (default is False) prints some intermediate statements
 
     Returns:
-        A ddataframe. Each row is a different X,y combination with the metrics describing the quality of the
+        A dataframe. Each row is a different X,y combination with the metrics describing the quality of the
         regression/classification.
     """
     if regress_keys is not None:
@@ -180,6 +180,20 @@ def classify_and_regress(
 
 
 def knn_classification_regression(world_dict: dict, val_iomin_threshold: float):
+    """
+    Utility function to perform knn-based classification and regression.
+    It takes a dictionaries with path-level features and annotations.
+    A set of (weakly) overlapping patches (with Intersection over Minimum smaller than the assigned threshold)
+    is selected. A knn classifier/regressor is trained to
+    predict the various annotations starting from the features.
+    This process is repeated multiple times for all feature-annotation pairs to produce a confidence interval.
+
+    Args:
+        world_dict: a dictionaries with path-level features and annotations.
+            The dict must contains the keys "patches_xywh" and "classify_tissue_label".
+            It may contain additional keys starting in "feature_", "classify_" or "regress_".
+        val_iomin_threshold: threshold for the Intersection over Minimum. It must be in [0.0, 1.0).
+    """
 
     # compute the patch_to_patch overlap just one at the beginning
     assert {"patches_xywh", "classify_tissue_label"}.issubset(world_dict.keys())
@@ -249,6 +263,20 @@ def knn_classification_regression(world_dict: dict, val_iomin_threshold: float):
 
 
 def linear_classification_regression(world_dict: dict, val_iomin_threshold: float):
+    """
+    Utility function to perform linear classification and regression.
+    It takes a dictionaries with path-level features and annotations.
+    A set of (weakly) overlapping patches (with Intersection over Minimum smaller than the assigned threshold)
+    is selected. A linear classifier/regressor is trained to
+    predict the various annotations starting from the features.
+    This process is repeated multiple times for all feature-annotation pairs to produce a confidence interval.
+
+    Args:
+        world_dict: a dictionaries with path-level features and annotations.
+            The dict must contains the keys "patches_xywh" and "classify_tissue_label".
+            It may contain additional keys starting in "feature_", "classify_" or "regress_".
+        val_iomin_threshold: threshold for the Intersection over Minimum. It must be in [0.0, 1.0).
+    """
 
     # compute the patch_to_patch overlap just one at the beginning
     assert {"patches_xywh", "classify_tissue_label"}.issubset(world_dict.keys())
@@ -311,12 +339,29 @@ def linear_classification_regression(world_dict: dict, val_iomin_threshold: floa
 
 class SslModelBase(LightningModule):
     """
-    Common part to VAE, Dino, Barlow, SimClr with the routines to evaluate the embeddings
+    Base class for the self-supervised learning (ssl) models (Vae, Dino, Barlow, Simclr).
+    This base class is responsible for the validation (which is common to all ssl models) and some logging.
+    The child classes need to implement :meth:`head_and_backbone_embeddings_step`, :meth:`forward` and
+    :meth:`training_step`.
     """
     def __init__(self, val_iomin_threshold: float):
         super(SslModelBase, self).__init__()
         self.val_iomin_threshold = val_iomin_threshold
         self.neptune_run_id = None
+
+    def head_and_backbone_embeddings_step(self, x) -> (torch.Tensor, torch.Tensor):
+        # must be overwritten by child class
+        # this generates both head and backbone embeddings
+        raise NotImplementedError
+
+    def forward(self, x) -> torch.Tensor:
+        # must be overwritten by child class
+        # this is the stuff that will generate the backbone embeddings
+        raise NotImplementedError
+
+    def training_step(self, batch, batch_idx) -> dict:
+        # must be overwritten by child class
+        raise NotImplementedError
 
     def get_metadata_to_regress(self, metadata) -> dict:
         try:
@@ -392,11 +437,6 @@ class SslModelBase(LightningModule):
     def on_predict_start(self) -> None:
         if self.global_rank == 0:
             self.__log_example_images__(n_examples=10, n_cols=5, which_loaders="predict")
-
-    def head_and_backbone_embeddings_step(self, x) -> (torch.Tensor, torch.Tensor):
-        # must be overwritten by child class
-        # this generates both head and backbone embeddings
-        raise NotImplementedError
 
     def validation_step(self, batch, batch_idx, dataloader_idx: int = -1) -> Dict[str, torch.Tensor]:
         list_imgs: List[torch.sparse.Tensor]

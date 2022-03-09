@@ -103,7 +103,7 @@ class SparseImage:
         assert x_raw.shape == y_raw.shape == codes.shape
         assert len(codes.shape) == 1
         print("number of elements --->", codes.shape[0])
-        mean_spacing, median_spacing = self.__check_mean_median_spacing__(x_raw, y_raw)
+        mean_spacing, median_spacing = self._check_mean_median_spacing(x_raw, y_raw)
         print("mean and median spacing {0}, {1}".format(mean_spacing, median_spacing))
 
         # Check that all codes are used at least once
@@ -194,7 +194,8 @@ class SparseImage:
             x_pixel: torch.Tensor,
             y_pixel: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Convert the pixel coordinates to the raw_coordinates. This is a simple scale and shift transformation.
+        Utility to convert the pixel coordinates to the raw_coordinates.
+        This is a simple scale and shift transformation.
 
         Args:
             x_pixel: tensor of arbitrary shape with the x_index of the pixels
@@ -212,7 +213,8 @@ class SparseImage:
             x_raw: torch.Tensor,
             y_raw: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Convert the raw_coordinates to pixel_coordinates. This is a simple scale and shift transformation.
+        Utility to convert the raw coordinates to pixel coordinates.
+        This is a simple scale and shift transformation.
 
         Args:
             x_raw: tensor of arbitrary shape with the x_raw coordinates
@@ -227,7 +229,7 @@ class SparseImage:
 
     @property
     def anndata(self):
-        """ Return the ann data object """
+        """ Return the anndata object """
         return self._anndata
 
     @property
@@ -247,17 +249,17 @@ class SparseImage:
 
     @property
     def x_raw(self) -> numpy.ndarray:
-        """ Extract the x_coordinates from the original data """
+        """ Extract the x_coordinates from the original data and return them as numpy tensor. """
         return numpy.asarray(self.spot_properties_dict[self._x_key])
 
     @property
     def y_raw(self) -> numpy.ndarray:
-        """ Extract the y_coordinates from the original data """
+        """ Extract the y_coordinates from the original data and return them as numpy tensor. """
         return numpy.asarray(self.spot_properties_dict[self._y_key])
 
     @property
     def cat_raw(self) -> numpy.ndarray:
-        """ Extract the category for the original data and return them as numpy tensor (as they might contain string)"""
+        """ Extract the category for the original data and return them as numpy tensor. """
         return numpy.asarray(self.spot_properties_dict[self._cat_key])
 
     @property
@@ -444,10 +446,10 @@ class SparseImage:
             stride: int = 200,
             random_order: bool = True) -> Tuple[List[torch.sparse.Tensor], List[int], List[int]]:
         """
-        Wrapper around :class:'CropperSparseTensor'.
+        Wrapper around :class:`tissue_purifier.dataset.CropperSparseTensor`.
 
         Returns:
-            Three lists with crops, x_locations, y_locations of each crop
+            Three lists with crops, x_locations, y_locations of each crop.
         """
         return CropperSparseTensor(strategy=strategy,
                                    n_crops=n_crops,
@@ -462,7 +464,7 @@ class SparseImage:
             radius: Optional[float] = None,
             neigh_correct: bool = False) -> torch.Tensor:
         """
-        Wrapper around :class:'compute_spatial_autocorrelation'.
+        Wrapper around :class:`tissue_purifier.models.patch_analyzer.SpatialAutocorrelation`.
 
         Returns:
             torch.tensor of shape C with the Moran's I score for each channels (i.e. how one channel is
@@ -479,7 +481,7 @@ class SparseImage:
             radius: Optional[float] = None,
             neigh_correct: bool = False) -> torch.Tensor:
         """
-        Wrapper around :class:'compute_spatial_autocorrelation'.
+        Wrapper around :class:`tissue_purifier.models.patch_analyzer.SpatialAutocorrelation`.
 
         Returns:
             torch.tensor of shape C with the Gready score for each channels (i.e. how one channel is
@@ -497,7 +499,7 @@ class SparseImage:
                     overwrite: bool = False):
         """
         Compute the neighborhood composition vectors (ncv) of every spot
-        and store the results in the spot_properties_dictionary under the :attr:'feature_name' key.
+        and store the results in the spot_properties_dictionary under :attr:`feature_name`.
 
         Args:
             feature_name: the key under which the results will be stored.
@@ -570,8 +572,8 @@ class SparseImage:
             return_crops: bool = False) -> Union[torch.Tensor, None]:
         """
         Split the sparse image into (possibly overlapping) patches.
-        Each patch is analyzed by the model.
-        The features are stored in the patch_properties_dict.
+        Each patch is analyzed by the (pretrained) model.
+        The features are stored in the patch_properties_dict under the :attr:`feature_name`.
 
         Args:
             feature_name: the key under which the results will be stored.
@@ -590,7 +592,7 @@ class SparseImage:
                 with all the crops which were fed to the model. Default is False.
 
         Returns:
-            if :attr:'return_crops' is False returns None.
+            if :attr:`return_crops` is False returns None.
             else return a (batched) torch.Tensor of shape (n_patches_max, ch, w, h)
         """
 
@@ -671,7 +673,7 @@ class SparseImage:
             strategy_patch_to_image: str = "average",
             strategy_image_to_spot: str = "bilinear"):
         """
-        Convenience function which sequentially transfer annotations from patch -> image -> spot
+        Utility function which sequentially transfer annotations from patch -> image -> spot
         """
         if verbose:
             print("transferring annotations from patch to image first")
@@ -815,14 +817,14 @@ class SparseImage:
             strategy: str = "bilinear"):
         """
         Evaluate the image_properties_dict at the spots location.
-        Store the results in the spot_properties_dict with the same name.
+        Store the results in the spot_properties_dict under the same name.
 
         Args:
             keys_to_transfer: the keys of the quantity to transfer from image_properties_dict to spot_properties_dict.
             overwrite: bool, in case of collision between the keys this variable controls
                 when the value will be overwritten.
             verbose: bool, if true intermediate messages are displayed.
-            strategy: str, either 'closest' (default) or 'bilinear'.
+            strategy: str, either 'closest' or 'bilinear' (default). This described the interpolation method.
         """
 
         def _to_torch(_x):
@@ -897,8 +899,16 @@ class SparseImage:
             assert len(interpolated_values.shape) == 2
             self.spot_properties_dict[key] = interpolated_values.permute(dims=(1, 0)).cpu().numpy()
 
-    def get_state_dict(self, include_anndata: bool = True):
-        """ Return the dictionary with the state of the system """
+    def get_state_dict(self, include_anndata: bool = True) -> dict:
+        """
+        Return the dictionary with the state of the system
+
+        Args:
+             include_anndata: If True (default) the anndata is included
+
+        Returns:
+            A dictionary with the state
+        """
         state_dict = {
             'padding': self._padding,
             'pixel_size': self._pixel_size,
@@ -916,9 +926,9 @@ class SparseImage:
     @classmethod
     def from_state_dict(cls, state_dict: dict) -> "SparseImage":
         """
-        Create a sparse image from the state_dictionary which was obtained by the :method:'get_state_dict'
+        Create a sparse image from the state_dictionary which was obtained by the :meth:`get_state_dict`
 
-        Examples:
+        Example:
             >>> state_dict_v1 = sparse_image_old.get_state_dict(include_anndata=True)
             >>> torch.save(state_dict_v1, "ckpt.pt")
             >>> state_dict_v2 = torch.load("ckpt.pt")
@@ -1051,7 +1061,7 @@ class SparseImage:
 
             # Get the pixel_size
             if pixel_size is None:
-                mean_dnn, median_dnn = cls.__check_mean_median_spacing__(torch.tensor(x_raw), torch.tensor(y_raw))
+                mean_dnn, median_dnn = cls._check_mean_median_spacing(torch.tensor(x_raw), torch.tensor(y_raw))
                 pixel_size = 0.25 * median_dnn
 
             sparse_img_obj = cls(
@@ -1139,7 +1149,11 @@ class SparseImage:
         return adata
 
     @staticmethod
-    def __validate_patch_xywh__(patch_xywh) -> tuple:
+    def _validate_patch_xywh(patch_xywh) -> tuple:
+        """
+        Check that patch_xywh has the correct type and shape.
+        If pass the test returns x,y,w,h else raise Exceptions.
+        """
         if isinstance(patch_xywh, torch.Tensor):
             assert torch.numel(patch_xywh) == 4 and patch_xywh.dtype == torch.long, \
                 "patch_xywh must be a torch.tensor of type long with 4 elements corresponding to x,y,w,h."
@@ -1155,8 +1169,8 @@ class SparseImage:
         return x, y, w, h
 
     @staticmethod
-    def __check_mean_median_spacing__(x_raw: torch.Tensor, y_raw: torch.Tensor) -> (float, float):
-        """ x,y coordinates raw """
+    def _check_mean_median_spacing(x_raw: torch.Tensor, y_raw: torch.Tensor) -> (float, float):
+        """ The the mean and median distance between nearest neighbours """
         from sklearn.neighbors import KDTree
         locations = torch.stack((x_raw, y_raw), dim=-1).cpu().numpy()
         kdt = KDTree(locations, leaf_size=30, metric='euclidean')

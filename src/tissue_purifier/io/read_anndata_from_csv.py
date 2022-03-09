@@ -13,25 +13,25 @@ import bz2
 def anndata_from_expression_csv(filename: str, key: str, transpose: bool, top_n_rows: int = None):
     """
     Read a csv file with the expression data (i.e. count matrix) and returns an anndata object.
-    To be used when your (bad) collaborators give you a .csv file instead of a .h5ad file.
+    To be used when your collaborators give you a .csv file instead of a .h5ad file.
 
     If transpose == False:
-        The csv is expected to have a header: 'barcode', 'gene_name_1', ..., 'gene_name_N'
-        Each entry is expected to be:  ACCDAT, 2, 0, ...., 1
+    The csv is expected to have a header: 'barcode', 'gene_name_1', ..., 'gene_name_N'.
+    Each entry is expected to be something-like:  ACCDAT, 2, 0, ...., 1
 
     If Transpose == True:
-        The csv is expected to have a header: 'gene', 'barcode_name_1', ..., 'barcode_name_N'
-        Each entry is expected to be: Arhgap18, 2, 0, ...., 1
+    The csv is expected to have a header: 'gene', 'barcode_name_1', ..., 'barcode_name_N'.
+    Each entry is expected to be something-like: Arhgap18, 2, 0, ...., 1
 
     Args:
         filename: the path to the csv file to read
         key: the column name associated with the observations.
-            It defaults to 'barcode' is :attr:'transpose' == False and 'gene' if :attr:'transpose' == True
+            It defaults to 'barcode' is :attr:`transpose` == False and 'gene' if :attr:`transpose` == True.
         transpose: bool, whether the matrix is gene_by_cell or cell_by_gene
         top_n_rows: int, the number of the top rows to read. Set to a small value (like 20) for debugging.
 
     Note:
-        The output will have adata.obs == barcodes and adata.var == gene regardless the value of :attr:'transpose'
+        The output will always be cell_by_gene (i.e. cells=obs, genes=var) regardless the value of :attr:`transpose`
 
     Returns:
         An anndata object with:

@@ -207,9 +207,10 @@ class MultiResolutionNet(torch.nn.Module):
 
 class DinoModel(SslModelBase):
     """
-    DINO implementation, inspired by:
-    https://sachinruk.github.io/blog/pytorch/pytorch%20lightning/loss%20function/2021/08/01/dino-self-supervised-vision-transformers.html
-    And original github repo
+    DINO self supervised learning model.
+    See the `official implementation <https://github.com/facebookresearch/dino>`_
+    and a `pytorch lightning reimplementation
+    https://sachinruk.github.io/blog/pytorch/pytorch%20lightning/loss%20function/2021/08/01/dino-self-supervised-vision-transformers.html>'_
     """
     def __init__(
             self,
@@ -245,6 +246,47 @@ class DinoModel(SslModelBase):
             param_momentum_epochs_end: int = 1000,
             **kwargs,
             ):
+        """
+        Args:
+            backbone_type: Either 'resnet18', 'resnet34' or 'resnet50'
+            image_in_ch: number of channels in the input images, used to adjust the first
+                convolution filter in the backbone
+            head_hidden_chs: List of integers with the size of the hidden layers of the projection head
+            head_use_bn: if True (defaults) uses BatchNormalization in the projection head
+            head_out_ch: output dimension of the projection head
+            center_momentum: the teacher network does centering and sharpening. The center_momentum
+                which is a float in (0.0, 1.0) described the momentum of the centering, i.e.:
+
+                .. :math:
+                    \\text{center} = c \\times \\text{center} + (1-c) \\times \\text{center}_\\text{empirical}
+
+            optimizer_type: Either 'adamw', 'lars', 'sgd', 'adam' or 'rmsprop'
+            warm_up_epochs: epochs during which to linearly increase learning rate (at the beginning of training)
+            warm_down_epochs: epochs during which to anneal learning rate with cosine protocoll (at the end of training)
+            max_epochs: total number of epochs
+            min_learning_rate: minimum learning rate (at the very beginning and end of training)
+            max_learning_rate: maximum learning rate (after linear ramp)
+            min_weight_decay: minimum weight decay (during the entirety of the linear ramp)
+            max_weight_decay: maximum weight decay (reached at the end of training)
+            val_iomin_threshold: during validation, only patches with Intersection Over MinArea < IoMin_threshold
+                are used. Should be in [0.0, 1.0). If 0 only strictly non-overlapping patches are allowed.
+
+            set_temperature_using_ipr_init: if True the user specifies the initial InverseParticipationRatio (IPR) for
+                the teacher and student network and the temperature of the softmax is computed to match the desired
+                initial IPR.
+            ipr_teacher_init: Used only if :attr:`set_temperature_using_ipr_init` == True. The desired initial IPR
+                for the teacher.
+            ipr_student_init: Used only if :attr:`set_temperature_using_ipr_init` == True. The desired initial IPR
+                for the student.
+            temperature_teacher_init: Used only if :attr:`set_temperature_using_ipr_init` == False.
+                The temperature for the softmax of the teacher.
+            temperature_student_init: Used only if :attr:`set_temperature_using_ipr_init` == False.
+                The temperature for the softmax of the student.
+            param_momentum_init: the teacher params are updated using an Exponential Moving Average (EMA).
+                This parameter controls the initial momentum of the EMA
+            param_momentum_final: This parameter controls the final momentum of the EMA
+            param_momentum_epochs_end: The teacher parameters are not updated after this many epochs
+        """
         super(DinoModel, self).__init__(val_iomin_threshold=val_iomin_threshold)
 
         # Next two lines will make checkpointing much simpler. Always keep them as-is
@@ -313,6 +355,16 @@ class DinoModel(SslModelBase):
 
     @classmethod
     def add_specific_args(cls, parent_parser):
+        """
+        Utility functions which add parameters to argparse to simplify setting up a CLI
+
+        Example:
+            >>> import sys
+            >>> import argparse
+            >>> parser = argparse.ArgumentParser(add_help=False, conflict_handler='resolve')
+            >>> parser = DinoModel.add_specific_args(parser)
+            >>> args = parser.parse_args(sys.argv[1:])
+        """
         parser = ArgumentParser(parents=[parent_parser], add_help=False, conflict_handler='resolve')
 
         # validation
@@ -379,12 +431,20 @@ class DinoModel(SslModelBase):
 
     @classmethod
     def get_default_params(cls) -> dict:
+        """
+        Get the default configuration parameters for this model
+
+        Example:
+            >>> config = DinoModel.get_default_params()
+            >>> my_barlow = DinoModel(**config)
+        """
         parser = ArgumentParser()
         parser = DinoModel.add_specific_args(parser)
         args = parser.parse_args(args=[])
         return args.__dict__
 
     def forward(self, x) -> torch.Tensor:
+        # this is the stuff that will generate the backbone embeddings
         z, y = self.teacher(x)
         return y
 
@@ -394,7 +454,6 @@ class DinoModel(SslModelBase):
         return z, y
 
     def training_step(self, batch, batch_idx) -> torch.Tensor:
-
         with torch.no_grad():
             # Update the optimizer parameters
             lr = self.learning_rate_fn(self.current_epoch)

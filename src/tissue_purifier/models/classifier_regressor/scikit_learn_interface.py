@@ -12,7 +12,10 @@ from ._pl_noisy import PlMlpNoisy
 
 
 class BaseEstimator(ABC):
-    """ This is a ABC which implements an interface similar to scikit-learn for classification and regression. """
+    """
+    Abstract Base Class which implements an interface similar to the MLP classifier/regressor in scikit-learn.
+    The classes :class:`PlRegressor` and :class:`PlClassifier` inherit from this class.
+    """
 
     def __init__(
             self,
@@ -35,6 +38,25 @@ class BaseEstimator(ABC):
             min_weight_decay: float = 1.0E-4,
             max_weight_decay: float = 1.0E-4,
             **kargs, ):
+        """
+        Args:
+            hidden_dims: the size of the intermediate layer of the MLP.
+                Default is empty list corresponding to linear prediction.
+            hidden_activation: Either 'relu' or 'leaky_relu' it is the activation of the middle layers.
+            batch_size: bath size
+            solver: Either 'adam' (default) or 'sgd' or 'rmsprop'. The type of optimization to use.
+            alpha: parameters for the rmsprop optimizer (used only if :attr:`solver` is 'rmsprop')
+            momentum: parameter for sgd optimizer (used only if :attr:`solver` is 'sgd')
+            betas: parameters for the adam optimizer (used only if :attr:`solver` is 'adam')
+            warm_up_epochs: epochs during which to linearly increase learning rate (at the beginning of training)
+            warm_down_epochs: epochs during which to anneal learning rate with cosine protocoll (at the end of training)
+            max_epochs: total number of epochs
+            min_learning_rate: minimum learning rate (at the very beginning and end of training)
+            max_learning_rate: maximum learning rate (after linear ramp)
+            min_weight_decay: minimum weight decay (during the entirety of the linear ramp)
+            max_weight_decay: maximum weight decay (reached at the end of training)
+            kargs: unused parameters
+        """
         super().__init__()
 
         assert hidden_dims is None or isinstance(hidden_dims, List), \
@@ -137,10 +159,12 @@ class BaseEstimator(ABC):
 
     @property
     def is_classifier(self) -> bool:
+        """ Return True if it is a classifier. For compatibility with scikit-learn interface. """
         raise NotImplementedError
 
     @property
     def is_regressor(self) -> bool:
+        """ Return True if it is a regressor. For compatibility with scikit-learn interface. """
         raise NotImplementedError
 
     def create_pl_net(self, input_dim, output_dim) -> LightningModule:
@@ -156,18 +180,28 @@ class BaseEstimator(ABC):
         raise NotImplementedError
 
 
-class PlRegressor(BaseEstimator):
-    """ PlRegressor is-a BaseEstimator and has-a pl_net (which is a LightningModule) """
-    def __init__(self, output_activation=torch.nn.Identity(), **kargs):
+class MlpRegressor(BaseEstimator):
+    """ Mlp regressor with interface similar to scikit-learn but able to run on GPUs. """
+
+    def __init__(self, output_activation: torch.nn.Module = torch.nn.Identity(), **kargs):
+        """
+        Args:
+            output_activation: the activation to apply to the output activation to make the prediction.
+                If `y` is unbounded use the Identity.
+                If :math:`y \\in (0, 1)` use a Sigmoid function, etc.
+            kargs: parameters passed to :class:`BaseEstimator`
+        """
         self.output_activation = output_activation
         super().__init__(**kargs)
 
     @property
     def is_classifier(self):
+        """ Returns False. For compatibility with scikit-learn interface. """
         return False
 
     @property
     def is_regressor(self):
+        """ Returns True. For compatibility with scikit-learn interface. """
         return True
 
     def create_pl_net(self, input_dim, output_dim):
@@ -193,7 +227,14 @@ class PlRegressor(BaseEstimator):
             max_weight_decay=self.max_weight_decay,
         )
 
-    def fit(self, X, y):
+    def fit(self, X, y) -> None:
+        """
+        Fit the model.
+
+        Args:
+            X: independent variable of shape :math:`(n, *)`
+            y: dependent variable of shape :math:`(n)`
+        """
         X = self._to_torch_tensor(X)
         y = self._to_torch_tensor(y)
         if len(y.shape) == 1:
@@ -216,6 +257,15 @@ class PlRegressor(BaseEstimator):
 
     @torch.no_grad()
     def predict(self, X) -> numpy.ndarray:
+        """
+        Run the model forward to obtain the predictions, i.e. :math:`y_\\text{pred} = \\text{model}(X)`.
+
+        Args:
+            X: independent variable of shape :math:`(n, *)`
+
+        Returns:
+             the predicted values of shape :math:`(n)`
+        """
         assert self._is_fit, "Error. Need to run fit method before you can use the predict method"
         X = self._to_torch_tensor(X)
         assert X.shape[-1] == self.pl_net.input_dim, \
@@ -237,7 +287,17 @@ class PlRegressor(BaseEstimator):
         return torch.cat(predictions, dim=0).squeeze(dim=-1).cpu().numpy()
 
     @torch.no_grad()
-    def score(self, X, y):
+    def score(self, X, y) -> float:
+        """
+        Compute the predictions, i.e. :math:`y_\\text{pred} = \\text{model}(X)`, and score them against the true values `y`.
+
+        Args:
+            X: independent variable of shape :math:`(n, *)`
+            y: dependent variable of shape :math:`(n)`
+
+        Returns:
+           R^2 (coefficient of determination) between :math:`y_\\text{pred}` and `y`.
+        """
         assert self._is_fit, "Error. Need to run fit method before you can use the score method"
 
         X = self._to_torch_tensor(X)
@@ -258,8 +318,24 @@ class PlRegressor(BaseEstimator):
                 y_pred=y_pred)
 
 
-class PlClassifier(BaseEstimator):
-    """ PlRegressor is-a BaseEstimator and has-a pl_net (which is a LightningModule) """
+class MlpClassifier(BaseEstimator):
+    """
+    Mlp classifier with interface similar to scikit-learn but able to run on GPUs.
+
+    It can performs classification with noisy labels following the method described in
+    `Unsupervised Label Noise Modeling and Loss Correction <https://arxiv.org/abs/1904.11238>`_
+
+    According to this method, the labels are dynamically corrected according to the formula:
+
+    .. :math:
+        l_\\text{new} = (1.0-w) \\times l_\\text{old} + w \\times p_\\text{net}
+
+    where :math:`l_\\text{old}` are the noisy (and one-hot) original labels
+    :math:`p_\\text{net}` are the probabilities computed by the neural network
+    and `w` is the probability of label being incorrect.
+    `w` is computed by solving a 2-component Mixture Model based on the idea that
+    correct (incorrect) labels will lead to small (large) losses.
+    """
     def __init__(
             self,
             # special parameters for the noise label situation
@@ -270,13 +346,15 @@ class PlClassifier(BaseEstimator):
             **kargs):
         """
         Args:
-            noisy_labels: whether to use classification with noisy labels algorithm
-            bootstrap_epoch_start: when to start correcting the noisy labels
-            lambda_reg: strength of the regularization which prevents the corrected labels from collapsing
-                to a single class
-            hard_bootstrapping: If true the corrected labels are weighted sum of two delta-functions.
-                If false are weighted sum of one-delta and the predicted probability.
-            kargs: any parameter passed to :class:'BaseEstimator' such as max_iter, solver, ...
+            noisy_labels: if True (default si False) performs classification with noisy labels.
+            bootstrap_epoch_start: used only if :attr:`noisy_labels` == True.
+                At which epoch to start to dynamically correct the labels
+            lambda_reg: used only if :attr:`noisy_labels` == True.
+                Strength of the regularization which prevents the corrected labels from collapsing to a single class
+            hard_bootstrapping: used only if :attr:`noisy_labels` == True.
+                If True (default is Flase) the network probabilities are made one-hot before using them
+                to update the classification labels
+            kargs: any parameter passed to :class:`BaseEstimator` such as max_iter, solver, ...
         """
 
         # spacial parameters which will be used only if noisy_labels == True
@@ -292,10 +370,12 @@ class PlClassifier(BaseEstimator):
 
     @property
     def is_classifier(self):
+        """ Returns True. For compatibility with scikit-learn interface. """
         return True
 
     @property
     def is_regressor(self):
+        """ Returns False. For compatibility with scikit-learn interface. """
         return False
 
     def create_mlp(self, input_dim, output_dim):
@@ -345,6 +425,13 @@ class PlClassifier(BaseEstimator):
                 max_weight_decay=self.max_weight_decay)
 
     def fit(self, X, y):
+        """
+        Fit the model.
+
+        Args:
+            X: independent variable of shape :math:`(n, *)`
+            y: dependent variable of shape :math:`(n)`
+        """
         X = self._to_torch_tensor(X)
         labels_torch, self._classes_np = self._make_integer_labels(y)
         self._pl_net = self.create_mlp(input_dim=X.shape[-1], output_dim=self._classes_np.shape[0])
@@ -383,7 +470,15 @@ class PlClassifier(BaseEstimator):
 
     @torch.no_grad()
     def predict(self, X) -> numpy.ndarray:
-        """ Return a list with the predictions """
+        """
+        Run the model forward to obtain the predictions, i.e. :math:`y_\\text{pred} = \\text{model}(X)`.
+
+        Args:
+            X: independent variable of shape :math:`(n, *)`
+
+        Returns:
+             the predicted values of shape :math:`(n)`
+        """
         assert self._is_fit, "Error. Need to run fit method before you can use the predict method"
         X = self._to_torch_tensor(X).float()
         assert X.shape[-1] == self.pl_net.input_dim, "Dimension mistmatch"
@@ -393,7 +488,16 @@ class PlClassifier(BaseEstimator):
 
     @torch.no_grad()
     def score(self, X, y) -> float:
-        """ Return a numpy.array with the probbabilities for the different classes """
+        """
+        Compute the predictions, i.e. :math:`y_\\text{pred} = \\text{model}(X)`, and score them against the true values `y`.
+
+        Args:
+            X: independent variable of shape :math:`(n, *)`
+            y: dependent variable of shape :math:`(n)`
+
+        Returns:
+           Accuracy classification score
+        """
         assert self._is_fit, "Error. Need to run fit method before you can use the score method"
         X = self._to_torch_tensor(X)
         y_true_np = self._to_numpy(y)
@@ -407,7 +511,15 @@ class PlClassifier(BaseEstimator):
 
     @torch.no_grad()
     def predict_proba(self, X) -> numpy.ndarray:
-        """ Return a numpy.array with the probabilities for the different classes """
+        """
+        Compute the probabilities for all the classes.
+
+        Args:
+            X: independent variable of shape :math:`(n, *)`
+
+        Returns:
+           Probability of all the classes of shape :math:`(n, C)` where `C` is the number of classes.
+        """
         assert self._is_fit, "Error. Need to run fit method before you can use the predict_proba method"
         X = self._to_torch_tensor(X).float()
         assert X.shape[-1] == self.pl_net.input_dim, "Dimension mistmatch"
@@ -417,7 +529,15 @@ class PlClassifier(BaseEstimator):
 
     @torch.no_grad()
     def predict_log_proba(self, X) -> numpy.ndarray:
-        """ Return a numpy.array with the log_prob for the different classes """
+        """
+        Compute the log_probabilities for all the classes.
+
+        Args:
+            X: independent variable of shape :math:`(n, *)`
+
+        Returns:
+           Log_Probability of all the classes of shape :math:`(n, C)` where `C` is the number of classes.
+        """
         assert self._is_fit, "Error. Need to run fit method before you can use the predict_proba method"
         X = self._to_torch_tensor(X).float()
         assert X.shape[-1] == self.pl_net.input_dim, "Dimension mistmatch"
