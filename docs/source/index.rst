@@ -9,12 +9,23 @@ Welcome to TissuePurifier's documentation!
    getting_started
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
    :caption: API
 
-   sparse_image
-   ssl_models
+   data
    genex
+   io
+   models
+   plots
+   utils
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Tutorials
+
+   tutorial_notebook1
+   tutorial_notebook2
+
 
 Indices and tables
 ==================

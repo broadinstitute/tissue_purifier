@@ -5,7 +5,9 @@ What is Tissue Purifier?
 ------------------------
 
 *Tissue Purifier* is a library for the analysis of biological tissues in Python.
-It is built on `PyTorch <https://pytorch.org/>`_, `Pyro <https://pyro.ai/>`_ and
+It is built on `PyTorch <https://pytorch.org/>`_,
+`PytorchLightning <https://www.pytorchlightning.ai/>`_,
+`Pyro <https://pyro.ai/>`_ and
 `Anndata <https://anndata.readthedocs.io/en/latest/>`_.
 
 Spatially resolved transcriptomic technologies (such as 
