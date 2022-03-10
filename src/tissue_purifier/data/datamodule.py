@@ -677,6 +677,8 @@ class AnndataFolderDM(SparseSslDM):
 
     def setup(self, stage: Optional[str] = None) -> None:
         list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._data_folder, "train_dataset.pt"))
+        print("read the file {}".format(os.path.join(self._data_folder, "train_dataset.pt")))
+
         list_imgs = [img.coalesce().cpu() for img in list_imgs]
         self.dataset_train = CropperDataset(
             imgs=list_imgs,
@@ -688,6 +690,7 @@ class AnndataFolderDM(SparseSslDM):
                                                                         self.dataset_train.__len__()))
 
         list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._data_folder, "test_dataset.pt"))
+        print("read the file {}".format(os.path.join(self._data_folder, "test_dataset.pt")))
         list_imgs = [img.coalesce().cpu() for img in list_imgs]
         self.dataset_test = CropperDataset(
             imgs=list_imgs,
