@@ -208,7 +208,7 @@ class BarlowModel(SslModelBase):
         # empirical cross-correlation matrix
         # note that batch-norm are syncronized therefore mean and std are computed across all devices
         corr_tmp = self.bn_final(z1).T @ self.bn_final(z2)  # shape: (latent, latent)
-        batch_size_per_gpu = z1.shape[0]
+        batch_size_per_gpu = float(z1.shape[0])
         batch_size_total = sync_ddp_if_available(torch.tensor(z1.shape[0], device=z1.device, dtype=torch.float),
                                                  group=None,
                                                  reduce_op='sum')  # sum across devices

@@ -471,7 +471,7 @@ class VaeModel(SslModelBase):
                      on_step=False, on_epoch=True, rank_zero_only=True, batch_size=batch_size)
 
             # batch_size
-            self.log('batch_size_per_gpu_train', len(list_imgs),
+            self.log('batch_size_per_gpu_train', float(len(list_imgs)),
                      on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
 
             # update the beta_vae if necessary

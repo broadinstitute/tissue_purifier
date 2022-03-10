@@ -255,8 +255,8 @@ class SimclrModel(SslModelBase):
 
             # Finally I log interesting stuff
 
-            batch_size_total = world_z1.shape[0]
-            batch_size_per_gpu = z1.shape[0]
+            batch_size_total = float(world_z1.shape[0])
+            batch_size_per_gpu = float(z1.shape[0])
             self.log('train_loss', loss, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
             self.log('weight_decay', wd, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
             self.log('learning_rate', lr, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
