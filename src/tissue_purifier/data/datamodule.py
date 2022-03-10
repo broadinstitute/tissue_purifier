@@ -226,8 +226,8 @@ class SparseSslDM(SslDM):
 
         # batch_size
         self._batch_size_per_gpu = batch_size_per_gpu
-        self.dataset_train: CropperDataset = None
-        self.dataset_test: CropperDataset = None
+        self._dataset_train: CropperDataset = None
+        self._dataset_test: CropperDataset = None
 
     @classmethod
     def add_specific_args(cls, parent_parser) -> ArgumentParser:
@@ -414,15 +414,15 @@ class SparseSslDM(SslDM):
             device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         # print("Inside train_dataloader", device)
 
-        assert isinstance(self.dataset_train, CropperDataset)
-        if self.dataset_train.n_crops_per_tissue is None:
+        assert isinstance(self._dataset_train, CropperDataset)
+        if self._dataset_train.n_crops_per_tissue is None:
             batch_size_dataloader = self._batch_size_per_gpu
         else:
-            batch_size_dataloader = max(1, int(self._batch_size_per_gpu // self.dataset_train.n_crops_per_tissue))
+            batch_size_dataloader = max(1, int(self._batch_size_per_gpu // self._dataset_train.n_crops_per_tissue))
 
         dataloader_train = DataLoaderWithLoad(
             # move the dataset to GPU so that the cropping happens there
-            dataset=self.dataset_train.to(device),
+            dataset=self._dataset_train.to(device),
             # each sample generate n_crops therefore reduce batch_size
             batch_size=batch_size_dataloader,
             collate_fn=CollateFnListTuple(),
@@ -440,16 +440,16 @@ class SparseSslDM(SslDM):
         except AttributeError:
             device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-        assert isinstance(self.dataset_test, CropperDataset)
-        if self.dataset_test.n_crops_per_tissue is None:
+        assert isinstance(self._dataset_test, CropperDataset)
+        if self._dataset_test.n_crops_per_tissue is None:
             batch_size_dataloader = self._batch_size_per_gpu
         else:
-            batch_size_dataloader = max(1, int(self._batch_size_per_gpu // self.dataset_train.n_crops_per_tissue))
+            batch_size_dataloader = max(1, int(self._batch_size_per_gpu // self._dataset_train.n_crops_per_tissue))
 
-        assert isinstance(self.dataset_test, CropperDataset)
+        assert isinstance(self._dataset_test, CropperDataset)
         test_dataloader = DataLoaderWithLoad(
             # move the dataset to GPU so that the cropping happens there
-            dataset=self.dataset_test.to(device),
+            dataset=self._dataset_test.to(device),
             # each sample generate n_crops therefore reduce batch_size
             batch_size=batch_size_dataloader,
             collate_fn=CollateFnListTuple(),
@@ -477,8 +477,8 @@ class SparseSslDM(SslDM):
         raise NotImplementedError
 
     def setup(self, stage: Optional[str] = None) -> None:
-        self.dataset_train = None
-        self.dataset_test = None
+        self._dataset_train = None
+        self._dataset_test = None
         raise NotImplementedError
 
 
@@ -680,23 +680,23 @@ class AnndataFolderDM(SparseSslDM):
         print("read the file {}".format(os.path.join(self._data_folder, "train_dataset.pt")))
 
         list_imgs = [img.coalesce().cpu() for img in list_imgs]
-        self.dataset_train = CropperDataset(
+        self._dataset_train = CropperDataset(
             imgs=list_imgs,
             labels=list_labels,
             metadatas=list_metadata,
             cropper=self.cropper_train,
         )
-        print("created train_dataset device = {0}, length = {1}".format(self.dataset_train.imgs[0].device,
-                                                                        self.dataset_train.__len__()))
+        print("created train_dataset device = {0}, length = {1}".format(self._dataset_train.imgs[0].device,
+                                                                        self._dataset_train.__len__()))
 
         list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._data_folder, "test_dataset.pt"))
         print("read the file {}".format(os.path.join(self._data_folder, "test_dataset.pt")))
         list_imgs = [img.coalesce().cpu() for img in list_imgs]
-        self.dataset_test = CropperDataset(
+        self._dataset_test = CropperDataset(
             imgs=list_imgs,
             labels=list_labels,
             metadatas=list_metadata,
             cropper=None,
         )
-        print("created test_dataset device = {0}, length = {1}".format(self.dataset_test.imgs[0].device,
-                                                                       self.dataset_test.__len__()))
+        print("created test_dataset device = {0}, length = {1}".format(self._dataset_test.imgs[0].device,
+                                                                       self._dataset_test.__len__()))
