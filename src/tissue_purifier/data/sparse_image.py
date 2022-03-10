@@ -188,23 +188,28 @@ class SparseImage:
         """
         return self._to_torch(self._image_properties_dict[key])
 
-    def write_to_spot_dictionary(self, key: str, values: Union[torch.Tensor, numpy.ndarray]):
+    def write_to_spot_dictionary(self, key: str, values: Union[torch.Tensor, numpy.ndarray], overwrite: bool = False):
         """
         Helper function to write info to the spot dictionary.
 
         Args:
             key: the key corresponding to the information to write
             values: array of shape :math:`(n, *)` with the spot-level information
+            overwrite: If True (default is False) overwrite the value if already present
         """
         assert len(values.shape) == 2 or len(values.shape) == 1, \
             "Error. values must be a 1D or 2D array. Received {0}".format(values.shape)
         assert values.shape[0] == self.n_spots
-        self._spot_properties_dict[key] = self._to_numpy(values)
+        if overwrite or key not in set(self._spot_properties_dict.keys()):
+            self._spot_properties_dict[key] = self._to_numpy(values)
+        else:
+            print("Key {0} already present in spot dictionary. Set overwrite to True to overwrite".format(key))
 
     def write_to_patch_dictionary(self,
                                   key: str,
                                   values: Union[torch.Tensor, numpy.ndarray],
-                                  patches_xywh: Union[torch.Tensor, numpy.ndarray]):
+                                  patches_xywh: Union[torch.Tensor, numpy.ndarray],
+                                  overwrite: bool = False):
         """
         Helper function to write info to the patch dictionary.
 
@@ -212,26 +217,34 @@ class SparseImage:
             key: the name under which to save the information
             values: the patch-level information of shape :math:`(n_\\text{patches}, *, *, *)`
             patches_xywh: the location from where the patches were taken of shape :math:`(n_\\text{patches}, 4)`
+            overwrite: If True (default is False) overwrite the value if already present
         """
         assert values.shape[0] == patches_xywh.shape[0]
         assert len(patches_xywh.shape) == 2 and patches_xywh.shape[-1] == 4, \
             "Error. Received {0}".format(patches_xywh.shape)
 
-        self._patch_properties_dict[key] = self._to_numpy(values)
-        self._patch_properties_dict[key+"_patch_xywh"] = self._to_numpy(patches_xywh)
+        if overwrite or key not in set(self._patch_properties_dict.keys()):
+            self._patch_properties_dict[key] = self._to_numpy(values)
+            self._patch_properties_dict[key + "_patch_xywh"] = self._to_numpy(patches_xywh)
+        else:
+            print("Key {0} already present in patch dictionary. Set overwrite to True to overwrite".format(key))
 
-    def write_to_image_dictionary(self, key, values: Union[torch.Tensor, numpy.ndarray]):
+    def write_to_image_dictionary(self, key, values: Union[torch.Tensor, numpy.ndarray], overwrite: bool = False):
         """
         Helper function to write information to the image dictionary.
 
         Args:
             key: the key corresponding to the information to write
             values: array of shape :math:`(*, w, h)` with the image-level information
+            overwrite: If True (default is False) overwrite the value if already present
         """
         assert len(values.shape) == 2 or len(values.shape) == 3, \
             "Error. values must be a 2D or 3D array. Received {0}".format(values.shape)
         assert values.shape[-2:] == self.shape[-2:]
-        self._image_properties_dict[key] = self._to_numpy(values)
+        if overwrite or key not in set(self._image_properties_dict.keys()):
+            self._image_properties_dict[key] = self._to_numpy(values)
+        else:
+            print("Key {0} already present in image dictionary. Set overwrite to True to overwrite".format(key))
 
     def clear_dicts(self, patch_dict: bool = True, image_dict: bool = True):
         """
@@ -595,14 +608,6 @@ class SparseImage:
         assert k is None or isinstance(k, int) and k > 0, "k is either None or a positive integer"
         assert r is None or r > 0, "r is either None or a positive value"
 
-        if feature_name in self._spot_properties_dict.keys() and not overwrite:
-            print("The key {0} is already present in spot_properties_dict.")
-            print(" Set overwrite=True to overwrite its value. Nothing will be done.".format(feature_name))
-            return
-        elif feature_name in self._spot_properties_dict.keys() and overwrite:
-            print("The key {0} is already present in spot_properties_dict and it will be overwritten".format(
-                feature_name))
-
         # preparation
         cell_type_codes = torch.tensor([self._categories_to_codes[cat] for cat in self.cat_raw]).long()
         metric_features = numpy.stack((self.x_raw, self.y_raw), axis=-1)
@@ -632,7 +637,7 @@ class SparseImage:
                 ncv[n] = ncv_tmp
 
         ncv = ncv.float() / ncv.sum(dim=-1, keepdim=True).clamp(min=1.0)
-        self.write_to_spot_dictionary(key=feature_name, values=ncv)
+        self.write_to_spot_dictionary(key=feature_name, values=ncv, overwrite=overwrite)
 
     @torch.no_grad()
     def compute_patch_features(
@@ -730,7 +735,8 @@ class SparseImage:
         else:
             features = torch.cat(all_features, dim=0).cpu()
 
-        self.write_to_patch_dictionary(key=feature_name, values=features, patches_xywh=patches_xywh)
+        self.write_to_patch_dictionary(
+            key=feature_name, values=features, patches_xywh=patches_xywh, overwrite=overwrite)
 
         if return_crops:
             if len(all_patches) == n_patches_max:
@@ -801,18 +807,6 @@ class SparseImage:
         assert set(keys_to_transfer).issubset(self._patch_properties_dict.keys()), \
             "Some keys are not present in patch_properties_dict."
 
-        # check name collision at destination
-        keys_at_destination = self._image_properties_dict.keys()
-        for key in keys_to_transfer:
-            if key in keys_at_destination and not overwrite:
-                print("The key {0} is already present in image_properties_dict. \
-                        Set overwrite=True to overwrite its value. \
-                        Nothing will be done.".format(key))
-                return
-            elif key in keys_at_destination and overwrite:
-                print("The key {0} is already present in image_properties_dict and it will be overwritten".format(
-                    key))
-
         # Here is where the actual calculation starts
         for key in keys_to_transfer:
             if verbose:
@@ -870,7 +864,7 @@ class SparseImage:
                 result = tmp_result
             else:
                 raise ValueError("strategy can only be 'average' or 'closest'. Received {0}".format(strategy))
-            self.write_to_image_dictionary(key=key, values=result)
+            self.write_to_image_dictionary(key=key, values=result, overwrite=overwrite)
 
     def transfer_image_to_spot(
             self,
@@ -927,16 +921,6 @@ class SparseImage:
         assert set(keys_to_transfer).issubset(set(self._image_properties_dict.keys())), \
             "Some keys are not present in self.image_properties_dict"
 
-        keys_at_destination = self._spot_properties_dict.keys()
-        for key in keys_to_transfer:
-            if key in keys_at_destination and not overwrite:
-                print("The key {0} is already present in spot_properties_dict. \
-                        Set overwrite=True to overwrite its value. \
-                        Nothing will be done.".format(key))
-                return
-            elif key in keys_at_destination and overwrite:
-                print("The key {0} is already present in spot_properties_dict and it will be overwritten".format(key))
-
         # actual calculation
         for key in keys_to_transfer:
             if verbose:
@@ -952,7 +936,7 @@ class SparseImage:
             interpolated_values = _interpolation(
                 image_quantity, x_pixel, y_pixel, strategy).cpu()
             assert len(interpolated_values.shape) == 2
-            self.write_to_spot_dictionary(key=key, values=interpolated_values.permute(dims=(1, 0)))
+            self.write_to_spot_dictionary(key=key, values=interpolated_values.permute(dims=(1, 0)), overwrite=overwrite)
 
     def get_state_dict(self, include_anndata: bool = True) -> dict:
         """
