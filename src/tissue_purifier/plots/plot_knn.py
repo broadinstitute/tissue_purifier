@@ -19,6 +19,8 @@ def plot_knn_examples(
         max_distance: float = None,
         **kargs):
     """
+    NEED TO BE REARRANGED b/c INTERFACE HAS CHANGED
+
     Args:
         input_dict: dictionary with the images of the crops and their embeddings
         embedding_key: str, key corresponding to the embeddings in the input_dict

@@ -11,9 +11,9 @@ from tissue_purifier.models._optim_scheduler import LARS, linear_warmup_and_cosi
 
 class BarlowModel(SslModelBase):
     """
-    BarlowTwin self supervised learning model.
-    See the `official implementation <https://github.com/facebookresearch/barlowtwins>`_
-    and a `pytorch lightning reimplementation <https://github.com/IgorSusmelj/barlowtwins/blob/main/main.py>`_
+    Barlow self supervised learning model.
+    Inspired by the `BarlowTwin official implementation <https://github.com/facebookresearch/barlowtwins>`_ and this
+    `Barlow pytorch lightning reimplementation <https://github.com/IgorSusmelj/barlowtwins/blob/main/main.py>`_.
     """
     def __init__(
             self,
@@ -123,7 +123,6 @@ class BarlowModel(SslModelBase):
             >>> parser = BarlowModel.add_specific_args(parser)
             >>> args = parser.parse_args(sys.argv[1:])
         """
-
         parser = ArgumentParser(parents=[parent_parser], add_help=False, conflict_handler='resolve')
 
         # validation

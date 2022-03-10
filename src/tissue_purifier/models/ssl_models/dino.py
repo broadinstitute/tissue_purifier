@@ -208,10 +208,11 @@ class MultiResolutionNet(torch.nn.Module):
 class DinoModel(SslModelBase):
     """
     DINO self supervised learning model.
-    See the `official implementation <https://github.com/facebookresearch/dino>`_
-    and a `pytorch lightning reimplementation
-    https://sachinruk.github.io/blog/pytorch/pytorch%20lightning/loss%20function/2021/08/01/dino-self-supervised-vision-transformers.html>'_
+    Inspired by the `DINO official implementation <https://github.com/facebookresearch/dino>`_ and this
+    `DINO pytorch-lightning reimplementation <https://sachinruk.github.io/blog/pytorch/pytorch%20lightning/\
+    loss%20function/2021/08/01/dino-self-supervised-vision-transformers.html>`_
     """
+
     def __init__(
             self,
             # architecture

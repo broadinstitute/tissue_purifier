@@ -1,17 +1,24 @@
-from typing import Union, List, Optional, Tuple
+from __future__ import annotations
+from typing import Union, List, Optional, Tuple, TYPE_CHECKING
 import numpy
 import torch
 from sklearn.neighbors import NearestNeighbors
 
+# trick to avoid circular imports
+if TYPE_CHECKING:
+    from tissue_purifier.data.sparse_image import SparseImage
+
 
 class SpatialAutocorrelation:
-    """ Compute the moran or geary score of a sparse torch tensor. If sparse_tensor has C channels
-        it will produce C scores, each indicating how each channel is dispersed in all the others.
+    """
+    Compute the Moran's I or Geary's C score of a sparse torch tensor. If the sparse tensor has `ch` channels
+    it will produce `ch` scores, each indicating how each channel is dispersed in all the others.
 
-        Note:
-            The results of a moran and geary tests depend on the choice of the weight matrix
-            (see https://en.wikipedia.org/wiki/Moran%27s_I and https://en.wikipedia.org/wiki/Geary%27s_C).
-            The input parameters determine the strategy used for the construction
+    Note:
+        The results of a Moran's I and Geary's C tests depend on the choice of the weight matrix
+        (see `Moran <https://en.wikipedia.org/wiki/Moran%27s_I>`_ and
+        `Geary <https://en.wikipedia.org/wiki/Geary%27s_C>`_ for details).
+        The input parameters determine the strategy used for the construction of the weight matrix.
     """
 
     def __init__(self,
@@ -38,7 +45,7 @@ class SpatialAutocorrelation:
         self.neigh_correct = neigh_correct
 
     @torch.no_grad()
-    def __call__(self, data: Union["SparseImage", List["SparseImage"], torch.sparse.Tensor, List[torch.sparse.Tensor]]):
+    def __call__(self, data: Union[SparseImage, List[SparseImage], torch.sparse.Tensor, List[torch.sparse.Tensor]]):
         """
         Args:
             data: A (list of) sparse tensor with C channels
@@ -190,15 +197,19 @@ class SpatialAutocorrelation:
 
 
 class Composition:
-    """ Class which simply counts the number of elements in every channel """
+    """ Counts the number of elements in every channel and return their raw values or their normalized frequencies. """
 
     def __init__(self, return_fraction: bool = True):
+        """
+        Args:
+            return_fraction: if True (defaults) it returns the normalized frequency instead of the raw values.
+        """
         self.return_fraction = return_fraction
 
     def __call__(
             self,
-            data: Union[torch.Tensor, torch.sparse.Tensor, "SparseImage",
-                        List[torch.sparse.Tensor], List["SparseImage"]],
+            data: Union[torch.Tensor, torch.sparse.Tensor, SparseImage,
+                        List[torch.sparse.Tensor], List[SparseImage]],
             windows: Tuple[float, float, float, float] = None) -> torch.Tensor:
         """
         Count the intensity for each channel in a 2D window.
@@ -206,7 +217,7 @@ class Composition:
         Args:
             data: torch.Tensor or torch.sparse.Tensor or SparseImage or list thereof
                 corresponding to a spatial data: (channel,x,y)
-            windows: tuple with (min_row, min_col, max_row, max_col)
+            windows: tuple with (min_row, min_col, max_row, max_col). If None (default) the entire image is considered.
 
         Returns:
             A vector of size channel with the count for each channel or a list thereof.

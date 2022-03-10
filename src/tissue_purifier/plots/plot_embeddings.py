@@ -3,9 +3,9 @@ import pandas as pd
 from scanpy.plotting import embedding
 import numpy
 import torch
+import matplotlib.pyplot as plt
 from matplotlib.colors import Colormap
 from typing import List
-import matplotlib.pyplot as plt
 
 
 def plot_embeddings(
@@ -14,7 +14,7 @@ def plot_embeddings(
         annotation_keys: List[str],
         sup_title: str = None,
         n_col: int = 3,
-        cmap: Colormap = 'inferno') -> "matplotlib.pyplot.figure":
+        cmap: Colormap = 'inferno') -> plt.Figure:
     """
     Takes a dictionary with embeddings and multiple annotations and make a multi-panel figure with each panel showing
     one annotation.

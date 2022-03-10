@@ -8,10 +8,22 @@ import seaborn
 
 
 def plot_cdf_pdf(
-        cdf_y: Union[numpy.ndarray, torch.Tensor] = None,
         pdf_y: Union[numpy.ndarray, torch.Tensor] = None,
+        cdf_y: Union[numpy.ndarray, torch.Tensor] = None,
         x_label: str = None,
-        sup_title: str = None) -> "matplotlib.pyplot.figure":
+        sup_title: str = None) -> plt.Figure:
+    """
+    Plot the Probability Density Function (pdf) and Cumulative Density Function (cdf).
+
+    Args:
+       pdf_y: array like data
+       cdf_y: Optional. The cdf to plot. If not present it can be computed internally from pdf_y
+       x_label: the label of the x-axis
+       sup_title: the title for both panels
+
+    Returns:
+        A two panel figure with the pdf and cdf.
+    """
 
     if cdf_y is not None and pdf_y is None:
         pdf_y = cdf_y.clone()
@@ -47,8 +59,7 @@ def _plot_multigroup_bars(
         group_labels: List[Any] = None,
         title: str = None,
         group_legend: bool = None,
-        y_lim: Tuple[float, float] = None,
-        ):
+        y_lim: Tuple[float, float] = None) -> plt.Figure:
     """
     Make a bar plot of a tensor of shape (groups, x_locs).
     Each x_loc will have n_groups bars shown next to each other.
@@ -114,8 +125,10 @@ def plot_clusters_annotations(
         titles: List[str] = None,
         sup_title: str = None,
         n_col: int = 3,
-        figsize: Tuple[float, float] = None,
-        ) -> "matplotlib.pyplot.figure":
+        figsize: Tuple[float, float] = None) -> plt.Figure:
+    """
+    ADD DOC STRING
+    """
 
     def _preprocess_to_numpy(_y) -> numpy.ndarray:
         if isinstance(_y, torch.Tensor):
@@ -207,25 +220,27 @@ def plot_multiple_barplots(
         x_labels: List[str] = None,
         titles: List[str] = None,
         y_lims: Tuple[float, float] = None,
-        **kargs) -> "matplotlig.figure":
-    """ Takes a dataframe and make multiple bar plot leveraging
-        seaborn.barplot(y=y, x=x, data=data)
+        **kargs) -> plt.Figure:
+    """
+    IMPROVE DOCSTRING
+
+    Takes a dataframe and make multiple bar plots leveraging seaborn.barplot(y=y, x=x, data=data)
 
     Args:
         data: a dataframe with the data to plot
-        x: names of variables in data
-        ys: names of variables in data
+        x: names of (independent) variables in data
+        ys: names of (dependent) variables in data
         n_col: number of columns panels in the figure
         figsize: size of the output figure
-        x_labels: labels
-        y_labels: labels
+        x_labels: label for the x-axis
+        y_labels: labels for the y-axis
         x_labels_rotation: rotation in degree of the x_labels (default 90)
         titles: titles for each panel
-        y_lims: set y_limits for all the panels
+        y_lims: set limits for the y coordinate for all the panels
         kargs: any argument passed to seaborn.barplot such as hue,
 
     Returns:
-        figure
+        Figure with XXX panels
     """
 
     n_max = len(ys)

@@ -59,9 +59,10 @@ class NTXentLoss(torch.nn.Module):
 
 class SimclrModel(SslModelBase):
     """
-    See
-    https://pytorch-lightning.readthedocs.io/en/stable/starter/style_guide.html  and
-    https://github.com/PyTorchLightning/Lightning-Bolts/blob/master/pl_bolts/models/self_supervised/simclr/simclr_module.py#L61-L301
+    Simclr self supervised learning model.
+    Inspired by the `Simclr official implementation <https://github.com/google-research/simclr>`_
+    and this `Simclr pytorch lightning reimplementation <https://github.com/PyTorchLightning/lightning-bolts/\
+    blob/0.1.0/pl_bolts/models/self_supervised/simclr/simclr_module.py#L47-L281>`_
     """
 
     def __init__(
@@ -71,8 +72,6 @@ class SimclrModel(SslModelBase):
             image_in_ch: int,
             head_hidden_chs: List[int],
             head_out_ch: int,
-            # loss
-
             # optimizer
             optimizer_type: str,
             # scheduler
@@ -87,6 +86,24 @@ class SimclrModel(SslModelBase):
             val_iomin_threshold: float = 0.0,
             **kwargs,
             ):
+        """
+        Args:
+            backbone_type: Either 'resnet18', 'resnet34' or 'resnet50'
+            image_in_ch: number of channels in the input images, used to adjust the first
+                convolution filter in the backbone
+            head_hidden_chs: List of integers with the size of the hidden layers of the projection head
+            head_out_ch: output dimension of the projection head
+            optimizer_type: Either 'adamw', 'lars', 'sgd', 'adam' or 'rmsprop'
+            warm_up_epochs: epochs during which to linearly increase learning rate (at the beginning of training)
+            warm_down_epochs: epochs during which to anneal learning rate with cosine protocoll (at the end of training)
+            max_epochs: total number of epochs
+            min_learning_rate: minimum learning rate (at the very beginning and end of training)
+            max_learning_rate: maximum learning rate (after linear ramp)
+            min_weight_decay: minimum weight decay (during the entirety of the linear ramp)
+            max_weight_decay: maximum weight decay (reached at the end of training)
+            val_iomin_threshold: during validation, only patches with Intersection Over MinArea < IoMin_threshold
+                are used. Should be in [0.0, 1.0). If 0 only strictly non-overlapping patches are allowed.
+        """
         super(SimclrModel, self).__init__(val_iomin_threshold=val_iomin_threshold)
 
         # Next two lines will make checkpointing much simpler
@@ -139,6 +156,16 @@ class SimclrModel(SslModelBase):
 
     @classmethod
     def add_specific_args(cls, parent_parser):
+        """
+        Utility functions which add parameters to argparse to simplify setting up a CLI
+
+        Example:
+            >>> import sys
+            >>> import argparse
+            >>> parser = argparse.ArgumentParser(add_help=False, conflict_handler='resolve')
+            >>> parser = SimclrModel.add_specific_args(parser)
+            >>> args = parser.parse_args(sys.argv[1:])
+        """
         parser = ArgumentParser(parents=[parent_parser], add_help=False, conflict_handler='resolve')
 
         # validation
@@ -177,13 +204,20 @@ class SimclrModel(SslModelBase):
 
     @classmethod
     def get_default_params(cls) -> dict:
+        """
+        Get the default configuration parameters for this model
+
+        Example:
+            >>> config = SimclrModel.get_default_params()
+            >>> my_barlow = SimclrModel(**config)
+        """
         parser = ArgumentParser()
         parser = SimclrModel.add_specific_args(parser)
         args = parser.parse_args(args=[])
         return args.__dict__
 
     def forward(self, x):
-        # this is the stuff that will generate the embeddings
+        # this is the stuff that will generate the backbone embeddings
         y = self.backbone(x)  # shape (batch, ch)
         return y
 

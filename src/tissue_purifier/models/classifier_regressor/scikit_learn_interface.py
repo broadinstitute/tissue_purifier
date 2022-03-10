@@ -324,17 +324,17 @@ class MlpClassifier(BaseEstimator):
 
     It can performs classification with noisy labels following the method described in
     `Unsupervised Label Noise Modeling and Loss Correction <https://arxiv.org/abs/1904.11238>`_
-
     According to this method, the labels are dynamically corrected according to the formula:
 
-    .. :math:
-        l_\\text{new} = (1.0-w) \\times l_\\text{old} + w \\times p_\\text{net}
+    :math:`l_\\text{new} = (1.0-w) \\times l_\\text{old} + w \\times p_\\text{net}`
 
-    where :math:`l_\\text{old}` are the noisy (and one-hot) original labels
+    where :math:`l_\\text{old}` are the noisy (and one-hot) original labels,
     :math:`p_\\text{net}` are the probabilities computed by the neural network
     and `w` is the probability of label being incorrect.
-    `w` is computed by solving a 2-component Mixture Model based on the idea that
-    correct (incorrect) labels will lead to small (large) losses.
+    `w` is computed by solving the assignment problem for a 2-component Mixture Model.
+    This is based on the idea that correct (incorrect) labels will lead to small (large) losses.
+    Therefore correct labels will belong to the low-loss component and incorrect label will belong to the high-loss
+    component.
     """
     def __init__(
             self,

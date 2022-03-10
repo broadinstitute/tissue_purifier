@@ -143,6 +143,27 @@ class ConvolutionalVae(torch.nn.Module):
 
 
 class VaeModel(SslModelBase):
+    """
+    Convolutional Variational Auto Encoders (VAE) with dynamically adjusted hyper-parameter :math:`\\beta`.
+
+    The loss function is a weighted sum of the reconstruction (MSE) and regularization (KL):
+
+    :math:`\\text{loss} = \\beta \\times \\text{KL} + (1-\\beta) \\times \\text{MSE}`
+
+    We view this problem as a Multi-Objective Optimization (minimizing MSE *and* KL) and we dynamically
+    adjust :math:`\\beta \\in (.0, 1.0)` taking inspiration from the ideas in
+    `Multi-Task Learning as Multi-Objective Optimization
+    <https://proceedings.neurips.cc/paper/2018/file/432aca3a1e345e339f35a30c8f65edce-Paper.pdf>`_
+
+    Note:
+        Depending on the data pre-processing step, the input images might be mostly zeros with few "spots" in them.
+        In this case, the VAE might collapse to a local minimum in the loss function corresponding to identically
+        zero reconstruction. You might try to solve this collapse by using a larger latent dimension or by implementing
+        a KL-free variation of the VAE, such as `VQ-VAE <https://arxiv.org/pdf/1711.00937v2.pdf>`_.
+        However, spotty images are inherently difficult for
+        (unstructured) VAE which are required to retain (in their latent embedding) precise information about the
+        location of each individual spots.
+    """
     def __init__(
             self,
             # architecture
@@ -175,6 +196,34 @@ class VaeModel(SslModelBase):
             val_iomin_threshold: float = 0.0,
             **kwargs,
             ):
+        """
+        Args:
+            backbone_type: Either 'vanilla', 'resnet18', 'resnet34' or 'resnet50'
+            global_size: Size in pixel of the input image. Must be a multiple of 32.
+            image_in_ch: number of channels in the input images, used to adjust the first
+                convolution filter in the backbone
+            latent_dim: number of latent dimensions of the embeddings
+            encoder_hidden_dims: Dimension of the hidden layers. Used only in :attr:`backbone_type` == 'vanilla'.
+            decoder_output_activation: The non-linearity used to produce the reconstructed image.
+                In most cases "identity" (default) will work just fine. This is true even when he pixel values are
+                strictly positive and a "softplus" or "sigmoid" activations could be used.
+            optimizer_type: Either 'adamw', 'sgd', 'adam' or 'rmsprop'.
+            beta_vae_init: Initial value for :math:`\\beta` (the coefficient multiplying the KL divergence in the loss)
+                It should be in (0.0, 1.0). The reconstruction error in the loss is multiplied by :math:`(1-\\beta)`.
+            momentum_beta_vae: momentum for the Exponential Moving Average which updates the value of :math:`\\beta`.
+                It should be in (0.0, 1.0).
+            warm_up_epochs: epochs during which to linearly increase learning rate (at the beginning of training)
+            warm_down_epochs: epochs during which to anneal learning rate with cosine protocoll (at the end of training)
+            max_epochs: total number of epochs
+            min_learning_rate: minimum learning rate (at the very beginning and end of training)
+            max_learning_rate: maximum learning rate (after linear ramp)
+            min_weight_decay: minimum weight decay (during the entirety of the linear ramp)
+            max_weight_decay: maximum weight decay (reached at the end of training)
+            gradient_clip_algorithm: Either "norm" or "value". The algorithm to use for gradient clipping.
+            gradient_clip_val: Clip the gradients to this value. If 0 no clipping
+            val_iomin_threshold: during validation, only patches with Intersection Over MinArea < IoMin_threshold
+                are used. Should be in [0.0, 1.0). If 0 only strictly non-overlapping patches are allowed.
+        """
         super(VaeModel, self).__init__(val_iomin_threshold=val_iomin_threshold)
 
         # Important: This property activates manual optimization.
@@ -239,6 +288,16 @@ class VaeModel(SslModelBase):
 
     @classmethod
     def add_specific_args(cls, parent_parser):
+        """
+        Utility functions which add parameters to argparse to simplify setting up a CLI
+
+        Example:
+            >>> import sys
+            >>> import argparse
+            >>> parser = argparse.ArgumentParser(add_help=False, conflict_handler='resolve')
+            >>> parser = VaeModel.add_specific_args(parser)
+            >>> args = parser.parse_args(sys.argv[1:])
+        """
         parser = ArgumentParser(parents=[parent_parser], add_help=False, conflict_handler='resolve')
 
         # validation
@@ -261,7 +320,7 @@ class VaeModel(SslModelBase):
         parser.add_argument("--image_in_ch", type=int, default=3, help="number of channels of the input image")
         parser.add_argument("--latent_dim", type=int, default=128, help="number of latent dimensions")
         parser.add_argument("--encoder_hidden_dims", type=int, nargs='*', default=[32, 64, 128, 256, 512],
-                            help="dimension of the hidden layers. Used only in vae_type='vanilla'.")
+                            help="dimension of the hidden layers. Used only in backbone_type='vanilla'.")
         parser.add_argument("--decoder_output_activation", type=str, default="identity",
                             choices=["sigmoid", "identity", "tanh", "softplus", "relu"],
                             help="The non-linearity used to produce the reconstructed image.")
@@ -297,6 +356,13 @@ class VaeModel(SslModelBase):
 
     @classmethod
     def get_default_params(cls) -> dict:
+        """
+        Get the default configuration parameters for this model
+
+        Example:
+            >>> config = VaeModel.get_default_params()
+            >>> my_barlow = VaeModel(**config)
+        """
         parser = ArgumentParser()
         parser = cls.add_specific_args(parser)
         args = parser.parse_args(args=[])

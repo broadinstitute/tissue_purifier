@@ -35,7 +35,7 @@ def _minmax_scale_tensor(tensor, in_range: Tuple[float, float] = None):
                                                alpha=-1.0).mul_(other=scale).clamp_(min=0.0, max=1.0)
 
 
-def pad_and_crop_and_stack(x: List[torch.Tensor], pad_value: float = 0.0):
+def pad_and_crop_and_stack(x: List[torch.Tensor], pad_value: float = 0.0) -> torch.Tensor:
     """
     Takes a list of tensor and returns a single batched_tensor. It is useful for visualization.
 
@@ -44,7 +44,7 @@ def pad_and_crop_and_stack(x: List[torch.Tensor], pad_value: float = 0.0):
         pad_value: float, the value used in padding the images. Defaults to padding with black colors
 
     Returns:
-        A single batch tensor of shape (B, c, max_width, max_heigth)
+        A single batch tensor of shape :math:`(B, c, \\text{width}_\\text{max}, \\text{height}_\\text{max})`
     """
     widths = [tmp.shape[-2] for tmp in x]
     heigths = [tmp.shape[-1] for tmp in x]
@@ -74,10 +74,10 @@ def show_batch(
         pad_value: int = 1,
         normalize: bool = True,
         normalize_range: Tuple[float, float] = None,
-        figsize: Tuple[float, float] = None):
+        figsize: Tuple[float, float] = None) -> plt.Figure:
     """
-    Visualize a torch tensor of shape: (*,  ch, width, height)
-    It works for any number of leading dimensions
+    Visualize a torch tensor of shape: :math:`(*,  \\text{ch}, \\text{width}, \\text{height})`.
+    It works for any number of leading dimensions.
 
     Args:
         tensor: the torch.Tensor to plot
@@ -166,24 +166,29 @@ def show_raw_one_channel(
         figsize: Tuple[float, float] = None,
         titles: List[str] = None,
         sup_title: str = None,
-        show_axis: bool = True):
+        show_axis: bool = True) -> plt.Figure:
     """
-    Visualize a torch tensor of shape: (*, width, height) or a list of tensor of shape (width, height).
+    Visualize a torch tensor of shape :math:`(*, \\text{width}, \\text{height})`.
+    or a list of tensor of shape :math:`(\\text{width}, \\text{height})`.
     Each leading dimension is shown separately.
-    Can be used either for a batch or for a single image
 
     Args:
-        data: A torch.tensor of shape (*, width, height) or list of tensor of shape (width, height)
+        data: A torch.tensor of shape :math:`(*, \\text{width}, \\text{height})` or list
+            of tensor of shape :math:`(\\text{width}, \\text{height})`.
         n_col: number of columns to plot the data
         cmap: the matplotlib color map to use. If None use 'gray' colormap.
-        in_range: Either a tuple(min_value, max_value) or a string 'image'.
+        in_range: Either a tuple specifying a a min and max value (for clamping) or a string 'image'.
             If 'image' the min and max value are computed form the image itself.
-            Value are clamped in_range and then transformed to_range (0.0, 1.0)
+            Value are clamped in_range and then transformed to range (0.0, 1.0) for visualization.
         scale_each: bool if true each leading dimension is scaled by itself. It has effect only if in_range = 'image'
         figsize: Optional, the tuple with the width and height of the rendered figure
         titles: list with the titles for each small image
         sup_title: str, the title for the entire image
-        show_axis: bool, whether to show the axis or not. Default is True
+        show_axis: If True (defaults) show the axis.
+
+    Returns:
+        A figure with `(*)` panels.
+        Each panel is a rendering of a tensor of shape :math:`(\\text{width}, \\text{height})`
     """
 
     if isinstance(data, list):
@@ -256,22 +261,27 @@ def show_raw_all_channels(
         sup_title: str = None,
         show_colorbar: Optional[bool] = None,
         legend_colorbar: List[str] = None,
-        show_axis: bool = True):
+        show_axis: bool = True) -> plt.Figure:
     """
-    Visualize a torch tensor of shape: (*, ch, width, height) or a list of tensor of shape (ch, width, height).
+    Visualize a torch tensor of shape: :math:`(*, \\text{ch}, \\text{width}, \\text{height})`
+    or a list of tensors of shape :math:`(\\text{ch}, \\text{width}, \\text{height})`.
 
     Args:
-        data: A torch.tensor of shape (*, width, height) or list of tensor of shape (width, height)
+        data: A torch.tensor of shape :math:`(*, \\text{ch}, \\text{width}, \\text{height})`
+            or a list of tensor of shape :math:`(\\text{ch}, \\text{width}, \\text{height})`
         n_col: number of columns to plot the data
         cmap: the matplotlib color map to use. Defaults to RBG (if data has 3 channels) or 'tab20' otherwise.
         figsize: Optional, the tuple with the width and height of the rendered figure
-        titles: list with the titles for each small image
-        sup_title: str, the title for the entire image
+        titles: list with the titles for each panel
+        sup_title: the title for the entire image
         show_colorbar: bool, if yes show the color bar
         legend_colorbar: legend for the colorbar
-        show_axis: bool, whether to show the axis or not. Default is True
-    """
+        show_axis: If True (default) show the axis
 
+    Returns:
+        A figure with `*` panels each panel is a rendering of a tensors of shape
+        :math:`(\\text{ch}, \\text{width}, \\text{height})`
+    """
     if isinstance(data, torch.Tensor) and len(data.shape) == 3:
         data = data.unsqueeze(dim=0)
 
