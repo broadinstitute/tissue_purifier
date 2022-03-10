@@ -24,6 +24,8 @@ def plot_cdf_pdf(
     Returns:
         A two panel figure with the pdf and cdf.
     """
+    assert cdf_y is None or len(cdf_y.shape) == 1, "cdf_y must be None or 1D array. Received {0}".format(cdf_y.shape)
+    assert pdf_y is None or len(pdf_y.shape) == 1, "pdf_y must be None or 1D array. Received {0}".format(pdf_y.shape)
 
     if cdf_y is not None and pdf_y is None:
         pdf_y = cdf_y.clone()
@@ -32,6 +34,7 @@ def plot_cdf_pdf(
         pdf_y[0] = cdf_y[0]
     elif cdf_y is None and pdf_y is not None:
         cdf_y = numpy.cumsum(pdf_y, axis=0)
+        cdf_y /= cdf_y[-1]
 
     fig, axes = plt.subplots(ncols=2, figsize=(4 * 2, 4))
     _ = axes[0].plot(pdf_y, '.')
