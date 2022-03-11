@@ -426,14 +426,14 @@ class GeneRegression:
         k = dataset.k_cell_types
 
         # params
-        eps_k1g = pyro.get_param_store().get_param("eps").cpu()
-        beta0_k1g = pyro.get_param_store().get_param("beta0").cpu()
-        beta_klg = pyro.get_param_store().get_param("beta_loc").cpu()
+        eps_k1g = pyro.get_param_store().get_param("eps").float().cpu()
+        beta0_k1g = pyro.get_param_store().get_param("beta0").float().cpu()
+        beta_klg = pyro.get_param_store().get_param("beta_loc").float().cpu()
 
         # dataset
-        counts_ng = dataset.counts.cpu()
+        counts_ng = dataset.counts.long().cpu()
         cell_type_ids = dataset.cell_type_ids.long().cpu()
-        covariates_nl1 = dataset.covariates.unsqueeze(dim=-1).cpu()
+        covariates_nl1 = dataset.covariates.unsqueeze(dim=-1).float().cpu()
 
         assert eps_k1g.shape == torch.Size([k, 1, g]), \
             "Got {0}. Are you predicting on the right dataset?".format(eps_k1g.shape)
@@ -471,31 +471,27 @@ class GeneRegression:
                 counts_pred_bng_tmp = mydist.sample(sample_shape=torch.Size([num_samples]))
                 log_score_ng_tmp = mydist.log_prob(counts_ng[n_left:n_right, g_left:g_right].to(device_calculation))
 
-                counts_pred_bng[:, n_left:n_right, g_left:g_right] = counts_pred_bng_tmp.cpu()
-                log_score_ng[n_left:n_right, g_left:g_right] = log_score_ng_tmp.cpu()
+                counts_pred_bng[:, n_left:n_right, g_left:g_right] = counts_pred_bng_tmp.long().cpu()
+                log_score_ng[n_left:n_right, g_left:g_right] = log_score_ng_tmp.float().cpu()
 
         results = {
-            "counts_true": counts_ng.cpu(),
+            "counts_true": counts_ng,
             "counts_pred": counts_pred_bng,
             "log_score": -log_score_ng,
-            "counts_diff": (counts_ng.cpu()-counts_pred_bng).abs(),
-            "cell_type": cell_type_ids.cpu()
+            "cell_type": cell_type_ids
         }
 
         # package the results into two dataframe for easy visualization
         cols = ["cell_type"] + ['gene_{}'.format(g) for g in range(results["log_score"].shape[-1])]
 
-        c_log_score = torch.cat((
-            results["cell_type"].unsqueeze(dim=-1).float(),
-            results["log_score"].float()), dim=-1)
+        c_log_score = torch.cat((cell_type_ids[:, None].float(), log_score_ng), dim=-1)
         log_score_df = pd.DataFrame(c_log_score.numpy(), columns=cols)
 
-        c_diff = torch.cat((
-            results["cell_type"].unsqueeze(dim=-1).float(),
-            results["counts_diff"].float().mean(dim=-3)), dim=-1)
-        deviance_df = pd.DataFrame(c_diff.numpy(), columns=cols)
+        c_diff = torch.cat((cell_type_ids[:, None].float(),
+                            (counts_pred_bng-counts_ng).abs().float().mean(dim=-3)), dim=-1)
+        diff_df = pd.DataFrame(c_diff.numpy(), columns=cols)
 
-        return results, log_score_df, deviance_df
+        return results, log_score_df, diff_df
 
     def train_and_test(
             self,
