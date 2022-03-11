@@ -425,12 +425,15 @@ class GeneRegression:
         n, l = dataset.covariates.shape[:2]
         k = dataset.k_cell_types
 
-        eps_k1g = pyro.get_param_store().get_param("eps")
-        beta0_k1g = pyro.get_param_store().get_param("beta0")
-        beta_klg = pyro.get_param_store().get_param("beta_loc")
-        counts_ng = dataset.counts
-        cell_type_ids = dataset.cell_type_ids.long()
-        covariates_nl1 = dataset.covariates.unsqueeze(dim=-1)
+        # params
+        eps_k1g = pyro.get_param_store().get_param("eps").cpu()
+        beta0_k1g = pyro.get_param_store().get_param("beta0").cpu()
+        beta_klg = pyro.get_param_store().get_param("beta_loc").cpu()
+
+        # dataset
+        counts_ng = dataset.counts.cpu()
+        cell_type_ids = dataset.cell_type_ids.long().cpu()
+        covariates_nl1 = dataset.covariates.unsqueeze(dim=-1).cpu()
 
         assert eps_k1g.shape == torch.Size([k, 1, g]), \
             "Got {0}. Are you predicting on the right dataset?".format(eps_k1g.shape)
@@ -439,42 +442,34 @@ class GeneRegression:
         assert beta_klg.shape == torch.Size([k, l, g]), \
             "Got {0}. Are you predicting on the right dataset?".format(beta_klg.shape)
 
+        # calculation
         log_rate_n1g = beta0_k1g[cell_type_ids] + (covariates_nl1 * beta_klg[cell_type_ids]).sum(dim=-2, keepdim=True)
         total_umi_n1 = counts_ng.sum(dim=-1, keepdim=True)
         eps_n1g = eps_k1g[cell_type_ids]
 
-        print("debug")
-        print("total_umi_n1", total_umi_n1.shape)
-        print("log_rate_n1g", log_rate_n1g.shape)
-        print("eps_n1g", eps_n1g.shape)
-
+        # prepare storage
+        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         counts_pred_bng = torch.zeros((num_samples, n, g), dtype=torch.long, device=torch.device("cpu"))
         log_score_ng = torch.zeros((n, g), dtype=torch.float, device=torch.device("cpu"))
 
+        # Loop to fill the predictions for all cell and genes
         subsample_size_cells = n if subsample_size_cells is None else subsample_size_cells
         subsample_size_genes = g if subsample_size_genes is None else subsample_size_genes
 
-        # Define the right device:
-        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-
         for n_left in range(0, n, subsample_size_cells):
             n_right = min(n_left + subsample_size_cells, n)
-            ind_n = torch.arange(n_left, n_right)
-            print("DEBUG n", n_left, n_right)
 
             for g_left in range(0, g, subsample_size_genes):
                 g_right = min(g_left + subsample_size_genes, g)
-                ind_g = torch.arange(g_left, g_right)
-                print("DEBUG g", g_left, g_right)
 
                 mydist = LogNormalPoisson(
-                    n_trials=total_umi_n1[ind_n].to(device),
-                    log_rate=log_rate_n1g[ind_n].squeeze(dim=-2).index_select(dim=-1, index=ind_g).to(device),
-                    noise_scale=eps_n1g[ind_n].squeeze(dim=-2).index_select(dim=-1, index=ind_g).to(device),
+                    n_trials=total_umi_n1[n_left:n_right].to(device),
+                    log_rate=log_rate_n1g[n_left:n_right, 0, g_left:g_right].to(device),
+                    noise_scale=eps_n1g[n_left:n_right, 0, g_left:g_right].to(device),
                     num_quad_points=8)
 
                 counts_pred_bng_tmp = mydist.sample(sample_shape=torch.Size([num_samples]))
-                log_score_ng_tmp = mydist.log_prob(counts_ng[ind_n].index_select(dim=-1, index=ind_g).to(device))
+                log_score_ng_tmp = mydist.log_prob(counts_ng[n_left:n_right, g_left:g_right].to(device))
 
                 counts_pred_bng[:, n_left:n_right, g_left:g_right] = counts_pred_bng_tmp.cpu()
                 log_score_ng[n_left:n_right, g_left:g_right] = log_score_ng_tmp.cpu()
