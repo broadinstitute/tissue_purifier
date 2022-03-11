@@ -49,10 +49,12 @@ class GeneDataset(NamedTuple):
     def describe(self):
         """ Method which described the content and the GeneDataset. """
         for k, v in zip(self._fields, self):
-            try:
-                print("{} ---> {}".format(k.ljust(20), v.shape))
-            except AttributeError:
+            if isinstance(v, int):
                 print("{} ---> {}".format(k.ljust(20), v))
+            elif isinstance(v, list):
+                print("{} ---> {}".format(k.ljust(20), len(v)))
+            else:
+                print("{} ---> {}".format(k.ljust(20), v.shape))
 
 
 def make_gene_dataset_from_anndata(
@@ -179,7 +181,10 @@ def generate_fake_data(
         counts=counts_ng,
         covariates=cov_nl,
         cell_type_ids=cell_ids_n,
-        k_cell_types=cell_types)
+        k_cell_types=cell_types,
+        cell_type_mapping=dict(zip(range(cell_types), range(cell_types))),
+        gene_names=[str(i) for i in range(cell_types)],
+    )
 
 
 def train_test_val_split(
