@@ -55,9 +55,9 @@ def make_gene_dataset_from_anndata(
         anndata: AnnData object with the raw counts stored in anndata.X
         cell_type_key: key corresponding to the cell type, i.e. cell_types = anndata.obs[cell_type_key]
         covariate_key: key corresponding to the covariate, i.e. covariates = anndata.obsm[covariate_key]
-        preprocess_strategy: either 'center', 'z_score' or 'raw'. It describes how to process the covariate.
+        preprocess_strategy: either 'center', 'z_score' or 'raw'. It describes how to preprocess the covariates.
             'raw' (default) means no preprocessing.
-        apply_pca: if True, we compute the pca of the covariate. This operation happens after the preprocessing.
+        apply_pca: if True, we compute the pca of the covariates. This operation happens after the preprocessing.
         n_components: Used only if :attr:`apply_pca` == True.
             If integer specifies the dimensionality of the data after PCA.
             If float in (0, 1) it auto selects the dimensionality so that the explained variance is at least that value.
