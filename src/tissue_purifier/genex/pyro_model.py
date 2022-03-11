@@ -442,16 +442,17 @@ class GeneRegression:
 
         log_rate_n1g = beta0_k1g[cell_type_ids] + (covariates_nl1 * beta_klg[cell_type_ids]).sum(dim=-2, keepdim=True)
         total_umi_n1 = counts_ng.sum(dim=-1, keepdim=True)
+        eps_n1g = eps_k1g[cell_type_ids]
 
         print("debug")
         print("total_umi_n1", total_umi_n1.shape)
         print("log_rate_n1g", log_rate_n1g.shape)
-        print("eps_k1g", eps_k1g.shape)
+        print("eps_n1g", eps_n1g.shape)
 
         mydist = LogNormalPoisson(
             n_trials=total_umi_n1,
             log_rate=log_rate_n1g.squeeze(dim=-2),
-            noise_scale=eps_k1g.squeeze(dim=-2),
+            noise_scale=eps_n1g.squeeze(dim=-2),
             num_quad_points=8)
 
         counts_pred_bng = mydist.sample(sample_shape=torch.Size([num_samples]))
