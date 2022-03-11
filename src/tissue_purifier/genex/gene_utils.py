@@ -52,7 +52,7 @@ class GeneDataset(NamedTuple):
             if isinstance(v, int) or isinstance(v, dict):
                 print("{} ---> {}".format(k.ljust(20), v))
             elif isinstance(v, list):
-                print("{} ---> {}".format(k.ljust(20), len(v)))
+                print("{} ---> list of length {}".format(k.ljust(20), len(v)))
             else:
                 print("{} ---> {}".format(k.ljust(20), v.shape))
 

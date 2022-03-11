@@ -528,6 +528,7 @@ class GeneRegression:
         # prepare storage
         device_calculation = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         q_ng = torch.zeros((n, g), dtype=torch.float, device=torch.device("cpu"))
+        pred_counts_ng = torch.zeros((n, g), dtype=torch.float, device=torch.device("cpu"))
         log_score_ng = torch.zeros((n, g), dtype=torch.float, device=torch.device("cpu"))
 
         # Loop to fill the predictions for all cell and genes
@@ -566,9 +567,10 @@ class GeneRegression:
                 log_score_ng[n_left:n_right, g_left:g_right] = mydist.log_prob(subn_subg_counts_ng).cpu()
 
                 # compute the Q metric, i.e. |x_obs - x_pred| averaged over the multiple posterior samples
-                pred_counts_bng = mydist.sample(sample_shape=torch.Size([num_samples]))
-                q_ng_tmp = (pred_counts_bng - subn_subg_counts_ng).abs().float().mean(dim=-3)
+                pred_counts_tmp_bng = mydist.sample(sample_shape=torch.Size([num_samples]))
+                q_ng_tmp = (pred_counts_tmp_bng - subn_subg_counts_ng).abs().float().mean(dim=-3)
                 q_ng[n_left:n_right, g_left:g_right] = q_ng_tmp.cpu()
+                pred_counts_ng[n_left:n_right, g_left:g_right] = pred_counts_tmp_bng[0].cpu()
 
         # average by cell_type to obtain q_prediction
         unique_cell_types = torch.unique(cell_type_ids)
@@ -592,7 +594,7 @@ class GeneRegression:
         q_data_df = pd.DataFrame(q_data_kg.numpy(), columns=dataset.gene_names)
         q_data_df["cell_types"] = dataset.cell_type_mapping.keys()
 
-        return log_score_df, q_df, q_data_df, pred_counts_bng[0]
+        return log_score_df, q_df, q_data_df, pred_counts_ng
 
     def train_and_test(
             self,
