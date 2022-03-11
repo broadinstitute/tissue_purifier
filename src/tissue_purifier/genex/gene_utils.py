@@ -49,7 +49,7 @@ class GeneDataset(NamedTuple):
     def describe(self):
         """ Method which described the content and the GeneDataset. """
         for k, v in zip(self._fields, self):
-            if isinstance(v, int):
+            if isinstance(v, int) or isinstance(v, dict):
                 print("{} ---> {}".format(k.ljust(20), v))
             elif isinstance(v, list):
                 print("{} ---> {}".format(k.ljust(20), len(v)))
