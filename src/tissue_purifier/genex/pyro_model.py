@@ -1,4 +1,4 @@
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union
 import torch
 import pyro
 import pyro.distributions as dist
@@ -405,22 +405,50 @@ class GeneRegression:
 
     @staticmethod
     @torch.no_grad()
-    def calculate_q_data(cell_type_ids: torch.Tensor, counts_ng: torch.Tensor):
+    def calculate_q_data(cell_type_ids: torch.Tensor, counts_ng: torch.Tensor, n_pairs: Union[int, str]=10):
         """
         For each cell-type computes :math:`E\\left[x_{i,g} - x_{j,g}\\right]` where :math:`x_{i,g}`
-        are the observed counts in cell `i` for gene `g`. Note that the indices `i,j`
+        are the observed counts in cell `i` for gene `g`.
+
+        Note that the indices `i,j`
         loop over all pair of cells belonging to the same cell-type.
 
         Args:
             cell_type_ids: array of shape `n` with the cell_type ids
             counts_ng: array of shape :math:`(n, g)` with the cell by gene counts
+            n_pairs: If "all" compute all possible pairs (this is an expensive :math:`O\\left(N^2\\right)` operation).
+                If an int, for each cell we consider :math:`n_pairs` other cells to approximate the expectation value.
 
         Returns:
             Array of shape :math:`(k, g)` , i.e. cell-types by genes, measuring the spread in the DATA.
         """
+
+        def _all_pairs(_c_ng):
+            device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+            diff_g = torch.zeros(_c_ng.shape[-1], device=device, dtype=torch.float)
+            for j in range(1, _c_ng.shape[0]):
+                diff_g += (_c_ng[:j] - _c_ng[j]).abs().sum(dim=0)  # shape j-1
+            number_of_pairs = 0.5 * _c_ng.shape[0] * (_c_ng.shape[0] - 1)
+            return diff_g / number_of_pairs
+
+        def _few_pairs(_c_ng, _n_pairs):
+            # select n_pairs indices for each cell making sure not to self-select.
+            shift = torch.randint(high=_c_ng.shape[0] - 1, size=(_c_ng.shape[0], _n_pairs)) + 1  # int in [1, n-1]
+            base = torch.arange(_c_ng.shape[0]).view(-1, 1)
+            index = (base + shift) % _c_ng.shape[0]  # shape (n, p)
+
+            # compute the q metrics
+            ref = _c_ng.unsqueeze(dim=1)  # shape (n, 1, g)
+            other = _c_ng[index]          # shape (n, p, g)
+            diff_g = (ref - other).abs().float().mean(dim=(0, 1))  # shape g
+            return diff_g
+
         import time
         start_time = time.time()
         print("inside calculate_q_data")
+        assert n_pairs is "all" or (isinstance(n_pairs, int) and n_pairs > 0), \
+            "n_pairs must be 'all' or a positive integer. Received {0}".format(n_pairs)
+
         g = counts_ng.shape[-1]
         unique_cell_types = torch.unique(cell_type_ids)
         q_kg = torch.zeros((unique_cell_types.shape[0], g), dtype=torch.float, device=torch.device("cpu"))
@@ -429,13 +457,11 @@ class GeneRegression:
             mask = (cell_type_ids == cell_type)
             tmp_ng = counts_ng[mask]  # select a given cell-type at the time
 
-            # compare one cell against all the others
-            for j in range(1, tmp_ng.shape[0]):
-                tmp = (tmp_ng[:j] - tmp_ng[j]).abs()  # shape j-1
-                q_kg[k, :] += tmp.sum(dim=0)  # shape (g)
+            if n_pairs == "all":
+                q_kg[k, :] = _all_pairs(tmp_ng)
+            else:
+                q_kg[k, :] = _few_pairs(tmp_ng, n_pairs)
 
-            number_of_pairs = 0.5 * tmp_ng.shape[0] * (tmp_ng.shape[0]-1)
-            q_kg[k, :] = q_kg[k, :] / number_of_pairs
         print("leaving calculate_q_data", time.time()-start_time)
         return q_kg
 
@@ -539,7 +565,7 @@ class GeneRegression:
             q_kg[k] = q_ng[mask].mean(dim=0)
 
         # calculate_q_data
-        q_data_kg = GeneRegression.calculate_q_data(cell_type_ids, counts_ng)
+        q_data_kg = GeneRegression.calculate_q_data(cell_type_ids, counts_ng, n_pairs=num_samples)
 
         return log_score_kg, q_kg, q_data_kg
 
