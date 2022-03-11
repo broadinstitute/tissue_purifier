@@ -599,7 +599,7 @@ class SparseImage:
             feature_name: the key under which the results will be stored.
             k: if specified the k nearest neighbours are used to compute the ncv.
             r: if specified the neighbours at a distance less than r (in raw units) are used to compute the ncv.
-            overwrite: if the :attr:'feature_name' is already present in the spot_properties_dict,
+            overwrite: if the :attr:`feature_name` is already present in the spot_properties_dict,
                 this variable controls when to overwrite it.
         """
 
@@ -631,12 +631,22 @@ class SparseImage:
                                          count_only=False,
                                          sort_results=False)
             ncv = torch.zeros_like(cell_types_one_hot)  # shape (*, ch)
-            # ind is a list of array of different length. There is noway to avoid the for-loop
+            # inds is a list of array of different length. There is noway to avoid the for-loop
+            n_neighbours_list = []
             for n, ind in enumerate(inds):
                 ncv_tmp = cell_types_one_hot[ind].sum(dim=-2)  # shape (ch)
                 ncv[n] = ncv_tmp
+                n_neighbours_list.append(len(ind))
 
-        ncv = ncv.float() / ncv.sum(dim=-1, keepdim=True).clamp(min=1.0)
+            # report the statistics for the number of neighbours at this cutoff radius
+            n_neighbours_np = numpy.array(n_neighbours_list)
+            print("# neighbours at this cutoff radius: min={0}, mean={1}, median={2}, max={3}".format(
+                numpy.min(n_neighbours_np),
+                numpy.mean(n_neighbours_np),
+                numpy.median(n_neighbours_np),
+                numpy.max(n_neighbours_np)))
+
+        ncv = ncv.float() / ncv.sum(dim=-1, keepdim=True).clamp(min=1.0)  # transform to proportions
         self.write_to_spot_dictionary(key=feature_name, values=ncv, overwrite=overwrite)
 
     @torch.no_grad()
