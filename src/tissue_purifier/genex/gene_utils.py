@@ -49,7 +49,7 @@ class GeneDataset(NamedTuple):
             try:
                 print("{} ---> {}".format(k.ljust(20), v.shape))
             except AttributeError:
-                print("{} ---> type={}, value={}".format(k.ljust(20), type(v), v))
+                print("{} ---> {}".format(k.ljust(20), v))
 
 
 def make_gene_dataset_from_anndata(
@@ -276,10 +276,10 @@ def train_test_val_split(
             vals = [a[index_val] for a in test_and_val]
 
         if isinstance(data, GeneDataset):
-            k = data.k_cell_types
-            trains.append(k)
-            tests.append(k)
-            vals.append(k)
+            # copy the k_cell_types and cell_type_mapping in the train/test/val
+            trains += [data.k_cell_types, data.cell_type_mapping]
+            tests += [data.k_cell_types, data.cell_type_mapping]
+            vals += [data.k_cell_types, data.cell_type_mapping]
             yield GeneDataset._make(trains), GeneDataset._make(tests), GeneDataset._make(vals)
         else:
             yield trains, tests, vals
