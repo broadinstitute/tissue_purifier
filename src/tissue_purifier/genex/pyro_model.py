@@ -276,7 +276,10 @@ class GeneRegression:
         self._optimizer_initial_state = self._optimizer.get_state()
 
     def save_ckpt(self, filename: str):
-        """ Save the full state of the model and optimizer to disk. """
+        """
+        Save the full state of the model and optimizer to disk.
+        Use it in pair with :meth:`load_ckpt`.
+        """
         ckpt = {
             "param_store": pyro.get_param_store().get_state(),
             "optimizer": self._optimizer,
@@ -289,7 +292,10 @@ class GeneRegression:
             torch.save(ckpt, output_file)
 
     def load_ckpt(self, filename: str, map_location=None):
-        """ Load the full state of the model and optimizer from disk. """
+        """
+        Load the full state of the model and optimizer from disk.
+        Use it in pair with :meth:`save_ckpt`.
+        """
 
         with open(filename, "rb") as input_file:
             ckpt = torch.load(input_file, map_location)
@@ -487,11 +493,12 @@ class GeneRegression:
         c_log_score = torch.cat((cell_type_ids[:, None].float(), log_score_ng), dim=-1)
         log_score_df = pd.DataFrame(c_log_score.numpy(), columns=cols)
 
-        c_diff = torch.cat((cell_type_ids[:, None].float(),
-                            (counts_pred_bng-counts_ng).abs().float().mean(dim=-3)), dim=-1)
+        diff_tmp = counts_pred_bng.clone()
+        diff = diff_tmp.add_(counts_ng, alpha=-1.0).abs_().mean(dim=-3)
+        c_diff = torch.cat((cell_type_ids[:, None].float(), diff), dim=-1)
         diff_df = pd.DataFrame(c_diff.numpy(), columns=cols)
 
-        return results, log_score_df, diff_df
+        return results, log_score_df, diff_df,
 
     def train_and_test(
             self,
