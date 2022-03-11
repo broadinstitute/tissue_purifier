@@ -448,7 +448,7 @@ class GeneRegression:
         eps_n1g = eps_k1g[cell_type_ids]
 
         # prepare storage
-        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        device_calculation = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         counts_pred_bng = torch.zeros((num_samples, n, g), dtype=torch.long, device=torch.device("cpu"))
         log_score_ng = torch.zeros((n, g), dtype=torch.float, device=torch.device("cpu"))
 
@@ -463,13 +463,13 @@ class GeneRegression:
                 g_right = min(g_left + subsample_size_genes, g)
 
                 mydist = LogNormalPoisson(
-                    n_trials=total_umi_n1[n_left:n_right].to(device),
-                    log_rate=log_rate_n1g[n_left:n_right, 0, g_left:g_right].to(device),
-                    noise_scale=eps_n1g[n_left:n_right, 0, g_left:g_right].to(device),
+                    n_trials=total_umi_n1[n_left:n_right].to(device_calculation),
+                    log_rate=log_rate_n1g[n_left:n_right, 0, g_left:g_right].to(device_calculation),
+                    noise_scale=eps_n1g[n_left:n_right, 0, g_left:g_right].to(device_calculation),
                     num_quad_points=8)
 
                 counts_pred_bng_tmp = mydist.sample(sample_shape=torch.Size([num_samples]))
-                log_score_ng_tmp = mydist.log_prob(counts_ng[n_left:n_right, g_left:g_right].to(device))
+                log_score_ng_tmp = mydist.log_prob(counts_ng[n_left:n_right, g_left:g_right].to(device_calculation))
 
                 counts_pred_bng[:, n_left:n_right, g_left:g_right] = counts_pred_bng_tmp.cpu()
                 log_score_ng[n_left:n_right, g_left:g_right] = log_score_ng_tmp.cpu()
