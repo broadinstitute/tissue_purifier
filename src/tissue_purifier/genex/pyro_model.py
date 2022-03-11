@@ -517,9 +517,8 @@ class GeneRegression:
                     noise_scale=eps_n1g.squeeze(dim=-2).to(device_calculation),
                     num_quad_points=8)
 
-                subn_subg_counts_ng = subn_counts_ng[..., g_left:g_right]
-                log_score_ng[n_left:n_right, g_left:g_right] = mydist.log_prob(
-                    subn_subg_counts_ng.to(device_calculation)).cpu()
+                subn_subg_counts_ng = subn_counts_ng[..., g_left:g_right].to(device_calculation)
+                log_score_ng[n_left:n_right, g_left:g_right] = mydist.log_prob(subn_subg_counts_ng).cpu()
 
                 # compute the Q metric, i.e. |x_obs - x_pred| averaged over the multiple posterior samples
                 pred_counts_bng = mydist.sample(sample_shape=torch.Size([num_samples]))
