@@ -41,10 +41,10 @@ class GeneDataset(NamedTuple):
     k_cell_types: int
 
     #: dictionary with mapping from unique_cell_type to cell_type_ids
-    cell_type_mapping: Optional[dict] = None
+    cell_type_mapping: dict
 
     def describe(self):
-        """ Describe the content and the GeneDataset namedtuple """
+        """ Method which described the content and the GeneDataset. """
         for k, v in zip(self._fields, self):
             try:
                 print("{} ---> {}".format(k.ljust(20), v.shape))

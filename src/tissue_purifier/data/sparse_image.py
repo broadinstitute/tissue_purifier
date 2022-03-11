@@ -159,8 +159,7 @@ class SparseImage:
 
         Returns:
             values: array of shape :math:`(n_\\text{patches}, *, *, *)` with the patch-level information
-            patches_xywh: array of shape :math:`(n_\\text{patches}, 4)` with the location from where the patches
-                were taken
+            patches_xywh: array of shape :math:`(n_\\text{patches}, 4)` with the coordinates of the patches
         """
         patch_quantity = self._to_torch(self._patch_properties_dict[key]).to(device=self.device,
                                                                              dtype=torch.float)
