@@ -40,6 +40,14 @@ class GeneDataset(NamedTuple):
     #: number of cell types
     k_cell_types: int
 
+    def describe(self):
+        """ Describe the content and the GeneDataset namedtuple """
+        for k, v in zip(self._fields, self):
+            try:
+                print(k, v.shape)
+            except AttributeError:
+                print(k, v)
+
 
 def make_gene_dataset_from_anndata(
         anndata: AnnData,
