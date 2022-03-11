@@ -405,6 +405,38 @@ class GeneRegression:
 
     @staticmethod
     @torch.no_grad()
+    def calculate_q_data(cell_type_ids: torch.Tensor, counts_ng: torch.Tensor):
+        """
+        For each cell-type computes :math:`E\\left[x_{i,g} - x_{j,g}\\right]` where :math:`x_{i,g}`
+        are the observed counts in cell `i` for gene `g`. Note that the indices `i,j`
+        loop over all pair of cells belonging to the same cell-type.
+
+        Args:
+            cell_type_ids: array of shape `n` with the cell_type ids
+            counts_ng: array of shape :math:`(n, g)` with the cell by gene counts
+
+        Returns:
+            Array of shape :math:`(k, g)` , i.e. cell-types by genes, measuring the spread in the DATA.
+        """
+        g = counts_ng.shape[-1]
+        unique_cell_types = torch.unique(cell_type_ids)
+        q_kg = torch.zeros((unique_cell_types.shape[0], g), dtype=torch.float, device=torch.device("cpu"))
+
+        for k, cell_type in enumerate(unique_cell_types):
+            mask = (cell_type_ids == cell_type)
+            tmp_ng = counts_ng[mask]  # select a given cell-type at the time
+
+            # compare one cell against all the others
+            for j in range(1, tmp_ng.shape[0]):
+                tmp = (tmp_ng[:j] - tmp_ng[j]).abs()  # shape j-1
+                q_kg[k, :] += tmp.sum(dim=0)  # shape (g)
+
+            number_of_pairs = 0.5 * tmp_ng.shape[0] * (tmp_ng.shape[0]-1)
+            q_kg[k, :] = q_kg[k, :] / number_of_pairs
+        return q_kg
+
+    @staticmethod
+    @torch.no_grad()
     def predict(dataset: GeneDataset,
                 num_samples: int = 10,
                 subsample_size_cells: int = None,
@@ -450,7 +482,7 @@ class GeneRegression:
 
         # prepare storage
         device_calculation = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        counts_pred_bng = torch.zeros((num_samples, n, g), dtype=torch.long, device=torch.device("cpu"))
+        q_ng = torch.zeros((n, g), dtype=torch.float, device=torch.device("cpu"))
         log_score_ng = torch.zeros((n, g), dtype=torch.float, device=torch.device("cpu"))
 
         # Loop to fill the predictions for all cell and genes
@@ -485,31 +517,28 @@ class GeneRegression:
                     noise_scale=eps_n1g.squeeze(dim=-2).to(device_calculation),
                     num_quad_points=8)
 
-                counts_pred_bng_tmp = mydist.sample(sample_shape=torch.Size([num_samples]))
-                log_score_ng_tmp = mydist.log_prob(subn_counts_ng[..., g_left:g_right].to(device_calculation))
+                subn_subg_counts_ng = subn_counts_ng[..., g_left:g_right]
+                log_score_ng[n_left:n_right, g_left:g_right] = mydist.log_prob(
+                    subn_subg_counts_ng.to(device_calculation)).cpu()
 
-                counts_pred_bng[:, n_left:n_right, g_left:g_right] = counts_pred_bng_tmp.long().cpu()
-                log_score_ng[n_left:n_right, g_left:g_right] = log_score_ng_tmp.float().cpu()
+                # compute the Q metric, i.e. |x_obs - x_pred| averaged over the multiple posterior samples
+                pred_counts_bng = mydist.sample(sample_shape=torch.Size([num_samples]))
+                q_ng_tmp = (pred_counts_bng - subn_subg_counts_ng).abs().float().mean(dim=-3)
+                q_ng[n_left:n_right, g_left:g_right] = q_ng_tmp.cpu()
 
-        results = {
-            "counts_true": counts_ng,
-            "counts_pred": counts_pred_bng,
-            "log_score": -log_score_ng,
-            "cell_type": cell_type_ids
-        }
+        # average by cell_type to obtain q_prediction
+        unique_cell_types = torch.unique(cell_type_ids)
+        q_kg = torch.zeros((unique_cell_types.shape[0], g), dtype=torch.float, device=torch.device("cpu"))
+        log_score_kg = torch.zeros((unique_cell_types.shape[0], g), dtype=torch.float, device=torch.device("cpu"))
+        for k, cell_type in enumerate(unique_cell_types):
+            mask = (cell_type_ids == cell_type)
+            log_score_kg[k] = log_score_ng[mask].mean(dim=0)
+            q_kg[k] = q_ng[mask].mean(dim=0)
 
-        # package the results into two dataframe for easy visualization
-        cols = ["cell_type"] + ['gene_{}'.format(g) for g in range(results["log_score"].shape[-1])]
+        # calculate_q_data
+        q_data_kg = GeneRegression.calculate_q_data(cell_type_ids, counts_ng)
 
-        c_log_score = torch.cat((cell_type_ids[:, None].float(), log_score_ng), dim=-1)
-        log_score_df = pd.DataFrame(c_log_score.numpy(), columns=cols)
-
-        diff_tmp = counts_pred_bng.clone()
-        diff = diff_tmp.add_(counts_ng, alpha=-1).abs_().float().mean(dim=-3)
-        c_diff = torch.cat((cell_type_ids[:, None].float(), diff), dim=-1)
-        diff_df = pd.DataFrame(c_diff.numpy(), columns=cols)
-
-        return results, log_score_df, diff_df,
+        return log_score_kg, q_kg, q_data_kg
 
     def train_and_test(
             self,
