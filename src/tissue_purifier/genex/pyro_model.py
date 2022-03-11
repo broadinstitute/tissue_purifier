@@ -528,4 +528,8 @@ class GeneRegression:
 
         print("training completed")
 
-        return self.predict(dataset=test_dataset, num_samples=test_num_samples)
+        return self.predict(
+            dataset=test_dataset,
+            num_samples=test_num_samples,
+            subsample_size_cells=subsample_size_cells,
+            subsample_size_genes=subsample_size_genes)
