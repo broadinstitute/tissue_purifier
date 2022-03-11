@@ -125,6 +125,7 @@ class GeneRegression:
         self._optimizer = None
         self._optimizer_initial_state = None
         self._loss_history = []
+        self._train_kargs = None
 
     def _model(self,
                dataset: GeneDataset,
@@ -285,7 +286,8 @@ class GeneRegression:
             "optimizer": self._optimizer,
             "optimizer_state": self._optimizer.get_state(),
             "optimizer_initial_state": self._optimizer_initial_state,
-            "loss_history": self._loss_history
+            "loss_history": self._loss_history,
+            "train_kargs": self._train_kargs
         }
 
         with open(filename, "wb") as output_file:
@@ -306,6 +308,7 @@ class GeneRegression:
         self._optimizer.set_state(ckpt["optimizer_state"])
         self._optimizer_initial_state = ckpt["optimizer_initial_state"]
         self._loss_history = ckpt["loss_history"]
+        self._train_kargs = ckpt["train_kargs"]
 
     @staticmethod
     def get_params():
@@ -403,6 +406,8 @@ class GeneRegression:
             if i % print_frequency == 0:
                 print('[iter {}]  loss: {:.4f}'.format(i, loss))
 
+        self._train_kargs = model_kargs.pop('dataset')
+
     @staticmethod
     @torch.no_grad()
     def calculate_q_data(cell_type_ids: torch.Tensor, counts_ng: torch.Tensor, n_pairs: Union[int, str] = 10):
@@ -475,7 +480,7 @@ class GeneRegression:
                 num_samples: int = 10,
                 subsample_size_cells: int = None,
                 subsample_size_genes: int = None,
-                ) -> (dict, pd.DataFrame, pd.DataFrame):
+                ) -> (pd.DataFrame, pd.DataFrame, pd.DataFrame, torch.Tensor):
         """
         Use the parameters currently in the param_store to run the prediction.
         If you want to run the prediction based on a different set of parameters you need
@@ -488,9 +493,15 @@ class GeneRegression:
             subsample_size_genes: if not None (defaults) the prediction are made in chunks to avoid memory issue
 
         Returns:
-            result: a dictionary with the true and predicted counts, the cell_type and two metrics (log_score and deviance)
-            log_score_df: a DataFrame with the log_score evaluation metric
-            deviance_df: a DataFrame with the deviance evaluation metric
+            log_score_df: DataFrame with log of the posterior probability,
+                i.e. :math:`\\log p\\left(X_\\text{data}\\right)`, for each cell_type and gene.
+            q_kg_df: DataFrame with the deviation :math:`E\\left[|X_{i,g} - Y_{i,g}|\\right]`,
+                where `X` is the (observed) data and `Y` is a sample from the predicted posterior,
+                aggregated for each cell_type and gene.
+            q_kg_data_df: DataFrame with the deviation :math:`E\\left[|X_{i,g} - X_{j,g}|\\right]`,
+                where :math:`X_i` and :math:`X_j` are two different cells (of the same type),
+                aggregated for each cell_type and gene.
+            pred_counts_ng: Array of shape :math:`(n, g)` with a single sample from the posterior
         """
 
         n, g = dataset.counts.shape[:2]
@@ -571,7 +582,17 @@ class GeneRegression:
         # calculate_q_data
         q_data_kg = GeneRegression.calculate_q_data(cell_type_ids, counts_ng, n_pairs=num_samples)
 
-        return log_score_kg, q_kg, q_data_kg
+        # package the results as a data-frame
+        log_score_df = pd.DataFrame(log_score_kg.numpy(), columns=dataset.gene_names)
+        log_score_df["cell_types"] = dataset.cell_type_mapping.keys()
+
+        q_df = pd.DataFrame(q_kg.numpy(), columns=dataset.gene_names)
+        q_df["cell_types"] = dataset.cell_type_mapping.keys()
+
+        q_data_df = pd.DataFrame(q_data_kg.numpy(), columns=dataset.gene_names)
+        q_data_df["cell_types"] = dataset.cell_type_mapping.keys()
+
+        return log_score_df, q_df, q_data_df, pred_counts_bng[0]
 
     def train_and_test(
             self,
