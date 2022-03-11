@@ -418,6 +418,9 @@ class GeneRegression:
         Returns:
             Array of shape :math:`(k, g)` , i.e. cell-types by genes, measuring the spread in the DATA.
         """
+        import time
+        start_time = time.time()
+        print("inside calculate_q_data")
         g = counts_ng.shape[-1]
         unique_cell_types = torch.unique(cell_type_ids)
         q_kg = torch.zeros((unique_cell_types.shape[0], g), dtype=torch.float, device=torch.device("cpu"))
@@ -433,6 +436,7 @@ class GeneRegression:
 
             number_of_pairs = 0.5 * tmp_ng.shape[0] * (tmp_ng.shape[0]-1)
             q_kg[k, :] = q_kg[k, :] / number_of_pairs
+        print("leaving calculate_q_data", time.time()-start_time)
         return q_kg
 
     @staticmethod
