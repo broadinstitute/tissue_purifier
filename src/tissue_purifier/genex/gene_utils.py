@@ -46,7 +46,7 @@ class GeneDataset(NamedTuple):
             try:
                 print("{} ---> {}".format(k.ljust(20), v.shape))
             except AttributeError:
-                print("{} ---> {}".format(k.ljust(20), v))
+                print("{} ---> type={} value={}".format(k.ljust(20), type(v), v))
 
 
 def make_gene_dataset_from_anndata(
