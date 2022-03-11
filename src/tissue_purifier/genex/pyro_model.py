@@ -448,10 +448,6 @@ class GeneRegression:
         assert beta_klg.shape == torch.Size([k, l, g]), \
             "Got {0}. Are you predicting on the right dataset?".format(beta_klg.shape)
 
-        # calculation
-        log_rate_n1g = beta0_k1g[cell_type_ids] + (covariates_nl1 * beta_klg[cell_type_ids]).sum(dim=-2, keepdim=True)
-        total_umi_n1 = counts_ng.sum(dim=-1, keepdim=True)
-        eps_n1g = eps_k1g[cell_type_ids]
 
         # prepare storage
         device_calculation = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -468,10 +464,22 @@ class GeneRegression:
             for g_left in range(0, g, subsample_size_genes):
                 g_right = min(g_left + subsample_size_genes, g)
 
+                # calculation
+                sub_cell_ids = cell_type_ids[n_left:n_right]
+                sub_total_umi_n1 = counts_ng[n_left:n_right].sum(dim=-1, keepdim=True)
+                sub_eps_n1g = eps_k1g[sub_cell_ids, :, g_left:g_right]
+                sub_log_rate_n1g_term1 = beta0_k1g[sub_cell_ids, :, g_left, g_right]
+                sub_log_rate_n1g_term2 = (covariates_nl1[n_left:n_right] *
+                                          beta_klg[sub_cell_ids, :, g_left:g_right]).sum(dim=-2, keepdim=True)
+                assert sub_log_rate_n1g_term1.shape == torch.Size([n_right-n_left, 1, g_right-g_left])
+                assert sub_log_rate_n1g_term2.shape == torch.Size([n_right-n_left, 1, g_right-g_left])
+                assert sub_eps_n1g.shape == torch.Size([n_right-n_left, 1, g_right-g_left])
+                assert sub_total_umi_n1.shape == torch.Size([n_right-n_left, 1])
+
                 mydist = LogNormalPoisson(
-                    n_trials=total_umi_n1[n_left:n_right].to(device_calculation),
-                    log_rate=log_rate_n1g[n_left:n_right, 0, g_left:g_right].to(device_calculation),
-                    noise_scale=eps_n1g[n_left:n_right, 0, g_left:g_right].to(device_calculation),
+                    n_trials=sub_total_umi_n1.to(device_calculation),
+                    log_rate=(sub_log_rate_n1g_term1+sub_log_rate_n1g_term2).squeeze(dim=-2).to(device_calculation),
+                    noise_scale=sub_eps_n1g.squeeze(dim=-2).to(device_calculation),
                     num_quad_points=8)
 
                 counts_pred_bng_tmp = mydist.sample(sample_shape=torch.Size([num_samples]))
