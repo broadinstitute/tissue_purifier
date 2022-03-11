@@ -1,12 +1,12 @@
 import torch
 import numpy
 from scanpy import AnnData
-from typing import NamedTuple, Union, List, Any
+from typing import NamedTuple, Union, List, Any, Optional
 from sklearn.model_selection import StratifiedShuffleSplit, ShuffleSplit
 from tissue_purifier.utils.validation_util import SmartPca
 
 
-def _make_labels(y: Union[torch.Tensor, numpy.ndarray, List[Any]]) -> torch.Tensor:
+def _make_labels(y: Union[torch.Tensor, numpy.ndarray, List[Any]]) -> (torch.Tensor, dict):
     def _to_numpy(_y):
         if isinstance(_y, numpy.ndarray):
             return _y
@@ -19,7 +19,7 @@ def _make_labels(y: Union[torch.Tensor, numpy.ndarray, List[Any]]) -> torch.Tens
     unique_labels = numpy.unique(y_np)
     y_to_ids = dict(zip(unique_labels, numpy.arange(y_np.shape[0])))
     labels = torch.tensor([y_to_ids[tmp] for tmp in y_np])
-    return labels
+    return labels, y_to_ids
 
 
 class GeneDataset(NamedTuple):
@@ -40,13 +40,16 @@ class GeneDataset(NamedTuple):
     #: number of cell types
     k_cell_types: int
 
+    #: dictionary with mapping from unique_cell_type to cell_type_ids
+    cell_type_mapping: Optional[dict] = None
+
     def describe(self):
         """ Describe the content and the GeneDataset namedtuple """
         for k, v in zip(self._fields, self):
             try:
                 print("{} ---> {}".format(k.ljust(20), v.shape))
             except AttributeError:
-                print("{} ---> type={} value={}".format(k.ljust(20), type(v), v))
+                print("{} ---> type={}, value={}".format(k.ljust(20), type(v), v))
 
 
 def make_gene_dataset_from_anndata(
@@ -85,7 +88,7 @@ def make_gene_dataset_from_anndata(
     assert covariate_key in set(anndata.obsm.keys()), "Covariate_key is not present in anndata.obsm.keys()"
 
     cell_types = list(anndata.obs[cell_type_key].values)
-    cell_type_ids_n = _make_labels(cell_types)
+    cell_type_ids_n, mapping_dict = _make_labels(cell_types)
     counts_ng = torch.tensor(anndata.X.toarray()).long()
     covariates_nl_raw = torch.tensor(anndata.obsm[covariate_key])
 
@@ -115,7 +118,9 @@ def make_gene_dataset_from_anndata(
         cell_type_ids=cell_type_ids_n.detach().cpu(),
         covariates=new_covariate.detach().cpu(),
         counts=counts_ng.detach().cpu(),
-        k_cell_types=k_cell_types)
+        k_cell_types=k_cell_types,
+        cell_type_mapping=mapping_dict,
+    )
 
 
 def generate_fake_data(
