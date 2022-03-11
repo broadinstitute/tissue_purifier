@@ -505,7 +505,7 @@ class GeneRegression:
         log_score_df = pd.DataFrame(c_log_score.numpy(), columns=cols)
 
         diff_tmp = counts_pred_bng.clone()
-        diff = diff_tmp.add_(counts_ng, alpha=-1.0).abs_().mean(dim=-3)
+        diff = diff_tmp.add_(counts_ng, alpha=-1).abs_().float().mean(dim=-3)
         c_diff = torch.cat((cell_type_ids[:, None].float(), diff), dim=-1)
         diff_df = pd.DataFrame(c_diff.numpy(), columns=cols)
 
