@@ -44,9 +44,9 @@ class GeneDataset(NamedTuple):
         """ Describe the content and the GeneDataset namedtuple """
         for k, v in zip(self._fields, self):
             try:
-                print(k, v.shape)
+                print("{} ---> {}".format(k, v.shape))
             except AttributeError:
-                print(k, v)
+                print("{} ---> {}".format(k, v))
 
 
 def make_gene_dataset_from_anndata(
