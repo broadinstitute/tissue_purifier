@@ -478,18 +478,22 @@ class GeneRegression:
             "counts_true": counts_ng.cpu(),
             "counts_pred": counts_pred_bng,
             "log_score": -log_score_ng,
-            "deviance": (counts_ng.cpu()-counts_pred_bng).abs(),
+            "counts_diff": (counts_ng.cpu()-counts_pred_bng).abs(),
             "cell_type": cell_type_ids.cpu()
         }
 
         # package the results into two dataframe for easy visualization
         cols = ["cell_type"] + ['gene_{}'.format(g) for g in range(results["log_score"].shape[-1])]
-        c_log_score = torch.cat((results["cell_type"].unsqueeze(dim=-1),
-                                 results["log_score"]), dim=-1).numpy()
-        log_score_df = pd.DataFrame(c_log_score, columns=cols)
-        c_deviance = torch.cat((results["cell_type"].unsqueeze(dim=-1),
-                                results["deviance"].mean(dim=-3)), dim=-1).numpy()
-        deviance_df = pd.DataFrame(c_deviance, columns=cols)
+
+        c_log_score = torch.cat((
+            results["cell_type"].unsqueeze(dim=-1).float(),
+            results["log_score"].float()), dim=-1)
+        log_score_df = pd.DataFrame(c_log_score.numpy(), columns=cols)
+
+        c_diff = torch.cat((
+            results["cell_type"].unsqueeze(dim=-1).float(),
+            results["counts_diff"].float().mean(dim=-3)), dim=-1)
+        deviance_df = pd.DataFrame(c_diff.numpy(), columns=cols)
 
         return results, log_score_df, deviance_df
 
