@@ -398,7 +398,12 @@ class GeneRegression:
                 print('[iter {}]  loss: {:.4f}'.format(i, loss))
 
     @staticmethod
-    def predict(dataset: GeneDataset, num_samples: int = 10) -> (dict, pd.DataFrame, pd.DataFrame):
+    @torch.no_grad()
+    def predict(dataset: GeneDataset,
+                num_samples: int = 10,
+                subsample_size_cells: int = None,
+                subsample_size_genes: int = None,
+                ) -> (dict, pd.DataFrame, pd.DataFrame):
         """
         Use the parameters currently in the param_store to run the prediction.
         If you want to run the prediction based on a different set of parameters you need
@@ -407,6 +412,8 @@ class GeneRegression:
         Args:
             dataset: the dataset to run the prediction on
             num_samples: how many random samples to draw from the predictive distribution
+            subsample_size_cells: if not None (defaults) the prediction are made in chunks to avoid memory issue
+            subsample_size_genes: if not None (defaults) the prediction are made in chunks to avoid memory issue
 
         Returns:
             result: a dictionary with the true and predicted counts, the cell_type and two metrics (log_score and deviance)
@@ -432,14 +439,6 @@ class GeneRegression:
         assert beta_klg.shape == torch.Size([k, l, g]), \
             "Got {0}. Are you predicting on the right dataset?".format(beta_klg.shape)
 
-        if torch.cuda.is_available():
-            cell_type_ids = cell_type_ids.cuda()
-            eps_k1g = eps_k1g.cuda()
-            beta0_k1g = beta0_k1g.cuda()
-            beta_klg = beta_klg.cuda()
-            counts_ng = counts_ng.cuda()
-            covariates_nl1 = covariates_nl1.cuda()
-
         log_rate_n1g = beta0_k1g[cell_type_ids] + (covariates_nl1 * beta_klg[cell_type_ids]).sum(dim=-2, keepdim=True)
         total_umi_n1 = counts_ng.sum(dim=-1, keepdim=True)
         eps_n1g = eps_k1g[cell_type_ids]
@@ -449,21 +448,43 @@ class GeneRegression:
         print("log_rate_n1g", log_rate_n1g.shape)
         print("eps_n1g", eps_n1g.shape)
 
-        mydist = LogNormalPoisson(
-            n_trials=total_umi_n1,
-            log_rate=log_rate_n1g.squeeze(dim=-2),
-            noise_scale=eps_n1g.squeeze(dim=-2),
-            num_quad_points=8)
+        counts_pred_bng = torch.zeros((num_samples, n, g), dtype=torch.long, device=torch.device("cpu"))
+        log_score_ng = torch.zeros((n, g), dtype=torch.float, device=torch.device("cpu"))
 
-        counts_pred_bng = mydist.sample(sample_shape=torch.Size([num_samples]))
-        log_score_ng = mydist.log_prob(counts_ng)
+        subsample_size_cells = n if subsample_size_cells is None else subsample_size_cells
+        subsample_size_genes = g if subsample_size_genes is None else subsample_size_genes
+
+        # Define the right device:
+        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+        for n_left in range(0, n, subsample_size_cells):
+            n_right = min(n_left + subsample_size_cells, n)
+            ind_n = torch.arange(n_left, n_right)
+            print("DEBUG n", n_left, n_right)
+
+            for g_left in range(0, g, subsample_size_genes):
+                g_right = min(g_left + subsample_size_genes, g)
+                ind_g = torch.arange(g_left, g_right)
+                print("DEBUG g", g_left, g_right)
+
+                mydist = LogNormalPoisson(
+                    n_trials=total_umi_n1[ind_n].to(device),
+                    log_rate=log_rate_n1g[ind_n].squeeze(dim=-2).index_select(dim=-1, index=ind_g).to(device),
+                    noise_scale=eps_n1g[ind_n].squeeze(dim=-2).index_select(dim=-1, index=ind_g).to(device),
+                    num_quad_points=8)
+
+                counts_pred_bng_tmp = mydist.sample(sample_shape=torch.Size([num_samples]))
+                log_score_ng_tmp = mydist.log_prob(counts_ng[ind_n].index_select(dim=-1, index=ind_g).to(device))
+
+                counts_pred_bng[:, n_left:n_right, g_left:g_right] = counts_pred_bng_tmp.cpu()
+                log_score_ng[n_left:n_right, g_left:g_right] = log_score_ng_tmp.cpu()
 
         results = {
-            "counts_true": counts_ng.detach().cpu(),
-            "counts_pred": counts_pred_bng.detach().cpu(),
-            "log_score": -log_score_ng.detach().cpu(),
-            "deviance": (counts_ng-counts_pred_bng).abs().detach().cpu(),
-            "cell_type": cell_type_ids.detach().cpu()
+            "counts_true": counts_ng.cpu(),
+            "counts_pred": counts_pred_bng,
+            "log_score": -log_score_ng,
+            "deviance": (counts_ng.cpu()-counts_pred_bng).abs(),
+            "cell_type": cell_type_ids.cpu()
         }
 
         # package the results into two dataframe for easy visualization
