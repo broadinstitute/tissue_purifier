@@ -405,7 +405,7 @@ class GeneRegression:
 
     @staticmethod
     @torch.no_grad()
-    def calculate_q_data(cell_type_ids: torch.Tensor, counts_ng: torch.Tensor, n_pairs: Union[int, str]=10):
+    def calculate_q_data(cell_type_ids: torch.Tensor, counts_ng: torch.Tensor, n_pairs: Union[int, str] = 10):
         """
         For each cell-type computes :math:`E\\left[x_{i,g} - x_{j,g}\\right]` where :math:`x_{i,g}`
         are the observed counts in cell `i` for gene `g`.
@@ -438,8 +438,8 @@ class GeneRegression:
             index = (base + shift) % _c_ng.shape[0]  # shape (n, p)
 
             # compute the q metrics
-            ref = _c_ng.unsqueeze(dim=1)  # shape (n, 1, g)
-            other = _c_ng[index]          # shape (n, p, g)
+            ref = _c_ng.unsqueeze(dim=1)  # shape (n, 1, g) memory-wise it is just a view of (n, g)
+            other = _c_ng[index]          # shape (n, p, g) memory-wise it is just a view of (n, g)
             diff_g = (ref - other).abs().float().mean(dim=(0, 1))  # shape g
             return diff_g
 
@@ -452,15 +452,19 @@ class GeneRegression:
         g = counts_ng.shape[-1]
         unique_cell_types = torch.unique(cell_type_ids)
         q_kg = torch.zeros((unique_cell_types.shape[0], g), dtype=torch.float, device=torch.device("cpu"))
+        subsample_size_genes = min(500, g)
 
         for k, cell_type in enumerate(unique_cell_types):
             mask = (cell_type_ids == cell_type)
             tmp_ng = counts_ng[mask]  # select a given cell-type at the time
 
-            if n_pairs == "all":
-                q_kg[k, :] = _all_pairs(tmp_ng)
-            else:
-                q_kg[k, :] = _few_pairs(tmp_ng, n_pairs)
+            for g_left in range(0, g, subsample_size_genes):
+                g_right = min(g_left + subsample_size_genes, g)
+                subg_tmp_ng = tmp_ng[..., g_left:g_right]  # subsample few genes
+                if n_pairs == "all":
+                    q_kg[k, g_left:g_right] = _all_pairs(subg_tmp_ng)
+                else:
+                    q_kg[k, g_left:g_right] = _few_pairs(subg_tmp_ng, n_pairs)
 
         print("leaving calculate_q_data", time.time()-start_time)
         return q_kg
