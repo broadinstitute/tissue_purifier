@@ -410,7 +410,9 @@ class GeneRegression:
             if i % print_frequency == 0:
                 print('[iter {}]  loss: {:.4f}'.format(i, loss))
 
-        self._train_kargs = model_kargs.pop('dataset')
+        # remove key from dict
+        _ = model_kargs.pop('dataset')
+        self._train_kargs = model_kargs
 
     @staticmethod
     @torch.no_grad()
