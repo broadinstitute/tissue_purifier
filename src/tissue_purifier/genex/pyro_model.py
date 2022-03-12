@@ -168,7 +168,6 @@ class GeneRegression:
                              0.5 * (eps_range[0] + eps_range[1]) * torch.ones((k, 1, g), device=device),
                              constraint=constraints.interval(lower_bound=eps_range[0],
                                                              upper_bound=eps_range[1]))
-        print("DEBUG ", eps_range[0], eps_range[1])
         beta0_k1g = pyro.param("beta0", torch.zeros((k, 1, g), device=device))
 
         with gene_plate:
@@ -281,6 +280,10 @@ class GeneRegression:
         """
         Save the full state of the model and optimizer to disk.
         Use it in pair with :meth:`load_ckpt`.
+
+        Note:
+            pyro saved unconstrained parameters and the constrain transformation.
+            You should not "look inside" the ckpt. You should use :meth:`load_ckpt`.
         """
         ckpt = {
             "param_store": pyro.get_param_store().get_state(),
