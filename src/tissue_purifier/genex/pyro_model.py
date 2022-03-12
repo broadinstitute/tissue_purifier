@@ -168,6 +168,7 @@ class GeneRegression:
                              0.5 * (eps_range[0] + eps_range[1]) * torch.ones((k, 1, g), device=device),
                              constraint=constraints.interval(lower_bound=eps_range[0],
                                                              upper_bound=eps_range[1]))
+        print("DEBUG ", eps_range[0], eps_range[1])
         beta0_k1g = pyro.param("beta0", torch.zeros((k, 1, g), device=device))
 
         with gene_plate:
