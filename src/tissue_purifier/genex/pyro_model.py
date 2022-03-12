@@ -132,6 +132,7 @@ class GeneRegression:
                g_genes: int,
                l_cov: int,
                k_cell_types: int,
+               use_covariates: bool,
                counts_ng: torch.Tensor,
                total_umi_n: torch.Tensor,
                covariates_nl: torch.Tensor,
@@ -178,17 +179,21 @@ class GeneRegression:
             beta0_n1g = beta0_k1g[cell_ids_sub_n]
             eps_n1g = eps_k1g[cell_ids_sub_n]
             beta_nlg = beta_klg[cell_ids_sub_n]
-            covariate_sub_nl1 = covariates_nl[cell_ids_sub_n].unsqueeze(dim=-1).to(device)
             total_umi_n11 = total_umi_n[ind_n, None, None].to(device)
+            if use_covariates:
+                covariate_sub_nl1 = covariates_nl[cell_ids_sub_n].unsqueeze(dim=-1).to(device)
 
             with gene_plate as ind_g:
-                log_mu_n1g = beta0_n1g[..., ind_g] + torch.sum(covariate_sub_nl1 * beta_nlg, dim=-2, keepdim=True)
                 eps_sub_n1g = eps_n1g[..., ind_g]
+                if use_covariates:
+                    log_mu_n1g = beta0_n1g[..., ind_g] + torch.sum(covariate_sub_nl1 * beta_nlg, dim=-2, keepdim=True)
+                else:
+                    log_mu_n1g = beta0_n1g[..., ind_g]
 
                 pyro.sample("counts",
-                            LogNormalPoisson(n_trials=total_umi_n11.to(device),
-                                             log_rate=log_mu_n1g.to(device),
-                                             noise_scale=eps_sub_n1g.to(device),
+                            LogNormalPoisson(n_trials=total_umi_n11,
+                                             log_rate=log_mu_n1g,
+                                             noise_scale=eps_sub_n1g,
                                              num_quad_points=8),
                             obs=counts_ng[ind_n.cpu(), None].index_select(dim=-1, index=ind_g.cpu()).to(device))
 

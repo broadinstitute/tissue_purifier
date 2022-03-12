@@ -129,64 +129,6 @@ def make_gene_dataset_from_anndata(
     )
 
 
-def generate_fake_data(
-        cells: int = 20000,
-        genes: int = 500,
-        covariates: int = 20,
-        cell_types: int = 9,
-        beta_scale: float = 0.01,
-        beta0_loc: float = -5.0,
-        beta0_scale: float = 0.5,
-        noise_scale: float = 0.1):
-    """
-    Helper function to generate synthetic count data
-
-    Args:
-        cells: number of cells
-        genes: number of genes
-        covariates: number of covariates
-        cell_types: number of cell types
-        beta_scale: variance of the regression coefficients)
-        beta0_loc: mean value of the offset.
-        beta0_scale: variance of the offset
-        noise_scale: noise scale (gene-specific overdispersion)
-    """
-    cov_nl = torch.randn((cells, covariates))
-    cell_ids_n = torch.randint(low=0, high=cell_types, size=[cells])
-
-    alpha_klg = beta_scale * torch.randn((cell_types, covariates, genes))
-    alpha0_kg = beta0_loc + beta0_scale * torch.randn((cell_types, genes))
-    eps_g = torch.randn(genes).abs() * noise_scale + 1E-4  # std per gene
-    eps_ng = torch.randn(cells, genes) * eps_g
-
-    log_mu_ng = alpha0_kg[cell_ids_n] + (cov_nl[..., None] * alpha_klg[cell_ids_n]).sum(dim=-2)
-    mu_ng = (log_mu_ng + eps_ng).exp()
-    rate_ng = torch.randint(low=250, high=3000, size=[cells, 1]) * mu_ng
-    counts_ng = torch.poisson(rate_ng).long()
-
-    # simple Q/A on the fake data
-    total_umi_n = counts_ng.sum(dim=-1)
-    eps_g_low = torch.min(eps_g.abs()).item()
-    eps_g_high = torch.max(eps_g.abs()).item()
-    assert eps_g_high > eps_g_low > 0, "Error. Got {0}, {1}".format(eps_g_high, eps_g_low)
-    assert len(counts_ng.shape) == 2, "Error. Got {0}".format(counts_ng.shape)
-    assert len(cov_nl.shape) == 2, "Error. Got {0}".format(cov_nl.shape)
-    assert len(cell_ids_n.shape) == 1, "Error. Got {0}".format(cell_ids_n.shape)
-    assert counts_ng.shape[0] == cov_nl.shape[0] == cell_ids_n.shape[0],  \
-        "Error. Got {0} {1} {2}".format(counts_ng.shape, cov_nl.shape, cell_ids_n.shape)
-    assert torch.all(total_umi_n > 0),  \
-        "Error. Some elements are zero, negative or inf {0}".format(torch.all(total_umi_n >= 0))
-
-    return GeneDataset(
-        counts=counts_ng,
-        covariates=cov_nl,
-        cell_type_ids=cell_ids_n,
-        k_cell_types=cell_types,
-        cell_type_mapping=dict(zip(range(cell_types), range(cell_types))),
-        gene_names=[str(i) for i in range(cell_types)],
-    )
-
-
 def train_test_val_split(
         data: Union[List[torch.Tensor], List[numpy.ndarray], GeneDataset],
         train_size: float = 0.8,
