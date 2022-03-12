@@ -51,7 +51,7 @@ def plot_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
                 v1 = value1_torch_ng[mask][r]
                 if v1.dtype == torch.long:
                     y1 = torch.bincount(v1)
-                    x1 = torch.arange(len(y1))
+                    x1 = torch.arange(y1.shape[0])
                     barWidth = 0.9 * (x1[1] - x1[0])
                     _ = axes[r, c].bar(x1, y1, width=barWidth)
                 else:
@@ -65,14 +65,15 @@ def plot_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
                 a1, b1 = v1.min(), v1.max()
                 a2, b2 = v2.min(), v2.max()
                 a = min(a1.item(), a2.item())
-                b = max(b1.item(), b2.item(), a+1)
+                b = max(b1.item(), b2.item(), 2)
                 print("DEBUG", a, b)
                 myrange = (a, b)
 
                 if v1.dtype == torch.long:
                     y1 = torch.bincount(v1, minlength=int(myrange[1]))
                     y2 = torch.bincount(v2, minlength=int(myrange[1]))
-                    x = torch.arange(len(y1))
+                    print(y1)
+                    x = torch.arange(y1.shape[0])
                     barWidth = 0.4 * (x[1] - x[0])
                     _ = axes[r, c].bar(x, y1, width=barWidth)
                     _ = axes[r, c].bar(x + barWidth, y2, width=barWidth)
