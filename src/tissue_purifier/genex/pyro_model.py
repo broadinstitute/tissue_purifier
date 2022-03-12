@@ -128,30 +128,19 @@ class GeneRegression:
         self._train_kargs = None
 
     def _model(self,
-               dataset: GeneDataset,
+               n_cells: int,
+               g_genes: int,
+               l_cov: int,
+               k_cell_types: int,
+               counts_ng: torch.Tensor,
+               total_umi_n: torch.Tensor,
+               covariates_nl: torch.Tensor,
+               cell_type_ids_n: torch.Tensor,
                eps_range: Tuple[float, float],
-               l1_regularization_strength: float = None,
-               l2_regularization_strength: float = None,
-               subsample_size_cells: int = None,
-               subsample_size_genes: int = None,
-               **kargs):
-
-        # check validity
-        assert l1_regularization_strength is None or l1_regularization_strength > 0.0
-        assert l2_regularization_strength is None or l2_regularization_strength > 0.0
-        assert not (l1_regularization_strength is not None and l2_regularization_strength is not None), \
-            "You can NOT define both l1_regularization_strength and l2_regularization_strength."
-
-        # Unpack the dataset
-        assert eps_range[1] > eps_range[0] > 0
-        counts_ng = dataset.counts.long()
-        total_umi_n = counts_ng.sum(dim=-1)
-        covariates_nl = dataset.covariates.float()
-        cell_type_ids_n = dataset.cell_type_ids.long()  # ids: 0,1,...,K-1
-        k = dataset.k_cell_types
-        n, g = counts_ng.shape[:2]
-        n, l_cov = covariates_nl.shape[:2]
-        n = cell_type_ids_n.shape[0]
+               l1_regularization_strength: float,
+               l2_regularization_strength: float,
+               subsample_size_cells: int,
+               subsample_size_genes: int):
 
         # Define the right device:
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -159,16 +148,17 @@ class GeneRegression:
         zero = torch.zeros(1, device=device)
 
         # Define the plates (i.e. conditional independence). It make sense to subsample only gene and cells.
-        cell_plate = pyro.plate("cells", size=n, dim=-3, device=device, subsample_size=subsample_size_cells)
-        cell_types_plate = pyro.plate("cell_types", size=k, dim=-3, device=device)
+        cell_plate = pyro.plate("cells", size=n_cells, dim=-3, device=device, subsample_size=subsample_size_cells)
+        cell_types_plate = pyro.plate("cell_types", size=k_cell_types, dim=-3, device=device)
         covariate_plate = pyro.plate("covariate", size=l_cov, dim=-2, device=device)
-        gene_plate = pyro.plate("genes", size=g, dim=-1, device=device, subsample_size=subsample_size_genes)
+        gene_plate = pyro.plate("genes", size=g_genes, dim=-1, device=device, subsample_size=subsample_size_genes)
 
         eps_k1g = pyro.param("eps",
-                             0.5 * (eps_range[0] + eps_range[1]) * torch.ones((k, 1, g), device=device),
+                             0.5 * (eps_range[0] + eps_range[1]) * torch.ones((k_cell_types, 1, g_genes),
+                                                                              device=device),
                              constraint=constraints.interval(lower_bound=eps_range[0],
                                                              upper_bound=eps_range[1]))
-        beta0_k1g = pyro.param("beta0", torch.zeros((k, 1, g), device=device))
+        beta0_k1g = pyro.param("beta0", torch.zeros((k_cell_types, 1, g_genes), device=device))
 
         with gene_plate:
             with cell_types_plate:
@@ -203,26 +193,23 @@ class GeneRegression:
                             obs=counts_ng[ind_n.cpu(), None].index_select(dim=-1, index=ind_g.cpu()).to(device))
 
     def _guide(self,
-               dataset: GeneDataset,
+               g_genes: int,
+               l_cov: int,
+               k_cell_types: int,
                use_covariates: bool,
                subsample_size_genes: int,
                **kargs):
-
-        # Unpack the dataset
-        n, g = dataset.counts.shape[:2]
-        n, l = dataset.covariates.shape[:2]
-        k = dataset.k_cell_types
 
         # Define the right device:
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
         # Define the gene and cell plates. It make sense to subsample only gene and cells.
         # cell_plate = pyro.plate("cells", size=n, dim=-3, device=device, subsample_size=subsample_size_cells)
-        cell_types_plate = pyro.plate("cell_types", size=k, dim=-3, device=device)
-        covariate_plate = pyro.plate("covariate", size=l, dim=-2, device=device)
-        gene_plate = pyro.plate("genes", size=g, dim=-1, device=device, subsample_size=subsample_size_genes)
+        cell_types_plate = pyro.plate("cell_types", size=k_cell_types, dim=-3, device=device)
+        covariate_plate = pyro.plate("covariate", size=l_cov, dim=-2, device=device)
+        gene_plate = pyro.plate("genes", size=g_genes, dim=-1, device=device, subsample_size=subsample_size_genes)
 
-        beta_param_loc_klg = pyro.param("beta_loc", torch.zeros((k, l, g), device=device))
+        beta_param_loc_klg = pyro.param("beta_loc", torch.zeros((k_cell_types, l_cov, g_genes), device=device))
 
         with gene_plate as ind_g:
             with cell_types_plate:
@@ -232,34 +219,7 @@ class GeneRegression:
                     else:
                         beta_loc_tmp = torch.zeros_like(beta_param_loc_klg[..., ind_g])
                     beta_klg = pyro.sample("beta", dist.Delta(v=beta_loc_tmp))
-                    assert beta_klg.shape == torch.Size([k, l, len(ind_g)])
-
-    def render_model(self, dataset: GeneDataset, filename: Optional[str] = None,  render_distributions: bool = False):
-        """
-        Wrapper around :meth:`pyro.render_model` to visualize the graphical model.
-
-        Args:
-            dataset: dataset to use for computing the shapes
-            filename: File to save rendered model in. If None (defaults) the image is displayed.
-            render_distributions: Whether to include RV distribution
-        """
-        model_kargs = {
-            'dataset': dataset,
-            'use_covariates': True,
-            'beta_scale': None,
-            'eps_range': (0.01, 0.02),
-            'subsample_size_genes': None,
-            'subsample_size_cells': None,
-        }
-
-        trace = pyro.poutine.trace(self._model).get_trace(**model_kargs)
-        trace.compute_log_prob()  # optional, but allows printing of log_prob shapes
-        print(trace.format_shapes())
-
-        return pyro.render_model(self._model,
-                                 model_kwargs=model_kargs,
-                                 filename=filename,
-                                 render_distributions=render_distributions)
+                    # assert beta_klg.shape == torch.Size([k_cell_types, l_cov, len(ind_g)])
 
     @property
     def optimizer(self) -> pyro.optim.PyroOptim:
@@ -393,6 +353,13 @@ class GeneRegression:
             assert self.optimizer is not None, "Optimizer is not specified. Call configure_optimizer first."
             self.optimizer.set_state(self._optimizer_initial_state)
 
+        # check validity
+        assert l1_regularization_strength is None or l1_regularization_strength > 0.0
+        assert l2_regularization_strength is None or l2_regularization_strength > 0.0
+        assert not (l1_regularization_strength is not None and l2_regularization_strength is not None), \
+            "You can NOT define both l1_regularization_strength and l2_regularization_strength."
+        assert eps_range[1] > eps_range[0] > 0
+
         # prepare train kargs dict
         train_kargs = {
             'use_covariates': use_covariates,
@@ -402,12 +369,18 @@ class GeneRegression:
             'subsample_size_genes': subsample_size_genes,
             'subsample_size_cells': subsample_size_cells,
         }
-
-        # save the params used for launching the training
         self._train_kargs = train_kargs
 
-        # add the dataset and run SVI
-        train_kargs["dataset"] = dataset
+        # Unpack the dataset and run the SVI
+        counts_ng = dataset.counts.long()
+        train_kargs["n_cells"] = counts_ng.shape[0]
+        train_kargs["g_genes"] = counts_ng.shape[1]
+        train_kargs["l_cov"] = dataset.covariates.shape[-1]
+        train_kargs["k_cell_types"] = dataset.k_cell_types
+        train_kargs["counts_ng"] = counts_ng.cpu()
+        train_kargs["total_umi_n"] = counts_ng.sum(dim=-1).cpu()
+        train_kargs["covariates_nl"] = dataset.covariates.float().cpu()
+        train_kargs["cell_type_ids_n"] = dataset.cell_type_ids.long()
 
         svi = SVI(self._model, self._guide, self.optimizer, loss=Trace_ELBO())
         for i in range(n_steps+1):
@@ -415,89 +388,6 @@ class GeneRegression:
             self._loss_history.append(loss)
             if i % print_frequency == 0:
                 print('[iter {}]  loss: {:.4f}'.format(i, loss))
-
-    def extend_train(
-            self,
-            dataset: GeneDataset,
-            n_steps: int = 2500,
-            print_frequency: int = 50):
-        """
-        Utility methods which calls :meth:`train` with the same parameter just used effectively extending the training.
-
-        Args:
-            dataset: Dataset to train the model on
-            n_steps: number of training step
-            print_frequency: how frequently to print loss to screen
-        """
-
-        self.train(
-            dataset=dataset,
-            n_steps=n_steps,
-            print_frequency=print_frequency,
-            from_scratch=False,
-            **self._train_kargs)
-
-    @staticmethod
-    @torch.no_grad()
-    def calculate_q_data(cell_type_ids: torch.Tensor, counts_ng: torch.Tensor, n_pairs: Union[int, str] = 10):
-        """
-        For each cell-type computes :math:`E\\left[x_{i,g} - x_{j,g}\\right]` where :math:`x_{i,g}`
-        are the observed counts in cell `i` for gene `g`.
-
-        Note that the indices `i,j`
-        loop over all pair of cells belonging to the same cell-type.
-
-        Args:
-            cell_type_ids: array of shape `n` with the cell_type ids
-            counts_ng: array of shape :math:`(n, g)` with the cell by gene counts
-            n_pairs: If "all" compute all possible pairs (this is an expensive :math:`O\\left(N^2\\right)` operation).
-                If an int, for each cell we consider :math:`n_pairs` other cells to approximate the expectation value.
-
-        Returns:
-            Array of shape :math:`(k, g)` , i.e. cell-types by genes, measuring the spread in the DATA.
-        """
-
-        def _all_pairs(_c_ng):
-            device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-            diff_g = torch.zeros(_c_ng.shape[-1], device=device, dtype=torch.float)
-            for j in range(1, _c_ng.shape[0]):
-                diff_g += (_c_ng[:j] - _c_ng[j]).abs().sum(dim=0)  # shape j-1
-            number_of_pairs = 0.5 * _c_ng.shape[0] * (_c_ng.shape[0] - 1)
-            return diff_g / number_of_pairs
-
-        def _few_pairs(_c_ng, _n_pairs):
-            # select n_pairs indices for each cell making sure not to self-select.
-            shift = torch.randint(high=_c_ng.shape[0] - 1, size=(_c_ng.shape[0], _n_pairs)) + 1  # int in [1, n-1]
-            base = torch.arange(_c_ng.shape[0]).view(-1, 1)
-            index = (base + shift) % _c_ng.shape[0]  # shape (n, p)
-
-            # compute the q metrics
-            ref = _c_ng.unsqueeze(dim=1)  # shape (n, 1, g) memory-wise it is just a view of (n, g)
-            other = _c_ng[index]          # shape (n, p, g) memory-wise it is just a view of (n, g)
-            diff_g = (ref - other).abs().float().mean(dim=(0, 1))  # shape g
-            return diff_g
-
-        assert n_pairs is "all" or (isinstance(n_pairs, int) and n_pairs > 0), \
-            "n_pairs must be 'all' or a positive integer. Received {0}".format(n_pairs)
-
-        g = counts_ng.shape[-1]
-        unique_cell_types = torch.unique(cell_type_ids)
-        q_kg = torch.zeros((unique_cell_types.shape[0], g), dtype=torch.float, device=torch.device("cpu"))
-        subsample_size_genes = min(500, g)
-
-        for k, cell_type in enumerate(unique_cell_types):
-            mask = (cell_type_ids == cell_type)
-            tmp_ng = counts_ng[mask]  # select a given cell-type at the time
-
-            for g_left in range(0, g, subsample_size_genes):
-                g_right = min(g_left + subsample_size_genes, g)
-                subg_tmp_ng = tmp_ng[..., g_left:g_right]  # subsample few genes
-                if n_pairs == "all":
-                    q_kg[k, g_left:g_right] = _all_pairs(subg_tmp_ng)
-                else:
-                    q_kg[k, g_left:g_right] = _few_pairs(subg_tmp_ng, n_pairs)
-
-        return q_kg
 
     @staticmethod
     @torch.no_grad()
@@ -607,7 +497,7 @@ class GeneRegression:
             q_kg[k] = q_ng[mask].mean(dim=0)
 
         # calculate_q_data
-        q_data_kg = GeneRegression.calculate_q_data(cell_type_ids, counts_ng, n_pairs=num_samples)
+        q_data_kg = GeneRegression._calculate_q_data(cell_type_ids, counts_ng, n_pairs=num_samples)
 
         # package the results as a data-frame
         log_score_df = pd.DataFrame(log_score_kg.numpy(), columns=dataset.gene_names)
@@ -620,6 +510,27 @@ class GeneRegression:
         q_data_df["cell_types"] = dataset.cell_type_mapping.keys()
 
         return log_score_df, q_df, q_data_df, pred_counts_ng
+
+    def extend_train(
+            self,
+            dataset: GeneDataset,
+            n_steps: int = 2500,
+            print_frequency: int = 50):
+        """
+        Utility methods which calls :meth:`train` with the same parameter just used effectively extending the training.
+
+        Args:
+            dataset: Dataset to train the model on
+            n_steps: number of training step
+            print_frequency: how frequently to print loss to screen
+        """
+
+        self.train(
+            dataset=dataset,
+            n_steps=n_steps,
+            print_frequency=print_frequency,
+            from_scratch=False,
+            **self._train_kargs)
 
     def train_and_test(
             self,
@@ -712,3 +623,76 @@ class GeneRegression:
             num_samples=test_num_samples,
             subsample_size_cells=self._train_kargs["subsample_size_cells"],
             subsample_size_genes=self._train_kargs["subsample_size_genes"])
+
+
+
+
+
+
+
+
+
+
+
+    @staticmethod
+    @torch.no_grad()
+    def _calculate_q_data(cell_type_ids: torch.Tensor, counts_ng: torch.Tensor, n_pairs: Union[int, str] = 10):
+        """
+        For each cell-type computes :math:`E\\left[x_{i,g} - x_{j,g}\\right]` where :math:`x_{i,g}`
+        are the observed counts in cell `i` for gene `g`.
+
+        Note that the indices `i,j`
+        loop over all pair of cells belonging to the same cell-type.
+
+        Args:
+            cell_type_ids: array of shape `n` with the cell_type ids
+            counts_ng: array of shape :math:`(n, g)` with the cell by gene counts
+            n_pairs: If "all" compute all possible pairs (this is an expensive :math:`O\\left(N^2\\right)` operation).
+                If an int, for each cell we consider :math:`n_pairs` other cells to approximate the expectation value.
+
+        Returns:
+            Array of shape :math:`(k, g)` , i.e. cell-types by genes, measuring the spread in the DATA.
+        """
+
+        def _all_pairs(_c_ng):
+            device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+            diff_g = torch.zeros(_c_ng.shape[-1], device=device, dtype=torch.float)
+            for j in range(1, _c_ng.shape[0]):
+                diff_g += (_c_ng[:j] - _c_ng[j]).abs().sum(dim=0)  # shape j-1
+            number_of_pairs = 0.5 * _c_ng.shape[0] * (_c_ng.shape[0] - 1)
+            return diff_g / number_of_pairs
+
+        def _few_pairs(_c_ng, _n_pairs):
+            # select n_pairs indices for each cell making sure not to self-select.
+            shift = torch.randint(high=_c_ng.shape[0] - 1, size=(_c_ng.shape[0], _n_pairs)) + 1  # int in [1, n-1]
+            base = torch.arange(_c_ng.shape[0]).view(-1, 1)
+            index = (base + shift) % _c_ng.shape[0]  # shape (n, p)
+
+            # compute the q metrics
+            ref = _c_ng.unsqueeze(dim=1)  # shape (n, 1, g) memory-wise it is just a view of (n, g)
+            other = _c_ng[index]          # shape (n, p, g) memory-wise it is just a view of (n, g)
+            diff_g = (ref - other).abs().float().mean(dim=(0, 1))  # shape g
+            return diff_g
+
+        assert n_pairs is "all" or (isinstance(n_pairs, int) and n_pairs > 0), \
+            "n_pairs must be 'all' or a positive integer. Received {0}".format(n_pairs)
+
+        g = counts_ng.shape[-1]
+        unique_cell_types = torch.unique(cell_type_ids)
+        q_kg = torch.zeros((unique_cell_types.shape[0], g), dtype=torch.float, device=torch.device("cpu"))
+        subsample_size_genes = min(500, g)
+
+        for k, cell_type in enumerate(unique_cell_types):
+            mask = (cell_type_ids == cell_type)
+            tmp_ng = counts_ng[mask]  # select a given cell-type at the time
+
+            for g_left in range(0, g, subsample_size_genes):
+                g_right = min(g_left + subsample_size_genes, g)
+                subg_tmp_ng = tmp_ng[..., g_left:g_right]  # subsample few genes
+                if n_pairs == "all":
+                    q_kg[k, g_left:g_right] = _all_pairs(subg_tmp_ng)
+                else:
+                    q_kg[k, g_left:g_right] = _few_pairs(subg_tmp_ng, n_pairs)
+
+        return q_kg
+
