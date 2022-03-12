@@ -532,7 +532,7 @@ class GeneRegression:
         # prepare storage
         device_calculation = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         q_ng = torch.zeros((n, g), dtype=torch.float, device=torch.device("cpu"))
-        pred_counts_ng = torch.zeros((n, g), dtype=torch.float, device=torch.device("cpu"))
+        pred_counts_ng = torch.zeros((n, g), dtype=torch.long, device=torch.device("cpu"))
         log_score_ng = torch.zeros((n, g), dtype=torch.float, device=torch.device("cpu"))
 
         # Loop to fill the predictions for all cell and genes
@@ -574,7 +574,7 @@ class GeneRegression:
                 pred_counts_tmp_bng = mydist.sample(sample_shape=torch.Size([num_samples]))
                 q_ng_tmp = (pred_counts_tmp_bng - subn_subg_counts_ng).abs().float().mean(dim=-3)
                 q_ng[n_left:n_right, g_left:g_right] = q_ng_tmp.cpu()
-                pred_counts_ng[n_left:n_right, g_left:g_right] = pred_counts_tmp_bng[0].cpu()
+                pred_counts_ng[n_left:n_right, g_left:g_right] = pred_counts_tmp_bng[0].long().cpu()
 
         # average by cell_type to obtain q_prediction
         unique_cell_types = torch.unique(cell_type_ids)
