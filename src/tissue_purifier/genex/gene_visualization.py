@@ -65,7 +65,7 @@ def plot_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
                 a1, b1 = v1.min(), v1.max()
                 a2, b2 = v2.min(), v2.max()
                 a = min(a1.item(), a2.item())
-                b = max(b1.item(), b2.item())
+                b = max(b1.item(), b2.item(), a+1)
                 print("DEBUG", a, b)
                 myrange = (a, b)
 
