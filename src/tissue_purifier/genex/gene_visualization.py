@@ -43,36 +43,47 @@ def plot_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
         tmp = value1_ng[..., r]
         other_tmp = None if value2_ng is None else value2_ng[..., r]
         for c, c_type in enumerate(ctypes):
+            mask = (cell_types_n == c_type)
             if r == 0:
                 _ = axes[r, c].set_title("cell_type {0}".format(c_type))
 
             if value2_ng is None:
-                tmp2 = tmp[..., cell_types_n == c_type]
+                tmp2 = tmp[..., mask]
 
                 if tmp2.dtype == torch.long:
                     y = torch.bincount(tmp2)
-                    x = torch.arange(y.shape[0]+1)
+                    x = torch.arange(len(y))
+                    barWidth = 0.9 * (x[1] - x[0])
+                    _ = axes[r, c].bar(x, y, width=barWidth)
                 else:
                     y, x = numpy.histogram(tmp2, bins=bins, density=True)
-                barWidth = 0.9 * (x[1] - x[0])
-                _ = axes[r, c].bar(x[:-1], y, width=barWidth)
+                    barWidth = 0.9 * (x[1] - x[0])
+                    _ = axes[r, c].bar(x[:-1], y, width=barWidth)
+
             else:
-                tmp2 = tmp[..., cell_types_n == c_type].flatten()
-                other_tmp2 = other_tmp[..., cell_types_n == c_type].flatten()
-                myrange = (min(min(tmp2), min(other_tmp2)).item(), max(max(tmp2), max(other_tmp2)).item())
+                tmp2 = tmp[..., mask].flatten()
+                other_tmp2 = other_tmp[..., mask].flatten()
+                a1, b1 = min(tmp2), max(tmp2)
+                a2, b2 = min(other_tmp2), max(other_tmp2)
+                a = min(a1, a2)
+                b = max(b1, b2)
+                print("DEBUG", a, b)
+                myrange = (a, b)
 
                 if tmp2.dtype == torch.long:
                     y = torch.bincount(tmp2, minlength=int(myrange[1]))
                     other_y = torch.bincount(other_tmp2, minlength=int(myrange[1]))
-                    x = torch.arange(int(myrange[1])+1)
-                    other_x = torch.arange(int(myrange[1])+1)
+                    x = torch.arange(len(y))
+                    other_x = torch.arange(len(other_y))
+                    barWidth = 0.4 * (x[1] - x[0])
+                    _ = axes[r, c].bar(x, y, width=barWidth)
+                    _ = axes[r, c].bar(other_x + barWidth, other_y, width=barWidth)
                 else:
                     y, x = numpy.histogram(tmp2, range=myrange, bins=bins, density=True)
                     other_y, other_x = numpy.histogram(other_tmp2, range=myrange, bins=bins, density=True)
-
-                barWidth = 0.4 * (x[1] - x[0])
-                _ = axes[r, c].bar(x[:-1], y, width=barWidth)
-                _ = axes[r, c].bar(other_x[:-1] + barWidth, other_y, width=barWidth)
+                    barWidth = 0.4 * (x[1] - x[0])
+                    _ = axes[r, c].bar(x[:-1], y, width=barWidth)
+                    _ = axes[r, c].bar(other_x[:-1] + barWidth, other_y, width=barWidth)
 
     plt.close()
     return fig
