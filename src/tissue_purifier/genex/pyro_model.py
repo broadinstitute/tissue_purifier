@@ -403,7 +403,7 @@ class GeneRegression:
             'subsample_size_cells': subsample_size_cells,
         }
 
-        # save the params used for training
+        # save the params used for launching the training
         self._train_kargs = train_kargs
 
         # add the dataset and run SVI
@@ -415,6 +415,27 @@ class GeneRegression:
             self._loss_history.append(loss)
             if i % print_frequency == 0:
                 print('[iter {}]  loss: {:.4f}'.format(i, loss))
+
+    def extend_train(
+            self,
+            dataset: GeneDataset,
+            n_steps: int = 2500,
+            print_frequency: int = 50):
+        """
+        Utility methods which calls :meth:`train` with the same parameter just used effectively extending the training.
+
+        Args:
+            dataset: Dataset to train the model on
+            n_steps: number of training step
+            print_frequency: how frequently to print loss to screen
+        """
+
+        self.train(
+            dataset=dataset,
+            n_steps=n_steps,
+            print_frequency=print_frequency,
+            from_scratch=False,
+            **self._train_kargs)
 
     @staticmethod
     @torch.no_grad()
@@ -613,8 +634,30 @@ class GeneRegression:
             eps_range: Tuple[float, float] = (1.0E-3, 1.0),
             subsample_size_cells: int = None,
             subsample_size_genes: int = None,
-            from_scratch: bool = True):
-        """ Utility function which sequentially calls the methods :meth:`train` and :meth:`predict`. """
+            from_scratch: bool = True) -> (pd.DataFrame, pd.DataFrame, pd.DataFrame, torch.Tensor):
+        """
+        Utility method which sequentially calls the methods :meth:`train` and :meth:`predict`.
+
+        Args:
+            train_dataset: Dataset to train the model on
+            test_dataset: Dataset to run the prediction on
+            test_num_samples: how many random samples to draw from the predictive distribution
+            train_steps: number of training step
+            train_print_frequency: how frequently to print loss to screen during training
+            use_covariates: if true, use covariates, if false use cell type information only
+            l1_regularization_strength: controls the strength of the L1 regularization on the regression coefficients.
+                If None there is no L1 regularization.
+            l2_regularization_strength: controls the strength of the L2 regularization on the regression coefficients.
+                If None there is no L2 regularization.
+            eps_range: range of the possible values of the gene-specific noise. Must the a strictly positive range.
+            subsample_size_genes: for large dataset, the minibatch can be created using a subset of genes.
+            subsample_size_cells: for large dataset, the minibatch can be created using a subset of cells.
+            from_scratch: it True (defaults) the training starts from scratch. If False the training continues
+                from where it was left off. Useful for extending a previously started training.
+
+        Returns:
+            See :meth:`predict`.
+        """
 
         self.train(
             dataset=train_dataset,
@@ -635,3 +678,37 @@ class GeneRegression:
             num_samples=test_num_samples,
             subsample_size_cells=subsample_size_cells,
             subsample_size_genes=subsample_size_genes)
+
+    def extend_train_and_test(
+            self,
+            train_dataset: GeneDataset,
+            test_dataset: GeneDataset,
+            test_num_samples: int = 10,
+            train_steps: int = 2500,
+            train_print_frequency: int = 50) -> (pd.DataFrame, pd.DataFrame, pd.DataFrame, torch.Tensor):
+        """
+        Utility method which sequentially calls the methods :meth:`extend_train` and :meth:`predict`.
+
+        Args:
+            train_dataset: Dataset to train the model on
+            test_dataset: Dataset to run the prediction on
+            test_num_samples: how many random samples to draw from the predictive distribution
+            train_steps: number of training step
+            train_print_frequency: how frequently to print loss to screen during training
+
+        Returns:
+            See :meth:`predict`.
+        """
+
+        self.extend_train(
+            dataset=train_dataset,
+            n_steps=train_steps,
+            print_frequency=train_print_frequency)
+
+        print("training completed")
+
+        return self.predict(
+            dataset=test_dataset,
+            num_samples=test_num_samples,
+            subsample_size_cells=self._train_kargs["subsample_size_cells"],
+            subsample_size_genes=self._train_kargs["subsample_size_genes"])
