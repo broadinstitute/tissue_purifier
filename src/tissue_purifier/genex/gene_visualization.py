@@ -16,12 +16,6 @@ def plot_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
     Returns:
         A figure with G rows and K columns where K is the number of distinct cell types.
     """
-
-    assert len(cell_types_n.shape) == 1
-    assert len(value1_ng.shape) >= 2
-    assert cell_types_n.shape[0] == value1_ng.shape[-2]
-    assert value2_ng is None or (value1_ng.shape == value2_ng.shape)
-
     def _to_torch(_x):
         if isinstance(_x, torch.Tensor):
             return _x
@@ -30,10 +24,21 @@ def plot_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
         else:
             raise Exception("Expected torch.tensor or numpy.ndarray. Received {0}".format(type(_x)))
 
-    value2_ng = None if value2_ng is None else _to_torch(value2_ng)
-    value1_ng = _to_torch(value1_ng)
+    assert len(cell_types_n.shape) == 1
+    assert len(value1_ng.shape) >= 2
+    assert cell_types_n.shape[0] == value1_ng.shape[-2]
+    assert value2_ng is None or (value1_ng.shape == value2_ng.shape)
+
     ctypes = torch.unique(cell_types_n)
     genes = value1_ng.shape[-1]
+    value1_ng = _to_torch(value1_ng)
+    value2_ng = None if value2_ng is None else _to_torch(value2_ng)
+    assert value2_ng is None or (value1_ng.dtype == value2_ng.dtype)
+    print("DEBUG", torch.max(value1_ng))
+    try:
+        print("DEBUG", torch.max(value2_ng))
+    except:
+        pass
 
     nrows = genes
     ncols = len(ctypes)
