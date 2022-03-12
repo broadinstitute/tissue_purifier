@@ -357,6 +357,7 @@ class GeneRegression:
             self._loss_history = []
             assert self.optimizer is not None, "Optimizer is not specified. Call configure_optimizer first."
             self.optimizer.set_state(self._optimizer_initial_state)
+        steps_completed = len(self._loss_history)
 
         # check validity
         assert l1_regularization_strength is None or l1_regularization_strength > 0.0
@@ -388,10 +389,10 @@ class GeneRegression:
         train_kargs["cell_type_ids_n"] = dataset.cell_type_ids.long()
 
         svi = SVI(self._model, self._guide, self.optimizer, loss=Trace_ELBO())
-        for i in range(n_steps+1):
+        for i in range(steps_completed+1, steps_completed + n_steps + 1):
             loss = svi.step(**train_kargs)
             self._loss_history.append(loss)
-            if i % print_frequency == 0:
+            if (i % print_frequency == 0) or (i == steps_completed+1):
                 print('[iter {}]  loss: {:.4f}'.format(i, loss))
 
     @staticmethod
