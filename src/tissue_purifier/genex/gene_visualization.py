@@ -62,10 +62,10 @@ def plot_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
                 myrange = (min(min(tmp2), min(other_tmp2)).item(), max(max(tmp2), max(other_tmp2)).item())
 
                 if tmp2.dtype == torch.long:
-                    y = torch.bincount(tmp2, minlength=myrange[1])
-                    other_y = torch.bincount(other_tmp2, minlength=myrange[1])
-                    x = torch.arange(myrange[1]+1)
-                    other_x = torch.arange(myrange[1]+1)
+                    y = torch.bincount(tmp2, minlength=int(myrange[1]))
+                    other_y = torch.bincount(other_tmp2, minlength=int(myrange[1]))
+                    x = torch.arange(int(myrange[1])+1)
+                    other_x = torch.arange(int(myrange[1])+1)
                 else:
                     y, x = numpy.histogram(tmp2, range=myrange, bins=bins, density=True)
                     other_y, other_x = numpy.histogram(other_tmp2, range=myrange, bins=bins, density=True)
