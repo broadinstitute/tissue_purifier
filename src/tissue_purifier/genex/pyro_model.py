@@ -452,9 +452,6 @@ class GeneRegression:
             diff_g = (ref - other).abs().float().mean(dim=(0, 1))  # shape g
             return diff_g
 
-        import time
-        start_time = time.time()
-        print("inside calculate_q_data")
         assert n_pairs is "all" or (isinstance(n_pairs, int) and n_pairs > 0), \
             "n_pairs must be 'all' or a positive integer. Received {0}".format(n_pairs)
 
@@ -475,7 +472,6 @@ class GeneRegression:
                 else:
                     q_kg[k, g_left:g_right] = _few_pairs(subg_tmp_ng, n_pairs)
 
-        print("leaving calculate_q_data", time.time()-start_time)
         return q_kg
 
     @staticmethod
