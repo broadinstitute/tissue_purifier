@@ -374,7 +374,7 @@ class GeneRegression:
             'subsample_size_genes': subsample_size_genes,
             'subsample_size_cells': subsample_size_cells,
         }
-        self._train_kargs = train_kargs
+        self._train_kargs = train_kargs.copy()
 
         # Unpack the dataset and run the SVI
         counts_ng = dataset.counts.long()
