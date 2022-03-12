@@ -79,7 +79,7 @@ def make_gene_dataset_from_anndata(
             If float in (0, 1) it auto selects the dimensionality so that the explained variance is at least that value.
 
     Returns:
-        a GeneDataset object
+        GeneDataset: a GeneDataset object
     """
 
     assert preprocess_strategy in {'center', 'z_score', 'raw'}, \
@@ -152,7 +152,7 @@ def train_test_val_split(
             class. If data is a GeneDataset the class is the cell_type.
 
     Returns:
-        yields multiple splits of the data.
+        tuple: yields multiple splits of the data.
 
     Example:
           >>> for train, test, val in train_test_val_split(data=[x,y,z]):

@@ -145,7 +145,8 @@ class BaseEstimator(ABC):
             classes: Union[List[Any], numpy.ndarray] = None) -> (torch.Tensor, numpy.ndarray):
         """
         Returns:
-            integer_labels (torch tensor array) and classes (list)
+            integer_labels: torch.Tensor with labels converted to integers
+            classes: numpy.array with the classes
         """
 
         classes_np = numpy.unique(self._to_numpy(labels)) if classes is None else self._to_numpy(classes)
@@ -264,7 +265,7 @@ class MlpRegressor(BaseEstimator):
             X: independent variable of shape :math:`(n, *)`
 
         Returns:
-             the predicted values of shape :math:`(n)`
+            y: the predicted values of shape :math:`(n)`
         """
         assert self._is_fit, "Error. Need to run fit method before you can use the predict method"
         X = self._to_torch_tensor(X)
@@ -296,7 +297,7 @@ class MlpRegressor(BaseEstimator):
             y: dependent variable of shape :math:`(n)`
 
         Returns:
-           R^2 (coefficient of determination) between :math:`y_\\text{pred}` and `y`.
+            score: R^2 (coefficient of determination) between :math:`y_\\text{pred}` and `y`.
         """
         assert self._is_fit, "Error. Need to run fit method before you can use the score method"
 
@@ -477,7 +478,7 @@ class MlpClassifier(BaseEstimator):
             X: independent variable of shape :math:`(n, *)`
 
         Returns:
-             the predicted values of shape :math:`(n)`
+             y: the predicted values of shape :math:`(n)`
         """
         assert self._is_fit, "Error. Need to run fit method before you can use the predict method"
         X = self._to_torch_tensor(X).float()
@@ -496,7 +497,7 @@ class MlpClassifier(BaseEstimator):
             y: dependent variable of shape :math:`(n)`
 
         Returns:
-           Accuracy classification score
+           accuracy: Accuracy classification score
         """
         assert self._is_fit, "Error. Need to run fit method before you can use the score method"
         X = self._to_torch_tensor(X)
@@ -518,7 +519,7 @@ class MlpClassifier(BaseEstimator):
             X: independent variable of shape :math:`(n, *)`
 
         Returns:
-           Probability of all the classes of shape :math:`(n, C)` where `C` is the number of classes.
+           prob: Probability of all the classes of shape :math:`(n, C)` where `C` is the number of classes.
         """
         assert self._is_fit, "Error. Need to run fit method before you can use the predict_proba method"
         X = self._to_torch_tensor(X).float()
@@ -536,7 +537,7 @@ class MlpClassifier(BaseEstimator):
             X: independent variable of shape :math:`(n, *)`
 
         Returns:
-           Log_Probability of all the classes of shape :math:`(n, C)` where `C` is the number of classes.
+           log_p: Log_Probability of all the classes of shape :math:`(n, C)` where `C` is the number of classes.
         """
         assert self._is_fit, "Error. Need to run fit method before you can use the predict_proba method"
         X = self._to_torch_tensor(X).float()

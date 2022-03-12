@@ -48,11 +48,11 @@ class SpatialAutocorrelation:
     def __call__(self, data: Union[SparseImage, List[SparseImage], torch.sparse.Tensor, List[torch.sparse.Tensor]]):
         """
         Args:
-            data: A (list of) sparse tensor with C channels
+            data: A (list of) sparse tensor with `C` channels
 
         Returns:
-            A (list of) torch.tensor of size C with the score (either moran or gready) indicating how each channel
-            is dispersed in all the others.
+            score: A (list of) torch.tensor of size `C` with the score (either moran or gready)
+                indicating how each channel is dispersed in all the others.
         """
 
         result = []
@@ -215,12 +215,12 @@ class Composition:
         Count the intensity for each channel in a 2D window.
 
         Args:
-            data: torch.Tensor or torch.sparse.Tensor or SparseImage or list thereof
-                corresponding to a spatial data: (channel,x,y)
+            data: torch.Tensor or torch.sparse.Tensor or SparseImage (or list thereof)
+                corresponding to a spatial data of shape :math:`(C, W, H)`
             windows: tuple with (min_row, min_col, max_row, max_col). If None (default) the entire image is considered.
 
         Returns:
-            A vector of size channel with the count for each channel or a list thereof.
+            composition: A vector of size `C` with the count for each channel (or list thereof).
         """
         if not isinstance(data, list):
             data = [data]

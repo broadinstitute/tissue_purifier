@@ -27,6 +27,9 @@ def plot_embeddings(
         sup_title: the title (if any) for the figure
         n_col: how many columns to have in the multi-panel figure
         cmap: the color map to use for the continuous variable. The categorical variable will have a different cmap.
+
+    Returns:
+        fig: multi-panel figure with the embeddings
     """
 
     assert set(annotation_keys + [embedding_key]).issubset(input_dictionary.keys()), \

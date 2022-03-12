@@ -3,7 +3,7 @@ import torch
 import matplotlib.pyplot as plt
 
 
-def plot_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
+def plot_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20) -> plt.Figure:
     """
     Plot the per cell-type histogram. If :attr:`value2_ng` is defined the two histogram are interlieved.
 
@@ -14,7 +14,7 @@ def plot_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20):
         bins: number of bins in the histogram
 
     Returns:
-        A figure with G rows and K columns where K is the number of distinct cell types.
+        fig: A figure with G rows and K columns where K is the number of distinct cell types.
     """
     def _to_torch(_x):
         if isinstance(_x, torch.Tensor):

@@ -375,7 +375,7 @@ class GeneRegression:
             'subsample_size_genes': subsample_size_genes,
             'subsample_size_cells': subsample_size_cells,
         }
-        self._train_kargs = train_kargs.copy()
+        self._train_kargs = train_kargs.copy()  # make a copy so that can edit train_kargs without changing _train_kargs
 
         # Unpack the dataset and run the SVI
         counts_ng = dataset.counts.long()
@@ -630,16 +630,6 @@ class GeneRegression:
             subsample_size_cells=self._train_kargs["subsample_size_cells"],
             subsample_size_genes=self._train_kargs["subsample_size_genes"])
 
-
-
-
-
-
-
-
-
-
-
     @staticmethod
     @torch.no_grad()
     def _calculate_q_data(cell_type_ids: torch.Tensor, counts_ng: torch.Tensor, n_pairs: Union[int, str] = 10):
@@ -680,7 +670,7 @@ class GeneRegression:
             diff_g = (ref - other).abs().float().mean(dim=(0, 1))  # shape g
             return diff_g
 
-        assert n_pairs is "all" or (isinstance(n_pairs, int) and n_pairs > 0), \
+        assert n_pairs == "all" or (isinstance(n_pairs, int) and n_pairs > 0), \
             "n_pairs must be 'all' or a positive integer. Received {0}".format(n_pairs)
 
         g = counts_ng.shape[-1]

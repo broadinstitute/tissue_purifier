@@ -44,7 +44,7 @@ def pad_and_crop_and_stack(x: List[torch.Tensor], pad_value: float = 0.0) -> tor
         pad_value: float, the value used in padding the images. Defaults to padding with black colors
 
     Returns:
-        A single batch tensor of shape :math:`(B, c, \\text{width}_\\text{max}, \\text{height}_\\text{max})`
+        tensor: A single batch tensor of shape :math:`(B, c, \\text{width}_\\text{max}, \\text{height}_\\text{max})`
     """
     widths = [tmp.shape[-2] for tmp in x]
     heigths = [tmp.shape[-1] for tmp in x]
@@ -187,8 +187,8 @@ def show_raw_one_channel(
         show_axis: If True (defaults) show the axis.
 
     Returns:
-        A figure with `(*)` panels.
-        Each panel is a rendering of a tensor of shape :math:`(\\text{width}, \\text{height})`
+        fig: A figure with `(*)` panels. Each panel is a rendering of a tensor of
+            shape :math:`(\\text{width}, \\text{height})`
     """
 
     if isinstance(data, list):
@@ -279,8 +279,8 @@ def show_raw_all_channels(
         show_axis: If True (default) show the axis
 
     Returns:
-        A figure with `*` panels each panel is a rendering of a tensors of shape
-        :math:`(\\text{ch}, \\text{width}, \\text{height})`
+        fig: A figure with `*` panels each panel is a rendering of a tensors of shape
+            :math:`(\\text{ch}, \\text{width}, \\text{height})`
     """
     if isinstance(data, torch.Tensor) and len(data.shape) == 3:
         data = data.unsqueeze(dim=0)

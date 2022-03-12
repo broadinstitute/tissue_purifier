@@ -16,13 +16,13 @@ def plot_cdf_pdf(
     Plot the Probability Density Function (pdf) and Cumulative Density Function (cdf).
 
     Args:
-       pdf_y: array like data
-       cdf_y: Optional. The cdf to plot. If not present it can be computed internally from pdf_y
-       x_label: the label of the x-axis
-       sup_title: the title for both panels
+        pdf_y: array like data
+        cdf_y: Optional. The cdf to plot. If not present it can be computed internally from pdf_y
+        x_label: the label of the x-axis
+        sup_title: the title for both panels
 
     Returns:
-        A two panel figure with the pdf and cdf.
+        fig: A two panel figure with the pdf and cdf.
     """
     assert cdf_y is None or len(cdf_y.shape) == 1, "cdf_y must be None or 1D array. Received {0}".format(cdf_y.shape)
     assert pdf_y is None or len(pdf_y.shape) == 1, "pdf_y must be None or 1D array. Received {0}".format(pdf_y.shape)
@@ -243,7 +243,7 @@ def plot_multiple_barplots(
         kargs: any argument passed to seaborn.barplot such as hue,
 
     Returns:
-        Figure with XXX panels
+        fig: Figure with XXX panels
     """
 
     n_max = len(ys)
