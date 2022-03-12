@@ -393,8 +393,8 @@ class GeneRegression:
             assert self.optimizer is not None, "Optimizer is not specified. Call configure_optimizer first."
             self.optimizer.set_state(self._optimizer_initial_state)
 
-        # prepare model kargs dict
-        model_kargs = {
+        # prepare train kargs dict
+        train_kargs = {
             'use_covariates': use_covariates,
             'l1_regularization_strength': l1_regularization_strength,
             'l2_regularization_strength': l2_regularization_strength,
@@ -404,14 +404,14 @@ class GeneRegression:
         }
 
         # save the params used for training
-        self._train_kargs = model_kargs
+        self._train_kargs = train_kargs
 
-        # add the dataset and
-        model_kargs["dataset"] = dataset
+        # add the dataset and run SVI
+        train_kargs["dataset"] = dataset
 
         svi = SVI(self._model, self._guide, self.optimizer, loss=Trace_ELBO())
         for i in range(n_steps+1):
-            loss = svi.step(**model_kargs)
+            loss = svi.step(**train_kargs)
             self._loss_history.append(loss)
             if i % print_frequency == 0:
                 print('[iter {}]  loss: {:.4f}'.format(i, loss))
