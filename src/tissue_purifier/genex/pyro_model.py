@@ -353,7 +353,7 @@ class GeneRegression:
         # Create dataframe for beta (cell_types, covariates, genes)
         beta = mydict["beta"].permute(0, 2, 1)  # shape: (cell_types, genes, covariates)
         cell_types_codes = torch.arange(k_cell_types).view(-1, 1).expand(k_cell_types, len_genes)
-        cell_types_names_np = numpy.array(inverse_cell_type_mapping.values())[cell_types_codes.cpu().numpy()]
+        cell_types_names_np = numpy.array(list(inverse_cell_type_mapping.values()))[cell_types_codes.cpu().numpy()]
         gene_codes = torch.arange(len_genes).view(1, -1).expand(k_cell_types, len_genes)
         gene_names_np = numpy.array(gene_names_list)[gene_codes.cpu().numpy()]
 
