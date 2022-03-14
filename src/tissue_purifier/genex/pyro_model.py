@@ -601,7 +601,7 @@ class GeneRegression:
 
         # Compute df_metric_kg
         # combine: gene_names_kg, cell_types_names_kg, q_kg, q_data_kg, log_score_kg into a dataframe
-        cell_types_names_kg = self._get_cell_type_names_kg()
+        cell_types_names_kg = self._get_cell_type_names_kg(g=len(dataset.gene_names))
         k_cell_types, len_genes = cell_types_names_kg.shape
         gene_names_kg = self._get_gene_names_kg(k=k_cell_types)
         assert gene_names_kg.shape == cell_types_names_kg.shape == q_kg.shape == q_data_kg.shape == log_score_kg.shape, \
