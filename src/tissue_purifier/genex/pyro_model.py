@@ -355,8 +355,8 @@ class GeneRegression:
         gene_codes = torch.arange(len_genes).view(1, -1).expand(k_cell_types, len_genes)
         gene_names_np = numpy.array(gene_names_list)[gene_codes.cpu().numpy()]
 
-        assert beta[:-1].shape == gene_names_np.shape == cell_types_names_np.shape, \
-            "Error. Shapes do not match: {0} vs {1} vs {2}".format(beta[:-1].shape,
+        assert beta[:, :, 0].shape == gene_names_np.shape == cell_types_names_np.shape, \
+            "Error. Shapes do not match: {0} vs {1} vs {2}".format(beta[:, :, 0].shape,
                                                                    gene_names_np.shape,
                                                                    cell_types_names_np.shape)
         columns = ["beta_{}".format(i) for i in range(beta.shape[-1])]
