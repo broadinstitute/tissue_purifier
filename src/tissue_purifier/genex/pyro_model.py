@@ -407,7 +407,9 @@ class GeneRegression:
               eps_range: Tuple[float, float] = (1.0E-3, 1.0),
               subsample_size_cells: int = None,
               subsample_size_genes: int = None,
-              from_scratch: bool = True):
+              from_scratch: bool = True,
+              **kargs
+              ):
         """
         Train the model. The trained parameter are stored in the pyro.param_store and
         can be accessed via :meth:`get_params`.
@@ -426,6 +428,7 @@ class GeneRegression:
             subsample_size_cells: for large dataset, the minibatch can be created using a subset of cells.
             from_scratch: it True (defaults) the training starts from scratch. If False the training continues
                 from where it was left off. Useful for extending a previously started training.
+            kargs: unused parameters
 
         Note:
             If you get an out-of-memory error try to tune the :attr:`subsample_size_cells`
@@ -454,12 +457,12 @@ class GeneRegression:
             'eps_range': eps_range,
             'subsample_size_genes': subsample_size_genes,
             'subsample_size_cells': subsample_size_cells,
+            'cell_type_mapping': dataset.cell_type_mapping,
+            'gene_names': dataset.gene_names,
         }
 
         # make a copy so that can edit train_kargs without changing _train_kargs
         self._train_kargs = train_kargs.copy()
-        self._train_kargs["cell_type_mapping"] = dataset.cell_type_mapping
-        self._train_kargs["gene_names"] = dataset.gene_names
 
         # Unpack the dataset and run the SVI
         counts_ng = dataset.counts.long()
