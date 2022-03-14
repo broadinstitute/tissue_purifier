@@ -317,7 +317,7 @@ class GeneRegression:
 
         df_beta0 = pd.DataFrame(mydict["beta0"].squeeze(dim=-2).cpu().numpy(), columns=gene_names)
         df_beta0["cell_type"] = numpy.array(cell_type_mapping.keys())
-        df_beta0.set_index("cell_type")
+        df_beta0.set_index("cell_type", inplace=True)
 
         return df_beta0
 
