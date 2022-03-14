@@ -247,8 +247,9 @@ class GeneRegression:
         Use it in pair with :meth:`load_ckpt`.
 
         Note:
-            pyro saved unconstrained parameters and the constrain transformation.
-            You should not "look inside" the ckpt. You should use :meth:`load_ckpt`.
+            Pyro saves unconstrained parameters and the constrain transformation.
+            This means that if you manually "look inside" the ckpt you will see strange values.
+            To get the actual value of the fitted parameter use the :meth:`get_params` method.
         """
         ckpt = {
             "param_store": pyro.get_param_store().get_state(),
@@ -281,7 +282,24 @@ class GeneRegression:
 
     @staticmethod
     def get_params():
-        """ Returns a (detached) dictionary with fitted parameters. """
+        """
+        Returns a (detached) dictionary with fitted parameters.
+
+        Note:
+            Can be used in combination with :math:`load_ckpt` to inspect the fitted parameters of a previous run.
+
+        Examples:
+            >>> gr = GeneRegression()
+            >>> gr.load_ckpt(filename="my_old_ckpt.pt")
+            >>> params_dict = gr.get_params()
+            >>> for k, v in params_dict.items():
+            >>>     print(k,v)
+        """
+
+        THIS SHOULD RETURN A DF.
+
+        FROM HERE
+
         mydict = dict()
         for k, v in pyro.get_param_store().items():
             mydict[k] = v.detach().cpu()
@@ -375,7 +393,11 @@ class GeneRegression:
             'subsample_size_genes': subsample_size_genes,
             'subsample_size_cells': subsample_size_cells,
         }
-        self._train_kargs = train_kargs.copy()  # make a copy so that can edit train_kargs without changing _train_kargs
+
+        # make a copy so that can edit train_kargs without changing _train_kargs
+        self._train_kargs = train_kargs.copy()
+        self._train_kargs["cell_type_mapping"] = dataset.cell_type_mapping
+        self._train_kargs["gene_names"] = dataset.gene_names
 
         # Unpack the dataset and run the SVI
         counts_ng = dataset.counts.long()
