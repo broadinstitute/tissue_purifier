@@ -142,7 +142,8 @@ class GeneRegression:
                l1_regularization_strength: float,
                l2_regularization_strength: float,
                subsample_size_cells: int,
-               subsample_size_genes: int):
+               subsample_size_genes: int,
+               **kargs):
 
         # Define the right device:
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
