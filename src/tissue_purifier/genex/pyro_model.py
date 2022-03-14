@@ -620,7 +620,7 @@ class GeneRegression:
         # Compute df_counts_ng
         cell_type_ids_ng = cell_type_ids.view(-1, 1).expand(n, g)
         cell_names_ng = numpy.array(list(self._get_inverse_cell_type_mapping().values()))[cell_type_ids_ng.cpu().numpy()]
-        self._get_gene_names_kg(k=cell_names_ng.shape[0])
+        gene_names_ng = self._get_gene_names_kg(k=cell_names_ng.shape[0])
         assert cell_names_ng.shape == dataset.counts.shape == pred_counts_ng.shape == cell_names_ng.shape, \
             "Shape mismatch {0} vs {1} vs {2} vs {3}".format(cell_names_ng.shape,
                                                              dataset.counts.shape,
@@ -630,7 +630,7 @@ class GeneRegression:
         df_counts_ng = pd.DataFrame(pred_counts_ng.flatten().cpu().numpy(), columns=["counts_pred"])
         df_counts_ng["counts_obs"] = dataset.counts.flatten().cpu().numpy()
         df_counts_ng["cell_type"] = cell_names_ng.flatten()
-        df_counts_ng["gene"] = gene_names_kg.flatten()
+        df_counts_ng["gene"] = gene_names_ng.flatten()
 
         # return
         return df_metric_kg, df_counts_ng
