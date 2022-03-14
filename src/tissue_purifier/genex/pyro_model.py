@@ -129,6 +129,45 @@ class GeneRegression:
         self._loss_history = []
         self._train_kargs = None
 
+    def _get_gene_list(self) -> List[str]:
+        return self._train_kargs["gene_names"]
+
+    def _get_cell_type_mapping(self) -> dict:
+        return self._train_kargs["cell_type_mapping"]
+
+    def _get_inverse_cell_type_mapping(self) -> dict:
+        cell_type_mapping = self._get_cell_type_mapping()
+
+        # Invert the cell_type_mapping (of the form: "cell_type" -> integer code)
+        # to inverse_cell_type_mapping (of the form: integer_code -> "cell_types")
+        # Note that multiple cell_types can be assigned to the same integer codes thefefor the inversion need
+        # to keep track of possible name collisions
+        inverse_cell_type_mapping = dict()
+        for cell_type_name, code in cell_type_mapping.items():
+            try:
+                existing = inverse_cell_type_mapping[code]
+                inverse_cell_type_mapping[code] = existing + "_AND_" + str(cell_type_name)
+            except KeyError:
+                inverse_cell_type_mapping[code] = str(cell_type_name)
+        return inverse_cell_type_mapping
+
+    def _get_cell_type_names_kg(self) -> numpy.ndarray:
+        """ Return a numpy.array of shape k_cell_type by genes with the cell_type_names """
+        inverse_cell_type_mapping = self._get_inverse_cell_type_mapping()
+        k_cell_types = len(inverse_cell_type_mapping.keys())
+        len_genes = len(self._get_gene_list())
+        cell_types_codes = torch.arange(k_cell_types).view(-1, 1).expand(k_cell_types, len_genes)
+        cell_types_names_kg = numpy.array(list(inverse_cell_type_mapping.values()))[cell_types_codes.cpu().numpy()]
+        return cell_types_names_kg
+
+    def _get_gene_names_kg(self, k_cell_types: int) -> numpy.ndarray:
+        """ Return a numpy.array of shape k_cell_type by genes with the gene_names """
+        gene_names_list = self._get_gene_list()
+        len_genes = len(gene_names_list)
+        gene_codes = torch.arange(len_genes).view(1, -1).expand(k_cell_types, len_genes)
+        gene_names_kg = numpy.array(gene_names_list)[gene_codes.cpu().numpy()]
+        return gene_names_kg
+
     def _model(self,
                n_cells: int,
                g_genes: int,
@@ -299,40 +338,19 @@ class GeneRegression:
             >>> df_beta0.head()
         """
 
+        # get all the fitted parameters
         mydict = dict()
         for k, v in pyro.get_param_store().items():
             mydict[k] = v.detach().cpu()
-            # print("DEBUG ->",k, v.shape)
 
         assert set(mydict.keys()) == {"beta0", "beta", "eps"}, \
             "Error. Unexpected parameter names {}".format(mydict.keys())
 
-        cell_type_mapping = self._train_kargs["cell_type_mapping"]
-        gene_names_list: List[str] = self._train_kargs["gene_names"]
-
-        # Invert the cell_type_mapping (of the form: "cell_type" -> integer code)
-        # to inverse_cell_type_mapping (of the form: integer_code -> "cell_types")
-        # Note that multiple cell_types can be assigned to the same integer codes thefefor the inversion need
-        # to keep track of possible name collisions
-        inverse_cell_type_mapping = dict()
-        for cell_type_name, code in cell_type_mapping.items():
-            try:
-                existing = inverse_cell_type_mapping[code]
-                inverse_cell_type_mapping[code] = existing + "_AND_" + str(cell_type_name)
-            except KeyError:
-                inverse_cell_type_mapping[code] = str(cell_type_name)
-
-        k_cell_types = len(inverse_cell_type_mapping.keys())
-        len_genes = len(gene_names_list)
-
-        # create two np.array of shape (k_cell_type, genes) with the cell_type_names and gene_names
-        cell_types_codes = torch.arange(k_cell_types).view(-1, 1).expand(k_cell_types, len_genes)
-        cell_types_names_kg = numpy.array(list(inverse_cell_type_mapping.values()))[cell_types_codes.cpu().numpy()]
-        gene_codes = torch.arange(len_genes).view(1, -1).expand(k_cell_types, len_genes)
-        gene_names_kg = numpy.array(gene_names_list)[gene_codes.cpu().numpy()]
+        cell_types_names_kg = self._get_cell_type_names_kg()
+        k_cell_types, len_genes = cell_types_names_kg.shape
+        gene_names_kg = self._get_gene_names_kg(k_cell_types=k_cell_types)
 
         # check shapes
-
         # eps.shape = (cell_type, 1, genes)
         assert mydict["eps"].shape == torch.Size([k_cell_types, 1, len_genes]), \
             "Unexpected shape for eps {}".format(mydict["eps"].shape)
@@ -473,13 +491,13 @@ class GeneRegression:
                 print('[iter {}]  loss: {:.4f}'.format(i, loss))
         print("Training completed in {} seconds".format(time.time()-start_time))
 
-    @staticmethod
     @torch.no_grad()
-    def predict(dataset: GeneDataset,
+    def predict(self,
+                dataset: GeneDataset,
                 num_samples: int = 10,
                 subsample_size_cells: int = None,
                 subsample_size_genes: int = None,
-                ) -> (pd.DataFrame, pd.DataFrame, pd.DataFrame, torch.Tensor):
+                ) -> (pd.DataFrame, pd.DataFrame):
         """
         Use the parameters currently in the param_store to run the prediction.
         If you want to run the prediction based on a different set of parameters you need
@@ -492,15 +510,13 @@ class GeneRegression:
             subsample_size_genes: if not None (defaults) the prediction are made in chunks to avoid memory issue
 
         Returns:
-            log_score_df: DataFrame with log of the posterior probability,
-                i.e. :math:`\\log p\\left(X_\\text{data}\\right)`, for each cell_type and gene.
-            q_kg_df: DataFrame with the deviation :math:`E\\left[|X_{i,g} - Y_{i,g}|\\right]`,
+            df_metric: For each cell_type and gene we report few metrics:
+                :math:`Q_\\text{data} = E\\left[|X_{i,g} - X_{j,g}|\\right]`,
+                where :math:`X_i` and :math:`X_j` are two different cells (of the same type)
+                :math:`Q_\\text{pred} = E\\left[|X_{i,g} - Y_{i,g}|\\right]`,
                 where `X` is the (observed) data and `Y` is a sample from the predicted posterior,
-                aggregated for each cell_type and gene.
-            q_kg_data_df: DataFrame with the deviation :math:`E\\left[|X_{i,g} - X_{j,g}|\\right]`,
-                where :math:`X_i` and :math:`X_j` are two different cells (of the same type),
-                aggregated for each cell_type and gene.
-            pred_counts_ng: Array of shape :math:`(n, g)` with a single sample from the posterior
+                :math:`\\text{log_score} = \\log p_\\text{posterior}\\left(X_\\text{data}\\right)`
+            df_counts: For each cell and gene we report the observed counts and a sampple from the posterior
         """
 
         n, g = dataset.counts.shape[:2]
@@ -581,19 +597,28 @@ class GeneRegression:
             q_kg[k] = q_ng[mask].mean(dim=0)
 
         # calculate_q_data
-        q_data_kg = GeneRegression._calculate_q_data(cell_type_ids, counts_ng, n_pairs=num_samples)
+        q_data_kg = self._calculate_q_data(cell_type_ids, counts_ng, n_pairs=num_samples)
 
-        # package the results as a data-frame
-        log_score_df = pd.DataFrame(log_score_kg.numpy(), columns=dataset.gene_names)
-        log_score_df["cell_types"] = dataset.cell_type_mapping.keys()
+        # Compute df_metric_kg
+        # combine: gene_names_kg, cell_types_names_kg, q_kg, q_data_kg, log_score_kg into a dataframe
+        cell_types_names_kg = self._get_cell_type_names_kg()
+        k_cell_types, len_genes = cell_types_names_kg.shape
+        gene_names_kg = self._get_gene_names_kg(k_cell_types=k_cell_types)
+        assert gene_names_kg.shape == cell_types_names_kg.shape == q_kg.shape == q_data_kg.shape ==  log_score_kg.shape
 
-        q_df = pd.DataFrame(q_kg.numpy(), columns=dataset.gene_names)
-        q_df["cell_types"] = dataset.cell_type_mapping.keys()
+        df_metric_kg = pd.DataFrame(cell_types_names_kg.flatten(), columns=["cell_type"])
+        df_metric_kg["gene"] = gene_names_kg.flatten()
+        df_metric_kg["q_predictive"] = q_kg.flatten().cpu().numpy()
+        df_metric_kg["q_empirical"] = q_data_kg.flatten().cpu().numpy()
+        df_metric_kg["log_score"] = log_score_kg.flatten().cpu().numpy()
 
-        q_data_df = pd.DataFrame(q_data_kg.numpy(), columns=dataset.gene_names)
-        q_data_df["cell_types"] = dataset.cell_type_mapping.keys()
-
-        return log_score_df, q_df, q_data_df, pred_counts_ng
+        # Compute df_counts_ng
+        cell_type_ids_ng = cell_type_ids.view(-1, 1).expand(n, g)
+        cell_names_ng = numpy.array(list(self._get_inverse_cell_type_mapping().values()))[cell_type_ids_ng.cpu().numpy()]
+        df_counts_ng = pd.DataFrame(pred_counts_ng.flatten().cpu().numpy(), columns=["counts_pred"])
+        df_counts_ng["counts_obs"] = dataset.counts.flatten().cpu().numpy()
+        df_counts_ng["cell_type"] = cell_names_ng
+        return df_metric_kg, df_counts_ng
 
     def extend_train(
             self,
