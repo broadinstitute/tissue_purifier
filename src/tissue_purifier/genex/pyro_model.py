@@ -302,7 +302,7 @@ class GeneRegression:
         mydict = dict()
         for k, v in pyro.get_param_store().items():
             mydict[k] = v.detach().cpu()
-            print(k, v.shape)
+            # print("DEBUG ->",k, v.shape)
 
         assert set(mydict.keys()) == {"beta0", "beta", "eps"}, \
             "Error. Unexpected parameter names {}".format(mydict.keys())
