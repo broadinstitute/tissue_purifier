@@ -166,13 +166,13 @@ class GeneRegression:
                 with covariate_plate:
                     if l1_regularization_strength is not None:
                         # l1 prior
-                        beta_klg = pyro.sample("beta", dist.Laplace(loc=0, scale=one / l1_regularization_strength))
+                        beta_klg = pyro.sample("beta_cov", dist.Laplace(loc=0, scale=one / l1_regularization_strength))
                     elif l2_regularization_strength is not None:
                         # l2 prior
-                        beta_klg = pyro.sample("beta", dist.Normal(loc=zero, scale=one / l2_regularization_strength))
+                        beta_klg = pyro.sample("beta_cov", dist.Normal(loc=zero, scale=one / l2_regularization_strength))
                     else:
                         # flat prior
-                        beta_klg = pyro.sample("beta", dist.Uniform(low=-2*one, high=2*one))
+                        beta_klg = pyro.sample("beta_cov", dist.Uniform(low=-2*one, high=2*one))
 
         with cell_plate as ind_n:
             cell_ids_sub_n = cell_type_ids_n[ind_n].to(device)
@@ -214,7 +214,7 @@ class GeneRegression:
         covariate_plate = pyro.plate("covariate", size=l_cov, dim=-2, device=device)
         gene_plate = pyro.plate("genes", size=g_genes, dim=-1, device=device, subsample_size=subsample_size_genes)
 
-        beta_param_loc_klg = pyro.param("beta_loc", torch.zeros((k_cell_types, l_cov, g_genes), device=device))
+        beta_param_loc_klg = pyro.param("beta", torch.zeros((k_cell_types, l_cov, g_genes), device=device))
 
         with gene_plate as ind_g:
             with cell_types_plate:
@@ -223,7 +223,7 @@ class GeneRegression:
                         beta_loc_tmp = beta_param_loc_klg[..., ind_g]
                     else:
                         beta_loc_tmp = torch.zeros_like(beta_param_loc_klg[..., ind_g])
-                    beta_klg = pyro.sample("beta", dist.Delta(v=beta_loc_tmp))
+                    beta_klg = pyro.sample("beta_cov", dist.Delta(v=beta_loc_tmp))
                     # assert beta_klg.shape == torch.Size([k_cell_types, l_cov, len(ind_g)])
 
     @property
@@ -461,7 +461,7 @@ class GeneRegression:
         # params
         eps_k1g = pyro.get_param_store().get_param("eps").float().cpu()
         beta0_k1g = pyro.get_param_store().get_param("beta0").float().cpu()
-        beta_klg = pyro.get_param_store().get_param("beta_loc").float().cpu()
+        beta_klg = pyro.get_param_store().get_param("beta").float().cpu()
 
         # dataset
         counts_ng = dataset.counts.long().cpu()
