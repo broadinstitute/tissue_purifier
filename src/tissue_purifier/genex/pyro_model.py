@@ -1,5 +1,6 @@
-from typing import Tuple, Optional, Union
+from typing import Tuple, Optional, Union, List
 import torch
+import numpy
 import pyro
 import pyro.distributions as dist
 from pyro.distributions.torch_distribution import TorchDistribution
@@ -299,9 +300,6 @@ class GeneRegression:
             >>> df_beta0.head()
         """
 
-        cell_type_mapping = self._train_kargs["cell_type_mapping"]
-        gene_names = self._train_kargs["gene_names"]
-
         mydict = dict()
         for k, v in pyro.get_param_store().items():
             mydict[k] = v.detach().cpu()
@@ -310,7 +308,19 @@ class GeneRegression:
         assert set(mydict.keys()) == {"beta0", "beta", "eps"}, \
             "Error. Unexpected parameter names {}".format(mydict.keys())
 
-        return mydict
+        # beta0.shape = (cell_types, 1, genes)
+        # beta.shape = (cell_types, covariates, genes)
+        # eps.shape = (cell_type, 1, genes)
+
+        cell_type_mapping = self._train_kargs["cell_type_mapping"]
+        gene_names: List[str] = self._train_kargs["gene_names"]
+
+        df_beta0 = pd.DataFrame(mydict["beta0"].squeeze(dim=-2).cpu().numpy(), columns=gene_names)
+        df_beta0["cell_type"] = numpy.array(cell_type_mapping.keys())
+        df_beta0.set_index("cell_type")
+
+        return df_beta0
+
 
     def show_loss(self, figsize: Tuple[float, float] = (4, 4), logx: bool = False, logy: bool = False, ax=None):
         """
