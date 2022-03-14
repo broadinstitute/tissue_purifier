@@ -361,7 +361,7 @@ class GeneRegression:
         print(beta.flatten(end_dim=-2).shape)
         print(cell_types_names_np.shape)
         print(gene_names_np.shape)
-        columns = ["beta_{}".format(i) for i in beta.shape[-1]]
+        columns = ["beta_{}".format(i) for i in range(beta.shape[-1])]
         df_beta = pd.DataFrame(beta.flatten(end_dim=-2), columns=columns)
         df_beta["cell_type"] = cell_types_names_np.flatten()
         df_beta["gene"] = gene_names_np.flatten()
