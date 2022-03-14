@@ -309,45 +309,64 @@ class GeneRegression:
             "Error. Unexpected parameter names {}".format(mydict.keys())
 
         cell_type_mapping = self._train_kargs["cell_type_mapping"]
-        gene_names: List[str] = self._train_kargs["gene_names"]
+        gene_names_list: List[str] = self._train_kargs["gene_names"]
 
-        # make a list of cell_names (note that some cell_name might be joint such as "CD_positive_AND_CD_negative")
-        cell_type_names_list = [None]*mydict["beta0"].shape[0]
-        for k,v in cell_type_mapping.items():
-            assert isinstance(v, int)
-            if cell_type_names_list[v] is None:
-                cell_type_names_list[v] = k
-            else:
-                cell_type_names_list[v] = cell_type_names_list[v] + "_AND_" + str(k)
-        cell_type_names_np = numpy.array(cell_type_names_list)
-        print(cell_type_names_np)
+        # Invert the cell_type_mapping (of the form: "cell_type" -> integer code)
+        # to inverse_cell_type_mapping (of the form: integer_code -> "cell_types")
+        # Note that multiple cell_types can be assigned to the same integer codes thefefor the inversion need
+        # to keep track of possible name collisions
+        inverse_cell_type_mapping = dict()
+        for cell_type_name, code in cell_type_mapping.items():
+            try:
+                existing = inverse_cell_type_mapping[code]
+                inverse_cell_type_mapping[code] = existing + "_AND_" + str(cell_type_name)
+            except KeyError:
+                inverse_cell_type_mapping[code] = str(cell_type_name)
+        print("DEBUG", cell_type_mapping)
+        print("DEBUG", inverse_cell_type_mapping)
 
+        k_cell_types = len(inverse_cell_type_mapping.keys())
+        len_genes = len(gene_names_list)
         # beta0.shape = (cell_types, 1, genes)
-        assert mydict["beta0"].shape == torch.Size([cell_type_names_np.shape[0], 1, len(gene_names)]), \
+        assert mydict["beta0"].shape == torch.Size([k_cell_types, 1, len_genes]), \
             "Unexpected shape for beta0 {}".format(mydict["beta0"].shape)
 
         # beta.shape = (cell_types, covariates, genes)
         tmp_a, tmp_b, tmp_c = mydict["beta"].shape
-        assert tmp_a == cell_type_names_np.shape[0] and tmp_c == len(gene_names), \
+        assert tmp_a == k_cell_types and tmp_c == len_genes, \
             "Unexpected shape for beta {}".format(mydict["beta"].shape)
 
         # eps.shape = (cell_type, 1, genes)
-        tmp_a, tmp_b, tmp_c = mydict["eps"].shape
-        assert tmp_a == cell_type_names_np.shape[0] and tmp_c == len(gene_names), \
+        assert mydict["eps"].shape == torch.Size([k_cell_types, 1, len_genes]), \
             "Unexpected shape for eps {}".format(mydict["eps"].shape)
 
         # Create dataframe for beta0
-        df_beta0 = pd.DataFrame(mydict["beta0"].squeeze(dim=-2).cpu().numpy(), columns=gene_names)
+        df_beta0 = pd.DataFrame(mydict["beta0"].squeeze(dim=-2).cpu().numpy(), columns=gene_names_list)
+        df_beta0["cell_type"] = list(inverse_cell_type_mapping.values())
+        # df_beta0.set_index("cell_type", inplace=True)
 
+        # Create dataframe for eps
+        df_eps = pd.DataFrame(mydict["eps"].squeeze(dim=-2).cpu().numpy(), columns=gene_names_list)
+        df_eps["cell_type"] = list(inverse_cell_type_mapping.values())
+        # df_eps.set_index("cell_type", inplace=True)
 
-        df_beta0["cell_type"] =
-        df_beta0.set_index("cell_type", inplace=True)
+        # Create dataframe for beta (cell_types, covariates, genes)
+        beta = mydict["beta"].permute(0, 2, 1)  # shape: (cell_types, genes, covariates)
+        cell_types_codes = torch.arange(k_cell_types).view(-1, 1).expand(k_cell_types, len_genes)
+        cell_types_names_np = numpy.array(inverse_cell_type_mapping.values())[cell_types_codes.cpu().numpy()]
+        gene_codes = torch.arange(len_genes).view(1, -1).expand(k_cell_types, len_genes)
+        gene_names_np = numpy.array(gene_names_list)[gene_codes.cpu().numpy()]
 
-        cell_type_index = torch.tensor()
-        df_beta = pd.DataFrame(mydict["beta"])
+        print(beta.shape)
+        print(beta.flatten(end_dim=-2).shape)
+        print(cell_types_names_np.shape)
+        print(gene_names_np.shape)
+        columns = ["beta_{}".format(i) for i in beta.shape[-1]]
+        df_beta = pd.DataFrame(beta.flatten(end_dim=-2), columns=columns)
+        df_beta["cell_type"] = cell_types_names_np.flatten()
+        df_beta["gene"] = gene_names_np.flatten()
 
-        return df_beta0
-
+        return df_beta0, df_eps
 
     def show_loss(self, figsize: Tuple[float, float] = (4, 4), logx: bool = False, logy: bool = False, ax=None):
         """
