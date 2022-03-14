@@ -151,20 +151,19 @@ class GeneRegression:
                 inverse_cell_type_mapping[code] = str(cell_type_name)
         return inverse_cell_type_mapping
 
-    def _get_cell_type_names_kg(self) -> numpy.ndarray:
-        """ Return a numpy.array of shape k_cell_type by genes with the cell_type_names """
+    def _get_cell_type_names_kg(self, g) -> numpy.ndarray:
+        """ Return a numpy.array of shape k_cell_type by g with the cell_type_names """
         inverse_cell_type_mapping = self._get_inverse_cell_type_mapping()
         k_cell_types = len(inverse_cell_type_mapping.keys())
-        len_genes = len(self._get_gene_list())
-        cell_types_codes = torch.arange(k_cell_types).view(-1, 1).expand(k_cell_types, len_genes)
+        cell_types_codes = torch.arange(k_cell_types).view(-1, 1).expand(k_cell_types, g)
         cell_types_names_kg = numpy.array(list(inverse_cell_type_mapping.values()))[cell_types_codes.cpu().numpy()]
         return cell_types_names_kg
 
-    def _get_gene_names_kg(self, k_cell_types: int) -> numpy.ndarray:
-        """ Return a numpy.array of shape k_cell_type by genes with the gene_names """
+    def _get_gene_names_kg(self, k: int) -> numpy.ndarray:
+        """ Return a numpy.array of shape k by genes with the gene_names """
         gene_names_list = self._get_gene_list()
         len_genes = len(gene_names_list)
-        gene_codes = torch.arange(len_genes).view(1, -1).expand(k_cell_types, len_genes)
+        gene_codes = torch.arange(len_genes).view(1, -1).expand(k, len_genes)
         gene_names_kg = numpy.array(gene_names_list)[gene_codes.cpu().numpy()]
         return gene_names_kg
 
@@ -346,9 +345,10 @@ class GeneRegression:
         assert set(mydict.keys()) == {"beta0", "beta", "eps"}, \
             "Error. Unexpected parameter names {}".format(mydict.keys())
 
-        cell_types_names_kg = self._get_cell_type_names_kg()
-        k_cell_types, len_genes = cell_types_names_kg.shape
-        gene_names_kg = self._get_gene_names_kg(k_cell_types=k_cell_types)
+        k_cell_types = mydict["beta"].shape[0]
+        len_genes = mydict["beta"].shape[-1]
+        cell_types_names_kg = self._get_cell_type_names_kg(g=len_genes)
+        gene_names_kg = self._get_gene_names_kg(k=k_cell_types)
 
         # check shapes
         # eps.shape = (cell_type, 1, genes)
@@ -603,8 +603,13 @@ class GeneRegression:
         # combine: gene_names_kg, cell_types_names_kg, q_kg, q_data_kg, log_score_kg into a dataframe
         cell_types_names_kg = self._get_cell_type_names_kg()
         k_cell_types, len_genes = cell_types_names_kg.shape
-        gene_names_kg = self._get_gene_names_kg(k_cell_types=k_cell_types)
-        assert gene_names_kg.shape == cell_types_names_kg.shape == q_kg.shape == q_data_kg.shape ==  log_score_kg.shape
+        gene_names_kg = self._get_gene_names_kg(k=k_cell_types)
+        assert gene_names_kg.shape == cell_types_names_kg.shape == q_kg.shape == q_data_kg.shape == log_score_kg.shape, \
+            "Shape mismatch {0} vs {1} vs {2} vs {3}".format(gene_names_kg.shape,
+                                                             cell_types_names_kg.shape,
+                                                             q_kg.shape,
+                                                             q_data_kg.shape,
+                                                             log_score_kg.shape)
 
         df_metric_kg = pd.DataFrame(cell_types_names_kg.flatten(), columns=["cell_type"])
         df_metric_kg["gene"] = gene_names_kg.flatten()
@@ -615,9 +620,19 @@ class GeneRegression:
         # Compute df_counts_ng
         cell_type_ids_ng = cell_type_ids.view(-1, 1).expand(n, g)
         cell_names_ng = numpy.array(list(self._get_inverse_cell_type_mapping().values()))[cell_type_ids_ng.cpu().numpy()]
+        self._get_gene_names_kg(k=cell_names_ng.shape[0])
+        assert cell_names_ng.shape == dataset.counts.shape == pred_counts_ng.shape == cell_names_ng.shape, \
+            "Shape mismatch {0} vs {1} vs {2} vs {3}".format(cell_names_ng.shape,
+                                                             dataset.counts.shape,
+                                                             pred_counts_ng.shape,
+                                                             cell_names_ng.shape)
+
         df_counts_ng = pd.DataFrame(pred_counts_ng.flatten().cpu().numpy(), columns=["counts_pred"])
         df_counts_ng["counts_obs"] = dataset.counts.flatten().cpu().numpy()
-        df_counts_ng["cell_type"] = cell_names_ng
+        df_counts_ng["cell_type"] = cell_names_ng.flatten()
+        df_counts_ng["gene"] = gene_names_kg.flatten()
+
+        # return
         return df_metric_kg, df_counts_ng
 
     def extend_train(
