@@ -280,10 +280,14 @@ class GeneRegression:
         self._loss_history = ckpt["loss_history"]
         self._train_kargs = ckpt["train_kargs"]
 
-    @staticmethod
-    def get_params():
+    def get_params(self) -> (pd.DataFrame, pd.DataFrame, pd.DataFrame):
         """
-        Returns a (detached) dictionary with fitted parameters.
+        Returns three pandas DataFrames with the fitted parameters.
+
+        Returns:
+            df_beta0: dataframe with the intercepts
+            df_beta: dataframe with the coefficients multiplying the covariates
+            df_eps: dataframe with the gene over-dispersion
 
         Note:
             Can be used in combination with :math:`load_ckpt` to inspect the fitted parameters of a previous run.
@@ -291,18 +295,21 @@ class GeneRegression:
         Examples:
             >>> gr = GeneRegression()
             >>> gr.load_ckpt(filename="my_old_ckpt.pt")
-            >>> params_dict = gr.get_params()
-            >>> for k, v in params_dict.items():
-            >>>     print(k,v)
+            >>> df_beta0, df_beta, df_eps = gr.get_params()
+            >>> df_beta0.head()
         """
 
-        THIS SHOULD RETURN A DF.
-
-        FROM HERE
+        cell_type_mapping = self._train_kargs["cell_type_mapping"]
+        gene_names = self._train_kargs["gene_names"]
 
         mydict = dict()
         for k, v in pyro.get_param_store().items():
             mydict[k] = v.detach().cpu()
+            print(k, v.shape)
+
+        assert set(mydict.keys()) == {"beta0", "beta", "eps"}, \
+            "Error. Unexpected parameter names {}".format(mydict.keys())
+
         return mydict
 
     def show_loss(self, figsize: Tuple[float, float] = (4, 4), logx: bool = False, logy: bool = False, ax=None):
