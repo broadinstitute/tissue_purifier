@@ -339,6 +339,7 @@ class GeneRegression:
             "Unexpected shape for eps {}".format(mydict["eps"].shape)
 
         # Create dataframe for beta0
+
         df_beta0 = pd.DataFrame(mydict["beta0"].squeeze(dim=-2).cpu().numpy(), columns=gene_names_list)
         df_beta0["cell_type"] = list(inverse_cell_type_mapping.values())
         # df_beta0.set_index("cell_type", inplace=True)
@@ -360,7 +361,7 @@ class GeneRegression:
                                                                    gene_names_np.shape,
                                                                    cell_types_names_np.shape)
         columns = ["beta_{}".format(i) for i in range(beta.shape[-1])]
-        df_beta = pd.DataFrame(beta.flatten(end_dim=-2), columns=columns)
+        df_beta = pd.DataFrame(beta.flatten(end_dim=-2).cpu().numpy(), columns=columns)
         df_beta["cell_type"] = cell_types_names_np.flatten()
         df_beta["gene"] = gene_names_np.flatten()
 
