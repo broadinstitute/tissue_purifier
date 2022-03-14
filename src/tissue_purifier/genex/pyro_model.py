@@ -2,6 +2,7 @@ from typing import Tuple, Optional, Union, List
 import torch
 import numpy
 import pyro
+import time
 import pyro.distributions as dist
 from pyro.distributions.torch_distribution import TorchDistribution
 from pyro.distributions.util import broadcast_shape
@@ -284,15 +285,12 @@ class GeneRegression:
 
     def get_params(self) -> (pd.DataFrame, pd.DataFrame, pd.DataFrame):
         """
-        Returns three pandas DataFrames with the fitted parameters.
-
         Returns:
-            df_beta0: dataframe with the intercepts
-            df_beta: dataframe with the coefficients multiplying the covariates
-            df_eps: dataframe with the gene over-dispersion
+            df: dataframe with the fitted parameters.
 
         Note:
-            Can be used in combination with :math:`load_ckpt` to inspect the fitted parameters of a previous run.
+            This method can be used in combination with :math:`load_ckpt` to inspect
+            the fitted parameters of a previous run.
 
         Examples:
             >>> gr = GeneRegression()
@@ -326,6 +324,19 @@ class GeneRegression:
 
         k_cell_types = len(inverse_cell_type_mapping.keys())
         len_genes = len(gene_names_list)
+
+        # create two np.array of shape (k_cell_type, genes) with the cell_type_names and gene_names
+        cell_types_codes = torch.arange(k_cell_types).view(-1, 1).expand(k_cell_types, len_genes)
+        cell_types_names_kg = numpy.array(list(inverse_cell_type_mapping.values()))[cell_types_codes.cpu().numpy()]
+        gene_codes = torch.arange(len_genes).view(1, -1).expand(k_cell_types, len_genes)
+        gene_names_kg = numpy.array(gene_names_list)[gene_codes.cpu().numpy()]
+
+        # check shapes
+
+        # eps.shape = (cell_type, 1, genes)
+        assert mydict["eps"].shape == torch.Size([k_cell_types, 1, len_genes]), \
+            "Unexpected shape for eps {}".format(mydict["eps"].shape)
+
         # beta0.shape = (cell_types, 1, genes)
         assert mydict["beta0"].shape == torch.Size([k_cell_types, 1, len_genes]), \
             "Unexpected shape for beta0 {}".format(mydict["beta0"].shape)
@@ -335,38 +346,15 @@ class GeneRegression:
         assert tmp_a == k_cell_types and tmp_c == len_genes, \
             "Unexpected shape for beta {}".format(mydict["beta"].shape)
 
-        # eps.shape = (cell_type, 1, genes)
-        assert mydict["eps"].shape == torch.Size([k_cell_types, 1, len_genes]), \
-            "Unexpected shape for eps {}".format(mydict["eps"].shape)
-
-        # Create dataframe for beta0
-
-        df_beta0 = pd.DataFrame(mydict["beta0"].squeeze(dim=-2).cpu().numpy(), columns=gene_names_list)
-        df_beta0["cell_type"] = list(inverse_cell_type_mapping.values())
-        # df_beta0.set_index("cell_type", inplace=True)
-
-        # Create dataframe for eps
-        df_eps = pd.DataFrame(mydict["eps"].squeeze(dim=-2).cpu().numpy(), columns=gene_names_list)
-        df_eps["cell_type"] = list(inverse_cell_type_mapping.values())
-        # df_eps.set_index("cell_type", inplace=True)
-
-        # Create dataframe for beta (cell_types, covariates, genes)
+        # Create dataframe
         beta = mydict["beta"].permute(0, 2, 1)  # shape: (cell_types, genes, covariates)
-        cell_types_codes = torch.arange(k_cell_types).view(-1, 1).expand(k_cell_types, len_genes)
-        cell_types_names_np = numpy.array(list(inverse_cell_type_mapping.values()))[cell_types_codes.cpu().numpy()]
-        gene_codes = torch.arange(len_genes).view(1, -1).expand(k_cell_types, len_genes)
-        gene_names_np = numpy.array(gene_names_list)[gene_codes.cpu().numpy()]
-
-        assert beta[:, :, 0].shape == gene_names_np.shape == cell_types_names_np.shape, \
-            "Error. Shapes do not match: {0} vs {1} vs {2}".format(beta[:, :, 0].shape,
-                                                                   gene_names_np.shape,
-                                                                   cell_types_names_np.shape)
         columns = ["beta_{}".format(i+1) for i in range(beta.shape[-1])]
-        df_beta = pd.DataFrame(beta.flatten(end_dim=-2).cpu().numpy(), columns=columns)
-        df_beta["cell_type"] = cell_types_names_np.flatten()
-        df_beta["gene"] = gene_names_np.flatten()
-
-        return df_beta0, df_beta, df_eps
+        df = pd.DataFrame(beta.flatten(end_dim=-2).cpu().numpy(), columns=columns)
+        df["beta_0"] = mydict["beta0"].squeeze(dim=-2).flatten().cpu().numpy()
+        df["eps"] = mydict["eps"].squeeze(dim=-2).flatten().cpu().numpy()
+        df["cell_type"] = cell_types_names_kg.flatten()
+        df["gene"] = gene_names_kg.flatten()
+        return df
 
     def show_loss(self, figsize: Tuple[float, float] = (4, 4), logx: bool = False, logy: bool = False, ax=None):
         """
@@ -476,12 +464,14 @@ class GeneRegression:
         train_kargs["covariates_nl"] = dataset.covariates.float().cpu()
         train_kargs["cell_type_ids_n"] = dataset.cell_type_ids.long()
 
+        start_time = time.time()
         svi = SVI(self._model, self._guide, self.optimizer, loss=Trace_ELBO())
         for i in range(steps_completed+1, steps_completed + n_steps + 1):
             loss = svi.step(**train_kargs)
             self._loss_history.append(loss)
             if (i % print_frequency == 0) or (i == steps_completed+1):
                 print('[iter {}]  loss: {:.4f}'.format(i, loss))
+        print("Training completed in {} seconds".format(time.time()-start_time))
 
     @staticmethod
     @torch.no_grad()
