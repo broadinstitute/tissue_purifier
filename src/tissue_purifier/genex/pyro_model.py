@@ -322,8 +322,6 @@ class GeneRegression:
                 inverse_cell_type_mapping[code] = existing + "_AND_" + str(cell_type_name)
             except KeyError:
                 inverse_cell_type_mapping[code] = str(cell_type_name)
-        print("DEBUG", cell_type_mapping)
-        print("DEBUG", inverse_cell_type_mapping)
 
         k_cell_types = len(inverse_cell_type_mapping.keys())
         len_genes = len(gene_names_list)
@@ -357,16 +355,16 @@ class GeneRegression:
         gene_codes = torch.arange(len_genes).view(1, -1).expand(k_cell_types, len_genes)
         gene_names_np = numpy.array(gene_names_list)[gene_codes.cpu().numpy()]
 
-        print(beta.shape)
-        print(beta.flatten(end_dim=-2).shape)
-        print(cell_types_names_np.shape)
-        print(gene_names_np.shape)
+        assert beta[:-1].shape == gene_names_np.shape == cell_types_names_np.shape, \
+            "Error. Shapes do not match: {0} vs {1} vs {2}".format(beta[:-1].shape,
+                                                                   gene_names_np.shape,
+                                                                   cell_types_names_np.shape)
         columns = ["beta_{}".format(i) for i in range(beta.shape[-1])]
         df_beta = pd.DataFrame(beta.flatten(end_dim=-2), columns=columns)
         df_beta["cell_type"] = cell_types_names_np.flatten()
         df_beta["gene"] = gene_names_np.flatten()
 
-        return df_beta0, df_eps
+        return df_beta0, df_beta, df_eps
 
     def show_loss(self, figsize: Tuple[float, float] = (4, 4), logx: bool = False, logy: bool = False, ax=None):
         """
