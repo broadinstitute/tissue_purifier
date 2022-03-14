@@ -360,7 +360,7 @@ class GeneRegression:
             "Error. Shapes do not match: {0} vs {1} vs {2}".format(beta[:, :, 0].shape,
                                                                    gene_names_np.shape,
                                                                    cell_types_names_np.shape)
-        columns = ["beta_{}".format(i) for i in range(beta.shape[-1])]
+        columns = ["beta_{}".format(i+1) for i in range(beta.shape[-1])]
         df_beta = pd.DataFrame(beta.flatten(end_dim=-2).cpu().numpy(), columns=columns)
         df_beta["cell_type"] = cell_types_names_np.flatten()
         df_beta["gene"] = gene_names_np.flatten()
