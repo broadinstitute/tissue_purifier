@@ -308,16 +308,43 @@ class GeneRegression:
         assert set(mydict.keys()) == {"beta0", "beta", "eps"}, \
             "Error. Unexpected parameter names {}".format(mydict.keys())
 
-        # beta0.shape = (cell_types, 1, genes)
-        # beta.shape = (cell_types, covariates, genes)
-        # eps.shape = (cell_type, 1, genes)
-
         cell_type_mapping = self._train_kargs["cell_type_mapping"]
         gene_names: List[str] = self._train_kargs["gene_names"]
 
+        # make a list of cell_names (note that some cell_name might be joint such as "CD_positive_AND_CD_negative")
+        cell_type_names_list = [None]*mydict["beta0"].shape[0]
+        for k,v in cell_type_mapping.items():
+            assert isinstance(v, int)
+            if cell_type_names_list[v] is None:
+                cell_type_names_list[v] = k
+            else:
+                cell_type_names_list[v] = cell_type_names_list[v] + "_AND_" + str(k)
+        cell_type_names_np = numpy.array(cell_type_names_list)
+        print(cell_type_names_np)
+
+        # beta0.shape = (cell_types, 1, genes)
+        assert mydict["beta0"].shape == torch.Size([cell_type_names_np.shape[0], 1, len(gene_names)]), \
+            "Unexpected shape for beta0 {}".format(mydict["beta0"].shape)
+
+        # beta.shape = (cell_types, covariates, genes)
+        tmp_a, tmp_b, tmp_c = mydict["beta"].shape
+        assert tmp_a == cell_type_names_np.shape[0] and tmp_c == len(gene_names), \
+            "Unexpected shape for beta {}".format(mydict["beta"].shape)
+
+        # eps.shape = (cell_type, 1, genes)
+        tmp_a, tmp_b, tmp_c = mydict["eps"].shape
+        assert tmp_a == cell_type_names_np.shape[0] and tmp_c == len(gene_names), \
+            "Unexpected shape for eps {}".format(mydict["eps"].shape)
+
+        # Create dataframe for beta0
         df_beta0 = pd.DataFrame(mydict["beta0"].squeeze(dim=-2).cpu().numpy(), columns=gene_names)
-        df_beta0["cell_type"] = numpy.array(cell_type_mapping.keys())
+
+
+        df_beta0["cell_type"] =
         df_beta0.set_index("cell_type", inplace=True)
+
+        cell_type_index = torch.tensor()
+        df_beta = pd.DataFrame(mydict["beta"])
 
         return df_beta0
 
