@@ -62,6 +62,9 @@ class LogNormalPoisson(TorchDistribution):
                 + noise_scale.unsqueeze(-1) * self.quad_points
         )
         quad_rate = quad_log_rate.exp()
+
+        assert torch.all(torch.isfinite(noise_scale)), "Noise_scale is not finite {}".format(noise_scale)
+        assert torch.all(torch.isfinite(log_rate)), "log_rate is not finite {}".format(log_rate)
         assert torch.all(torch.isfinite(quad_rate)), \
             "Quad_Rate is not finite. quad_log_rate={}, quad_rate={}".format(quad_log_rate, quad_rate)
         assert torch.all(n_trials > 0), "n_trials must be positive"
