@@ -17,7 +17,7 @@ version = ""
 if "READTHEDOCS" not in os.environ:
     from tissue_purifier import __version__  # noqaE402
     version = __version__
-    html_context = {"github_version": "master"}
+    html_context = {"github_version": "main"}
 # release version
 release = version
 
