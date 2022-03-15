@@ -239,6 +239,7 @@ class GeneRegression:
                 if use_covariates:
                     log_mu_n1g = beta0_n1g[..., ind_g] + \
                                  torch.sum(covariate_sub_nl1 * beta_nlg[..., ind_g], dim=-2, keepdim=True)
+                    print("CAZZO", log_mu_n1g)
                 else:
                     log_mu_n1g = beta0_n1g[..., ind_g]
 
