@@ -4,7 +4,7 @@ lightly==1.2.5
 lightning_bolts==0.3.4
 matplotlib==3.2.2
 neptune_client==0.9.19
-numpy==1.19.2
+numpy>=1.21
 pandas==1.3.4
 protobuf==3.19.4
 pyro_ppl>=1.8
