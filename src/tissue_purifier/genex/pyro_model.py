@@ -52,11 +52,14 @@ class LogNormalPoisson(TorchDistribution):
         if num_quad_points < 1:
             raise ValueError("num_quad_points must be positive.")
 
-        if not torch.all(torch.isfinite(log_rate)):
-            raise ValueError("log_rate must be finite.")
-
-        if torch.any(noise_scale < 0):
-            raise ValueError("Noise_scale must be positive.")
+#         if not torch.all(torch.isfinite(log_rate)):
+#             raise ValueError("log_rate must be finite.")
+#
+#         if torch.any(noise_scale < 0):
+#             raise ValueError("Noise_scale must be positive.")
+#
+#         if not torch.all(n_trials > 0):
+#             raise ValueError("n_trials must be positive")
 
         n_trials, log_rate, noise_scale = broadcast_all(
             n_trials, log_rate, noise_scale
@@ -69,12 +72,10 @@ class LogNormalPoisson(TorchDistribution):
         )
         quad_rate = quad_log_rate.exp()
 
-        assert torch.all(torch.isfinite(noise_scale)), "Noise_scale is not finite {}".format(noise_scale)
-        assert torch.all(torch.isfinite(log_rate)), "log_rate is not finite {}".format(log_rate)
-        assert torch.all(torch.isfinite(quad_rate)), \
-            "Quad_Rate is not finite. quad_log_rate={}, quad_rate={}".format(quad_log_rate, quad_rate)
-        assert torch.all(n_trials > 0), "n_trials must be positive"
-        assert n_trials.device == quad_rate.device, "Got {0} and {1}".format(n_trials.device, quad_rate.device)
+#         assert torch.all(torch.isfinite(quad_rate)), \
+#             "Quad_Rate is not finite. quad_log_rate={}, quad_rate={}".format(quad_log_rate, quad_rate)
+#         assert n_trials.device == quad_rate.device, "Got {0} and {1}".format(n_trials.device, quad_rate.device)
+
         self.poi_dist = dist.Poisson(rate=n_trials.unsqueeze(-1) * quad_rate)
 
         self.n_trials = n_trials
@@ -239,11 +240,6 @@ class GeneRegression:
                 if use_covariates:
                     log_mu_n1g = beta0_n1g[..., ind_g] + \
                                  torch.sum(covariate_sub_nl1 * beta_nlg[..., ind_g], dim=-2, keepdim=True)
-                    print("cazzo 1", log_mu_n1g.shape)
-                    print("cazzo 2", beta0_n1g[..., ind_g].shape)
-                    print("cazzo 3", covariate_sub_nl1.shape)
-                    print("cazzo 4", beta_nlg[..., ind_g].shape)
-                    assert 1==2
                 else:
                     log_mu_n1g = beta0_n1g[..., ind_g]
 
