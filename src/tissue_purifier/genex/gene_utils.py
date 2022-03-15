@@ -84,11 +84,13 @@ def make_gene_dataset_from_anndata(
 
     def _to_torch(_x):
         if isinstance(_x, torch.Tensor):
-            return _x.detach().cpu()
+            _y = _x.detach().cpu()
         elif isinstance(_x, numpy.ndarray):
-            return torch.from_numpy(_x)
+            _y = torch.from_numpy(_x)
         else:
             raise Exception("Error. Expected torch.Tensor or numpy.array. Received {}".format(type(_x)))
+        assert torch.all(torch.isfinite(_y)), "Error. Tensor is not finite {}".format(_y)
+        return _y
 
     assert preprocess_strategy in {'center', 'z_score', 'raw'}, \
         'Preprocess strategy must be either "center", "z_score" or "raw"'
