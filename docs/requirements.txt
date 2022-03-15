@@ -6,3 +6,4 @@ sphinx-gallery
 sphinx_rtd_theme==0.5.2
 mock
 sphinx-argparse
+sphinx-autodoc-typehints>=1.17
