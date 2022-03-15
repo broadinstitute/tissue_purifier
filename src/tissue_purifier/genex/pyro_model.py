@@ -52,6 +52,12 @@ class LogNormalPoisson(TorchDistribution):
         if num_quad_points < 1:
             raise ValueError("num_quad_points must be positive.")
 
+        if not torch.all(torch.isfinite(log_rate)):
+            raise ValueError("log_rate must be finite.")
+
+        if torch.any(noise_scale < 0):
+            raise ValueError("Noise_scale must be positive.")
+
         n_trials, log_rate, noise_scale = broadcast_all(
             n_trials, log_rate, noise_scale
         )
@@ -217,7 +223,7 @@ class GeneRegression:
                         beta_klg = pyro.sample("beta_cov", dist.Normal(loc=zero, scale=one / l2_regularization_strength))
                     else:
                         # flat prior
-                        beta_klg = pyro.sample("beta_cov", dist.Uniform(low=-2*one, high=2*one))
+                        beta_klg = pyro.sample("beta_cov", dist.Uniform(low=-one, high=one))
 
         with cell_plate as ind_n:
             cell_ids_sub_n = cell_type_ids_n[ind_n].to(device)
@@ -231,7 +237,8 @@ class GeneRegression:
             with gene_plate as ind_g:
                 eps_sub_n1g = eps_n1g[..., ind_g]
                 if use_covariates:
-                    log_mu_n1g = beta0_n1g[..., ind_g] + torch.sum(covariate_sub_nl1 * beta_nlg, dim=-2, keepdim=True)
+                    log_mu_n1g = beta0_n1g[..., ind_g] + \
+                                 torch.sum(covariate_sub_nl1 * beta_nlg[..., ind_g], dim=-2, keepdim=True)
                 else:
                     log_mu_n1g = beta0_n1g[..., ind_g]
 
