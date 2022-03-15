@@ -109,8 +109,7 @@ def make_gene_dataset_from_anndata(
 
     if not torch.all(torch.isfinite(covariates_nl_raw)):
         mask = torch.isfinite(covariates_nl_raw)
-        print("there are n={} not finite covariates".format(torch.sum(~mask))
-        raise ValueError("covariates in the anndata file are not finite.")
+        raise ValueError("there are n={} not finite covariates in anndata file".format(torch.sum(~mask)))
 
     assert len(counts_ng.shape) == 2
     assert len(covariates_nl_raw.shape) == 2
