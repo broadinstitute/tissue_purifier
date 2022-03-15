@@ -5,7 +5,5 @@ sphinx==4.0.3
 sphinx-gallery
 sphinx_rtd_theme==0.5.2
 sphinx-argparse
-sphinx-autodoc-typehints>=1.17
+sphinx-autodoc-napoleon-typehints~=2.1.6
 sphinxcontrib-programoutput>=0.17
-mock
-unittest
