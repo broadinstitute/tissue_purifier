@@ -223,8 +223,8 @@ class GeneRegression:
                         # l2 prior
                         beta_klg = pyro.sample("beta_cov", dist.Normal(loc=zero, scale=one / l2_regularization_strength))
                     else:
-                        # flat prior
-                        beta_klg = pyro.sample("beta_cov", dist.Uniform(low=-2*one, high=2*one))
+                        # no prior (note the mask statement. This will always give log_prob and kl_divergence =0)
+                        beta_klg = pyro.sample("beta_cov", dist.Normal(loc=0, scale=1).mask(False))
 
         with cell_plate as ind_n:
             cell_ids_sub_n = cell_type_ids_n[ind_n].to(device)
@@ -269,19 +269,15 @@ class GeneRegression:
         covariate_plate = pyro.plate("covariate", size=l_cov, dim=-2, device=device)
         gene_plate = pyro.plate("genes", size=g_genes, dim=-1, device=device, subsample_size=subsample_size_genes)
 
-        beta_param_loc_klg = pyro.param("beta", torch.zeros((k_cell_types, l_cov, g_genes), device=device))
+        beta_param_loc_klg = pyro.param("beta", 0.01 * torch.randn((k_cell_types, l_cov, g_genes), device=device))
 
         with gene_plate as ind_g:
             with cell_types_plate:
                 with covariate_plate:
                     if use_covariates:
-                        if l1_regularization_strength is None and l2_regularization_strength is None:
-                            beta_loc_tmp = (torch.sigmoid(beta_param_loc_klg[..., ind_g]) - 0.5) * 4.0
-                        else:
-                            beta_loc_tmp = beta_param_loc_klg[..., ind_g]
+                        beta_loc_tmp = beta_param_loc_klg[..., ind_g]
                     else:
                         beta_loc_tmp = torch.zeros_like(beta_param_loc_klg[..., ind_g])
-
                     beta_klg = pyro.sample("beta_cov", dist.Delta(v=beta_loc_tmp))
                     # assert beta_klg.shape == torch.Size([k_cell_types, l_cov, len(ind_g)])
 
@@ -338,6 +334,41 @@ class GeneRegression:
         self._optimizer_initial_state = ckpt["optimizer_initial_state"]
         self._loss_history = ckpt["loss_history"]
         self._train_kargs = ckpt["train_kargs"]
+
+    def partial_load_ckpt(self, filename: str, map_location=None):
+        """
+        Load the state of the model and optimizer from disk.
+        Except the parameter beta which will be generated from scratch as needed.
+        This is good if you want to start training from the checkpoint with no covariate (beta=0).
+        If you just use :math:`load_ckpt` beta will be set initially to zero and stochastic gradient updates will
+        never get it out of this "zero state".
+        """
+        with open(filename, "rb") as input_file:
+            ckpt = torch.load(input_file, map_location)
+
+        pyro.clear_param_store()
+        # manipulate ckpt["param_store"] before calling set_state
+        state = ckpt["param_store"]
+        print(state["params"].keys())
+        print(state["constraints"].keys())
+        assert False
+
+        pyro.get_param_store().set_state(ckpt["param_store"])
+        self._optimizer = ckpt["optimizer"]
+        self._optimizer.set_state(ckpt["optimizer_state"])
+        self._optimizer_initial_state = ckpt["optimizer_initial_state"]
+        self._loss_history = ckpt["loss_history"]
+        self._train_kargs = ckpt["train_kargs"]
+
+        state["params"].items():
+        self._params[param_name] = param
+        self._param_to_name[param] = param_name
+
+    for param_name, constraint in state["constraints"].items():
+
+
+        =filename_no_covariate, exclude_beta=True)
+
 
     def get_params(self) -> (pd.DataFrame, pd.DataFrame, pd.DataFrame):
         """
