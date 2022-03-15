@@ -673,7 +673,7 @@ class SparseImage:
             apply_transform: if True (defaults) the datamodule.test_trasform will be applied to the crops before
                 feeding them into the model.
                 If False no transformation is applied and the sparse tensors are fed into the model.
-            batch_size: how many crops to process simultaneously (default = 64)
+            batch_size: how many crops to process simultaneously (default = 64). Use to adjust the GPU memory footprint.
             n_patches_max: maximum number of patches generated to analyze the current picture (default = 100)
             overwrite: if the :attr:'feature_names' are already present in the patch_properties_dict,
                 this variable controls when to overwrite them.
