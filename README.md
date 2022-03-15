@@ -8,8 +8,8 @@
 </div>
 
 ```
- NOT YET AVAILABLE 
- [![Paper](http://img.shields.io/badge/paper-arxiv.1001.2234-B31B1B.svg)](https://NOT_YET_AVAILABLE.com/XXX)
+NOT YET AVAILABLE 
+[![Paper](http://img.shields.io/badge/paper-arxiv.1001.2234-B31B1B.svg)](https://NOT_YET_AVAILABLE.com/XXX)
 ```
 
 
