@@ -2,6 +2,7 @@ import os
 import sys
 import mock
 import sphinx_rtd_theme
+from unittest.mock import MagicMock
 
 dir_, _ = os.path.split(__file__)  # current directory of this file
 root_dir = os.path.abspath(os.path.join(dir_, '../../src'))
@@ -35,7 +36,6 @@ extensions = [
     "sphinx.ext.intersphinx",
     "sphinx.ext.mathjax",
     "sphinx.ext.viewcode",
-    "sphinx_search.extension",
     'sphinx.ext.napoleon',
     'sphinxarg.ext',
     'sphinx_autodoc_typehints',
@@ -61,11 +61,23 @@ napoleon_preprocess_types = False
 napoleon_type_aliases = None
 napoleon_attr_annotations = True
 
-MOCK_MODULES = ['numpy', 'pandas', 'torch', 'torch.distributions',
-                'torch.linalg', 'torch.nn.functional']
+MOCK_MODULES = [
+        'numpy', 
+        'pandas', 
+        'torch', 
+        'torch.distributions',
+        'anndata', 
+        'scanpy', 
+        'google', 
+        'torchvision']
+
+autodoc_mock_imports = MOCK_MODULES
+
+for mod_name in MOCK_MODULES:
+    sys.modules[mod_name] = MagicMock()
+
 for mod_name in MOCK_MODULES:
     sys.modules[mod_name] = mock.Mock()
-
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']

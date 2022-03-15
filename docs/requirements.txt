@@ -8,3 +8,4 @@ sphinx-argparse
 sphinx-autodoc-typehints>=1.17
 sphinxcontrib-programoutput>=0.17
 mock
+unittest
