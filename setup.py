@@ -19,7 +19,8 @@ except Exception as e:
 setup(
     name="tissue_purifier",
     version=__version__,
-    description="A Python library for the analysis of biological tissue and cellular micron-environments based on self supervised learning",
+    description="A Python library for the analysis of biological tissue and \
+    cellular micron-environments based on self supervised learning",
     long_description=long_description,
     long_description_content_type="text/markdown",
     packages=find_packages(where='src'),
