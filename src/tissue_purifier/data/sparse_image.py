@@ -873,6 +873,11 @@ class SparseImage:
                 result = tmp_result
             else:
                 raise ValueError("strategy can only be 'average' or 'closest'. Received {0}".format(strategy))
+
+            # check that the transfer operation has generated finite values
+            if not torch.all(torch.isfinite(result)):
+                raise ValueError("Error. The image_property {} is not finite".format(key))
+
             self.write_to_image_dictionary(key=key, values=result, overwrite=overwrite)
 
     def transfer_image_to_spot(
@@ -945,6 +950,11 @@ class SparseImage:
             interpolated_values = _interpolation(
                 image_quantity, x_pixel, y_pixel, strategy).cpu()
             assert len(interpolated_values.shape) == 2
+
+            # check that the transfer operation has generated finite values
+            if not torch.all(torch.isfinite(interpolated_values)):
+                raise ValueError("Error. The spot_property {} is not finite".format(key))
+
             self.write_to_spot_dictionary(key=key, values=interpolated_values.permute(dims=(1, 0)), overwrite=overwrite)
 
     def get_state_dict(self, include_anndata: bool = True) -> dict:
