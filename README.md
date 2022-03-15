@@ -147,11 +147,11 @@ Future improvements:
 This software package was developed by [Luca D'Alessio](dalessioluca@gmail.com) and 
 [Fedor Grab](grab.f@northeastern.edu ) 
 
-```
+<!---
 @article{YourName,
   title={Your Title},
   author={Your team},
   journal={Location},
   year={Year}
 }
-```   
+-->  
