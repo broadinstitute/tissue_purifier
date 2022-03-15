@@ -3,7 +3,7 @@
  
 # Tissue Purifier: A library per the analysis of biological tissues   
 
-[![Build Status](https://github.com/broadinstitute/millipede/workflows/CI/badge.svg)](https://github.com/broadinstitute/millipede/actions)
+[![Build Status](https://github.com/broadinstitute/millipede/workflows/CI/badge.svg)](https://github.com/broadinstitute/tissue_purifier/actions)
 [![Documentation Status](https://readthedocs.org/projects/tissue_purifier/badge/?version=latest)](https://tissue-purifier.readthedocs.io/en/latest/?badge=latest)
 </div>
 
