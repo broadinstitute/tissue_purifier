@@ -7,12 +7,6 @@
 [![Documentation Status](https://readthedocs.org/projects/tissue_purifier/badge/?version=latest)](https://tissue-purifier.readthedocs.io/en/latest/?badge=latest)
 </div>
 
-```
-NOT YET AVAILABLE 
-[![Paper](http://img.shields.io/badge/paper-arxiv.1001.2234-B31B1B.svg)](https://NOT_YET_AVAILABLE.com/XXX)
-```
-
-
 ## Description  
 *Tissue Purifier* is a library for the analysis of biological tissues in Python.
 It is built on [PyTorch](https://pytorch.org/), [Pyro](https://pyro.ai/) and 
