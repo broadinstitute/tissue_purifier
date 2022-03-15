@@ -347,7 +347,7 @@ class GeneRegression:
             ckpt = torch.load(input_file, map_location)
 
         pyro.clear_param_store()
-        # manipulate ckpt["param_store"] before calling set_state
+        # remove all mentions to "beta" from ckpt["param_store"] before calling set_state
         state = ckpt["param_store"]
         print(state["params"].keys())
         print(state["constraints"].keys())
@@ -359,16 +359,6 @@ class GeneRegression:
         self._optimizer_initial_state = ckpt["optimizer_initial_state"]
         self._loss_history = ckpt["loss_history"]
         self._train_kargs = ckpt["train_kargs"]
-
-        state["params"].items():
-        self._params[param_name] = param
-        self._param_to_name[param] = param_name
-
-    for param_name, constraint in state["constraints"].items():
-
-
-        =filename_no_covariate, exclude_beta=True)
-
 
     def get_params(self) -> (pd.DataFrame, pd.DataFrame, pd.DataFrame):
         """
