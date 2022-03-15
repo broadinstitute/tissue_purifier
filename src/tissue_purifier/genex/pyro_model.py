@@ -381,11 +381,11 @@ class GeneRegression:
         for k, v in pyro.get_param_store().items():
             mydict[k] = v.detach().cpu()
 
-        assert set(mydict.keys()) == {"beta0", "beta", "eps"}, \
+        assert set(mydict.keys()).issuperset({"beta0", "eps"}), \
             "Error. Unexpected parameter names {}".format(mydict.keys())
 
-        k_cell_types = mydict["beta"].shape[0]
-        len_genes = mydict["beta"].shape[-1]
+        k_cell_types = mydict["beta0"].shape[0]
+        len_genes = mydict["eps"].shape[-1]
         cell_types_names_kg = self._get_cell_type_names_kg(g=len_genes)
         gene_names_kg = self._get_gene_names_kg(k=k_cell_types)
 
@@ -398,19 +398,26 @@ class GeneRegression:
         assert mydict["beta0"].shape == torch.Size([k_cell_types, 1, len_genes]), \
             "Unexpected shape for beta0 {}".format(mydict["beta0"].shape)
 
-        # beta.shape = (cell_types, covariates, genes)
-        tmp_a, tmp_b, tmp_c = mydict["beta"].shape
-        assert tmp_a == k_cell_types and tmp_c == len_genes, \
-            "Unexpected shape for beta {}".format(mydict["beta"].shape)
+        # Create dataframe with beta_0 and beta (if present).
+        # Beta might not be there if you used partial_load_ckpt
+        if "beta" in set(mydict.keys()):
+            # beta.shape = (cell_types, covariates, genes)
+            tmp_a, tmp_b, tmp_c = mydict["beta"].shape
+            assert tmp_a == k_cell_types and tmp_c == len_genes, \
+                "Unexpected shape for beta {}".format(mydict["beta"].shape)
 
-        # Create dataframe
-        beta = mydict["beta"].permute(0, 2, 1)  # shape: (cell_types, genes, covariates)
-        columns = ["beta_{}".format(i+1) for i in range(beta.shape[-1])]
-        df = pd.DataFrame(beta.flatten(end_dim=-2).cpu().numpy(), columns=columns)
-        df["beta_0"] = mydict["beta0"].squeeze(dim=-2).flatten().cpu().numpy()
-        df["eps"] = mydict["eps"].squeeze(dim=-2).flatten().cpu().numpy()
+            beta = mydict["beta"].permute(0, 2, 1)  # shape: (cell_types, genes, covariates)
+            columns = ["beta_{}".format(i+1) for i in range(beta.shape[-1])]
+            df = pd.DataFrame(beta.flatten(end_dim=-2).cpu().numpy(), columns=columns)
+            df["beta_0"] = mydict["beta0"].squeeze(dim=-2).flatten().cpu().numpy()
+        else:
+            df = pd.DataFrame(mydict["beta0"].squeeze(dim=-2).flatten().cpu().numpy(), columns=["beta_0"])
+
+        # add all the rest to the dataframe
         df["cell_type"] = cell_types_names_kg.flatten()
         df["gene"] = gene_names_kg.flatten()
+        df["eps"] = mydict["eps"].squeeze(dim=-2).flatten().cpu().numpy()
+
         return df
 
     def show_loss(self, figsize: Tuple[float, float] = (4, 4), logx: bool = False, logy: bool = False, ax=None):
