@@ -19,7 +19,7 @@ except Exception as e:
 setup(
     name="tissue_purifier",
     version=__version__,
-    description="A library for the analysis of biological tissue in Python based on self supervised learning",
+    description="A Python library for the analysis of biological tissue and cellular micron-environments based on self supervised learning",
     long_description=long_description,
     long_description_content_type="text/markdown",
     packages=find_packages(where='src'),
@@ -28,8 +28,7 @@ setup(
     author="Luca Dalessio",
     author_email="dalessioluca@gmail.com",
     install_requires=[
-        "torch>=1.9",
-        "pandas",
+        "torch>=1.10",
     ],
     extras_require={
         "test": [
@@ -38,7 +37,7 @@ setup(
             "pytest>=5.0",
         ],
     },
-    python_requires=">=3.7.12",
+    python_requires=">=3.9",
     keywords="self supervised learning, tissue analysis",
     license="Apache 2.0",
     classifiers=[
@@ -47,6 +46,6 @@ setup(
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: POSIX :: Linux",
         "Operating System :: MacOS :: MacOS X",
-        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.9",
     ],
 )
