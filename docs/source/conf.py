@@ -6,6 +6,7 @@ dir_, _ = os.path.split(__file__)  # current directory of this file
 root_dir = os.path.abspath(os.path.join(dir_, '../../src'))
 sys.path.insert(0, root_dir)
 print(root_dir)
+os.environ["SPHINX_BUILD"] = "1"
 
 # -- Project information -----------------------------------------------------
 
