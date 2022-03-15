@@ -256,8 +256,6 @@ class GeneRegression:
                k_cell_types: int,
                use_covariates: bool,
                subsample_size_genes: int,
-               l1_regularization_strength: float,
-               l2_regularization_strength: float,
                **kargs):
 
         # Define the right device:
