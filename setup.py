@@ -28,7 +28,25 @@ setup(
     author="Luca Dalessio",
     author_email="dalessioluca@gmail.com",
     install_requires=[
+        "anndata>=0.8.0",
+        "leidenalg>=0.8.3",
+        "lightly==1.2.5",
+        "lightning_bolts==0.3.4",
+        "matplotlib==3.2.2",
+        "neptune_client==0.9.19",
+        "numpy~=1.19.2",
+        "pandas~=1.3.4",
+        "protobuf~=3.19.4",
+        "pyro_ppl>=1.8",
+        "python_igraph~=0.9.9",
+        "PyYAML~=6.0",
+        "scanpy>=1.8.2",
+        "scikit_learn~=1.0.2",
+        "scipy~=1.6.2",
+        "seaborn~=0.11.1",
         "torch>=1.10",
+        "torchvision==0.10.1",
+        "umap_learn==0.5.1"
     ],
     extras_require={
         "test": [
