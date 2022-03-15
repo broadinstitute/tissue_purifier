@@ -82,6 +82,14 @@ def make_gene_dataset_from_anndata(
         GeneDataset: a GeneDataset object
     """
 
+    def _to_torch(_x):
+        if isinstance(_x, torch.Tensor):
+            return _x.detach().cpu()
+        elif isinstance(_x, numpy.ndarray):
+            return torch.from_numpy(_x)
+        else:
+            raise Exception("Error. Expected torch.Tensor or numpy.array. Received {}".format(type(_x)))
+
     assert preprocess_strategy in {'center', 'z_score', 'raw'}, \
         'Preprocess strategy must be either "center", "z_score" or "raw"'
 
@@ -120,9 +128,9 @@ def make_gene_dataset_from_anndata(
         new_covariate = covariates_nl_raw
 
     return GeneDataset(
-        cell_type_ids=cell_type_ids_n.detach().cpu(),
-        covariates=new_covariate.detach().cpu(),
-        counts=counts_ng.detach().cpu(),
+        cell_type_ids=_to_torch(cell_type_ids_n),
+        covariates=_to_torch(new_covariate),
+        counts=_to_torch(counts_ng),
         k_cell_types=k_cell_types,
         cell_type_mapping=mapping_dict,
         gene_names=list(anndata.var_names),
