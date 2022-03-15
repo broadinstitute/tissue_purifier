@@ -346,14 +346,14 @@ class GeneRegression:
         with open(filename, "rb") as input_file:
             ckpt = torch.load(input_file, map_location)
 
+        # strategy: remove all mentions to "beta" from ckpt["param_store"] before calling set_state
         pyro.clear_param_store()
-        # remove all mentions to "beta" from ckpt["param_store"] before calling set_state
         state = ckpt["param_store"]
-        print(state["params"].keys())
-        print(state["constraints"].keys())
-        assert False
+        _ = state["params"].pop("beta")
+        _ = state["constraints"].pop("beta")
+        pyro.get_param_store().set_state(state)
 
-        pyro.get_param_store().set_state(ckpt["param_store"])
+        # normal loading
         self._optimizer = ckpt["optimizer"]
         self._optimizer.set_state(ckpt["optimizer_state"])
         self._optimizer_initial_state = ckpt["optimizer_initial_state"]
