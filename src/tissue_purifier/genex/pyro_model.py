@@ -414,7 +414,7 @@ class GeneRegression:
               eps_range: Tuple[float, float] = (1.0E-3, 1.0),
               subsample_size_cells: int = None,
               subsample_size_genes: int = None,
-              from_scratch: bool = True,
+              initialization_type: str = "scratch",
               **kargs
               ):
         """
@@ -433,8 +433,11 @@ class GeneRegression:
             eps_range: range of the possible values of the gene-specific noise. Must the a strictly positive range.
             subsample_size_genes: for large dataset, the minibatch can be created using a subset of genes.
             subsample_size_cells: for large dataset, the minibatch can be created using a subset of cells.
-            from_scratch: it True (defaults) the training starts from scratch. If False the training continues
-                from where it was left off. Useful for extending a previously started training.
+            initialization_type: Either "scratch", "pretrained" or "resume".
+                If "resume" both the model and optimizer state are kept and training restart from where it was left off.
+                If "pretrained" the model state is kept but the optimizer state is erased.
+                If "scratch" (default) both the model and optimizer state are erased (i.e. simulation start from
+                scratch).
             kargs: unused parameters
 
         Note:
@@ -442,11 +445,21 @@ class GeneRegression:
             and :attr:`subsample_size_genes`.
         """
 
-        if from_scratch:
+        if initialization_type == "scratch":
+            print("training from scratch")
             pyro.clear_param_store()
             self._loss_history = []
             assert self.optimizer is not None, "Optimizer is not specified. Call configure_optimizer first."
             self.optimizer.set_state(self._optimizer_initial_state)
+        elif initialization_type == "pretrained":
+            print("training from pretrained model")
+            self._loss_history = []
+            assert self.optimizer is not None, "Optimizer is not specified. Call configure_optimizer first."
+            self.optimizer.set_state(self._optimizer_initial_state)
+        elif initialization_type == "resume":
+            print("extending previous training")
+        else:
+            raise ValueError("Expected 'scratch' or 'pretrained' or 'resume'. Received {}".format(initialization_type))
         steps_completed = len(self._loss_history)
 
         # check validity
@@ -653,7 +666,7 @@ class GeneRegression:
             dataset=dataset,
             n_steps=n_steps,
             print_frequency=print_frequency,
-            from_scratch=False,
+            initialization_type="resume",
             **self._train_kargs)
 
     def train_and_test(
@@ -669,7 +682,7 @@ class GeneRegression:
             eps_range: Tuple[float, float] = (1.0E-3, 1.0),
             subsample_size_cells: int = None,
             subsample_size_genes: int = None,
-            from_scratch: bool = True) -> (pd.DataFrame, pd.DataFrame, pd.DataFrame, torch.Tensor):
+            initialization_type: str = "scratch") -> (pd.DataFrame, pd.DataFrame):
         """
         Utility method which sequentially calls the methods :meth:`train` and :meth:`predict`.
 
@@ -687,8 +700,11 @@ class GeneRegression:
             eps_range: range of the possible values of the gene-specific noise. Must the a strictly positive range.
             subsample_size_genes: for large dataset, the minibatch can be created using a subset of genes.
             subsample_size_cells: for large dataset, the minibatch can be created using a subset of cells.
-            from_scratch: it True (defaults) the training starts from scratch. If False the training continues
-                from where it was left off. Useful for extending a previously started training.
+            initialization_type: Either "scratch", "pretrained" or "resume".
+                If "resume" both the model and optimizer state are kept and training restart from where it was left off.
+                If "pretrained" the model state is kept but the optimizer state is erased.
+                If "scratch" (default) both the model and optimizer state are erased (i.e. simulation start from
+                scratch).
 
         Returns:
             See :meth:`predict`.
@@ -704,7 +720,7 @@ class GeneRegression:
             eps_range=eps_range,
             subsample_size_cells=subsample_size_cells,
             subsample_size_genes=subsample_size_genes,
-            from_scratch=from_scratch)
+            initialization_type=initialization_type)
 
         print("training completed")
 
@@ -720,7 +736,7 @@ class GeneRegression:
             test_dataset: GeneDataset,
             test_num_samples: int = 10,
             train_steps: int = 2500,
-            train_print_frequency: int = 50) -> (pd.DataFrame, pd.DataFrame, pd.DataFrame, torch.Tensor):
+            train_print_frequency: int = 50) -> (pd.DataFrame, pd.DataFrame):
         """
         Utility method which sequentially calls the methods :meth:`extend_train` and :meth:`predict`.
 
