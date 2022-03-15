@@ -24,9 +24,9 @@ def plot_gene_hist(cell_types_n, value1_ng, value2_ng=None, bins=20) -> plt.Figu
         else:
             raise Exception("Expected torch.tensor or numpy.ndarray. Received {0}".format(type(_x)))
 
-    use
-    fig, ax = plt.subplots(figsize=(12, 6))
-    _ = seaborn.histplot(data=df, x="eps", hue="cell_type", bins=200, ax=ax, multiple="dodge")
+    # TODO: use seaborn instead
+    #   fig, ax = plt.subplots(figsize=(12, 6))
+    #   _ = seaborn.histplot(data=df, x="eps", hue="cell_type", bins=200, ax=ax, multiple="dodge")
 
     raise NotImplementedError
     value2_ng = value1_ng if value2_ng is None else value2_ng

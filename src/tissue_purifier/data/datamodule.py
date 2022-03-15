@@ -1,9 +1,9 @@
-import pytorch_lightning as pl
-
+from __future__ import annotations
 from argparse import ArgumentParser
 from argparse import Action as ArgparseAction
 import numpy
 import os.path
+from pytorch_lightning import LightningDataModule
 from anndata import read_h5ad
 from typing import Dict, Callable, Optional, Tuple, List, Iterable, Any
 import torch
@@ -36,6 +36,7 @@ from .dataset import (
     CropperTensor,
 )
 
+
 # SparseTensor can not be used in dataloader using num_workers > 0.
 # See https://github.com/pytorch/pytorch/issues/20248
 # Therefore I put the dataset in GPU and use num_workers = 0.
@@ -50,7 +51,7 @@ class ParseDict(ArgparseAction):
             getattr(namespace, self.dest)[key] = value
 
 
-class SslDM(pl.LightningDataModule):
+class SslDM(LightningDataModule):
     """
     Base class to inherit from to make a DataModule which can be used with any
     Self Supervised Learning framework

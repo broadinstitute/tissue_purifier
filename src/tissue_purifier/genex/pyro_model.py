@@ -1,4 +1,4 @@
-from typing import Tuple, Optional, Union, List
+from typing import Tuple, Union, List
 import torch
 import numpy
 import pyro
