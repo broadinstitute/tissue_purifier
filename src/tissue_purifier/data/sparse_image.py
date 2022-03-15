@@ -898,6 +898,9 @@ class SparseImage:
             strategy: str, either 'closest' or 'bilinear' (default). This described the interpolation method.
         """
         def _interpolation(data_to_interpolate, x_float, y_float, _strategy):
+
+            print("Entering _interpolation", torch.all(torch.isfinite(data_to_interpolate)))
+
             if _strategy == 'closest':
                 ix_long, iy_long = torch.round(x_float).long(), torch.round(y_float).long()
                 return data_to_interpolate[..., ix_long, iy_long]
@@ -921,7 +924,9 @@ class SparseImage:
 
                 den = ((x2 - x1) * (y2 - y1)).float()
 
-                return (w11 * f11 + w12 * f12 + w21 * f21 + w22 * f22) / den
+                result = (w11 * f11 + w12 * f12 + w21 * f21 + w22 * f22) / den
+                print("Leaving _interpolation", torch.all(torch.isfinite(result)))
+                return result
 
         assert strategy == 'bilinear' or strategy == 'closest', "Invalid interpolation_method \
         Expected 'bilinear' or 'closest'. Received {0}. ".format(strategy)
