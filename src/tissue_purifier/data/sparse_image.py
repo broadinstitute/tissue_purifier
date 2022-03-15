@@ -899,10 +899,6 @@ class SparseImage:
         """
         def _interpolation(data_to_interpolate, x_float, y_float, _strategy):
 
-            print("Entering _interpolation", torch.all(torch.isfinite(data_to_interpolate)))
-            print("x_float", x_float)
-            print("y_float", y_float)
-
             if _strategy == 'closest':
                 ix_long, iy_long = torch.round(x_float).long(), torch.round(y_float).long()
                 return data_to_interpolate[..., ix_long, iy_long]
@@ -911,9 +907,9 @@ class SparseImage:
 
                 # compute the coordinates of the four corners
                 x1 = torch.floor(x_float).long()
-                x2 = torch.ceil(x_float).long()
                 y1 = torch.floor(y_float).long()
-                y2 = torch.ceil(y_float).long()
+                x2 = x1 + 1
+                y2 = y1 + 1
 
                 # evaluate the function to interpolate at the four corner
                 f11 = data_to_interpolate[..., x1, y1]
@@ -927,14 +923,12 @@ class SparseImage:
                 w21 = (x_float - x1) * (y2 - y_float)
                 w22 = (x_float - x1) * (y_float - y1)
 
-                # actual interpolation
-                num = (w11 * f11 + w12 * f12 + w21 * f21 + w22 * f22)
-                den = ((x2 - x1) * (y2 - y1)).float()
-                print("Debug num", torch.all(torch.isfinite(num)))
-                print("Debug den", torch.all(torch.isfinite(den)), torch.any(den == 0.0))
-
-                result = num / den
-                print("Leaving _interpolation bilinear", torch.all(torch.isfinite(result)))
+                # actual interpolation formula.
+                # In our case den is identically 1.0 therefore I can save some calculation
+                # num = (w11 * f11 + w12 * f12 + w21 * f21 + w22 * f22)
+                # den = ((x2 - x1) * (y2 - y1)).float()
+                # result = num / den
+                result = (w11 * f11 + w12 * f12 + w21 * f21 + w22 * f22)
                 return result
 
         assert strategy == 'bilinear' or strategy == 'closest', "Invalid interpolation_method \
