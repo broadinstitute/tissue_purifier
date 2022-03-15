@@ -1,11 +1,13 @@
 ---
 <div align="center">    
  
-# Tissue Purifier: A library per the analysis of biological tissues   
+# Tissue Purifier: A Python library per the analysis of biological tissues   
 
-[![Build Status](https://github.com/broadinstitute/millipede/workflows/CI/badge.svg)](https://github.com/broadinstitute/tissue_purifier/actions)
 [![Documentation Status](https://readthedocs.org/projects/tissue_purifier/badge/?version=latest)](https://tissue-purifier.readthedocs.io/en/latest/?badge=latest)
 </div>
+
+![kandisky_slideseq_strip](https://user-images.githubusercontent.com/40577552/158437614-22c41921-b6c1-4097-8db4-1c7f301457a3.jpeg)
+
 
 ## Description  
 *Tissue Purifier* is a library for the analysis of biological tissues in Python.
