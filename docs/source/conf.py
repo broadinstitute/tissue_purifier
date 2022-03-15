@@ -56,6 +56,8 @@ napoleon_preprocess_types = False
 napoleon_type_aliases = None
 napoleon_attr_annotations = True
 
+# Make the return section behave like the args section
+napoleon_custom_sections = [('Returns', 'params_style')]
 
 PACKAGE_MAPPING = {
     "pyro-ppl": "pyro",
