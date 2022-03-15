@@ -224,7 +224,7 @@ class GeneRegression:
                         beta_klg = pyro.sample("beta_cov", dist.Normal(loc=zero, scale=one / l2_regularization_strength))
                     else:
                         # flat prior
-                        beta_klg = pyro.sample("beta_cov", dist.Uniform(low=-one, high=one))
+                        beta_klg = pyro.sample("beta_cov", dist.Uniform(low=-2*one, high=2*one))
 
         with cell_plate as ind_n:
             cell_ids_sub_n = cell_type_ids_n[ind_n].to(device)
@@ -256,6 +256,8 @@ class GeneRegression:
                k_cell_types: int,
                use_covariates: bool,
                subsample_size_genes: int,
+               l1_regularization_strength: float,
+               l2_regularization_strength: float,
                **kargs):
 
         # Define the right device:
@@ -273,9 +275,13 @@ class GeneRegression:
             with cell_types_plate:
                 with covariate_plate:
                     if use_covariates:
-                        beta_loc_tmp = beta_param_loc_klg[..., ind_g]
+                        if l1_regularization_strength is None and l2_regularization_strength is None:
+                            beta_loc_tmp = (torch.sigmoid(beta_param_loc_klg[..., ind_g]) - 0.5) * 4.0
+                        else:
+                            beta_loc_tmp = beta_param_loc_klg[..., ind_g]
                     else:
                         beta_loc_tmp = torch.zeros_like(beta_param_loc_klg[..., ind_g])
+
                     beta_klg = pyro.sample("beta_cov", dist.Delta(v=beta_loc_tmp))
                     # assert beta_klg.shape == torch.Size([k_cell_types, l_cov, len(ind_g)])
 
