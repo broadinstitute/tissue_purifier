@@ -289,13 +289,31 @@ class GeneRegression:
         assert self._optimizer is not None, "Optimizer is not specified. Call configure_optimizer first."
         return self._optimizer
 
-    def configure_optimizer(self, optimizer_type: str = 'adam', lr: float = 5E-3):
-        """ Configure the optimizer to use. For now only adam is implemented. """
-        if optimizer_type == 'adam':
-            self._optimizer = pyro.optim.Adam({"lr": lr})
-        else:
-            raise NotImplementedError
+    def configure_optimizer(self,
+                            optimizer_type: str = 'adam',
+                            lr: float = 5E-3,
+                            betas: Tuple[float, float] = (0.9, 0.999),
+                            momentum: float = 0.9,
+                            alpha: float = 0.99):
+        """
+        Configure the optimizer to use.
 
+        Args:
+            optimizer_type: Either 'adam' (default), 'sgd' or 'rmsprop'
+            lr: learning rate
+            betas: betas for 'adam' optimizer. Ignored if :attr:`optimizer_type` is not 'adam'.
+            momentum: momentum for 'sgd' optimizer. Ignored if :attr:`optimizer_type` is not 'sgd'.
+            alpha: alpha for 'rmsprop' optimizer. Ignored if :attr:`optimizer_type` is not 'rmsprop'.
+        """
+        if optimizer_type == 'adam':
+            self._optimizer = pyro.optim.Adam({"lr": lr, "betas": betas})
+        elif optimizer_type == 'sgd':
+            self._optimizer = pyro.optim.SGD({"lr": lr, "momentum": momentum})
+        elif optimizer_type == 'rmsprop':
+            self._optimizer = pyro.optim.RMSprop({"lr": lr, "alpha": alpha})
+        else:
+            raise ValueError("optimizer_type should be either 'adam', 'sgd' or 'rmsprop'. \
+                              Received {}".format(optimizer_type))
         self._optimizer_initial_state = self._optimizer.get_state()
 
     def save_ckpt(self, filename: str):
