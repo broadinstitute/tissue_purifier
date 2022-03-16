@@ -2,7 +2,9 @@ Gene regression
 ===============
 This set of classes/functions can be used to predict the gene expression profile
 based on:
+
 1. the cell-type and
+
 2. cell-specific covariates (such as location in space and local micro-environment).
 
 The intended use case is to test whether the semantic features
