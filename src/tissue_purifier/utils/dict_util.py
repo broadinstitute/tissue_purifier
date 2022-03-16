@@ -23,7 +23,7 @@ def are_dicts_equal(
         keys_to_exclude: list of keys to exclude. If None (defaults) no keys are excluded.
 
     Returns:
-        bool if all the entries corresponding to :attr:'key_to_include' are identical.
+        result: True if all the entries corresponding to :attr:'keys_to_include' are identical.
 
     Note:
         float(1.0) if considered different from int(1)
@@ -73,8 +73,8 @@ def transfer_annotations_between_dict(
         metric: str = 'euclidean',) -> dict:
     """
     Transfer the annotations from the source dictionary to the destination dictionary.
-    For each element in the destination dictionary it find the closests element in the source dictionary and copies
-    the annotations from there. Closeness is defined as the metric distance between the anchor_element.
+    For each element in the destination dictionary it findis the closests element in the source dictionary and copies
+    the annotations from there. Closeness is defined as the metric distance between the anchor_elements.
 
     Args:
         source_dict: source dictionary from which the annotations will be read
@@ -86,7 +86,7 @@ def transfer_annotations_between_dict(
             It defaults to 'euclidian'.
 
     Returns:
-        The updated destination dictionary
+        dict: The updated destination dictionary
     """
     assert set(annotation_keys).issubset(set(source_dict.keys())), \
         "Some annotation_keys are missing in the source dictionary. {0} vs {1}".format(set(annotation_keys),
@@ -128,7 +128,13 @@ def transfer_annotations_between_dict(
 
 
 def inspect_dict(d, prefix: str = ''):
-    """ Inspect the content of the dictionary """
+    """
+    Inspect the content of the dictionary
+
+    Args:
+        d: the dictionary to inspect
+        prefix: used recursively in case of nested dictionary. Do not set it directly.
+    """
     for k, v in d.items():
         if isinstance(v, list):
             print(prefix, k, type(v), len(v))
@@ -144,6 +150,18 @@ def inspect_dict(d, prefix: str = ''):
 
 
 def subset_dict(input_dict: dict, mask: torch.Tensor):
+    """
+    Subset all the elements of a dictionary according to a mask
+
+    Args:
+        input_dict: dictionary with multiple entries in the form of list, numpy.arrau or torch.Tensors
+            with the same leading dimensions, `(N)`
+        mask: boolean tensor of shape `(N)`.
+
+    Returns:
+        output_dict: a new dictionary with the subset values
+    """
+
     assert mask.dtype == torch.bool
     new_dict = dict()
     for k, v in input_dict.items():
@@ -162,18 +180,23 @@ def subset_dict_non_overlapping_patches(
         key_patch_xywh: str = "patches_xywh",
         iom_threshold: float = 0.0) -> dict:
     """
-    Subset a dictionary with patch properties to set of non-overlapping patches.
+    Subset a dictionary containing overlapping patches to a smaller dictionary containing only
+    (weakly) overlapping ones.
 
     Args:
         input_dict: the dictionary to subset.
         key_tissue: the dictionary key corresponding to the tissue identifier.
-        key_patch_xywh: the dictionary key corresponding to the xywh coordinate of the patches.
+        key_patch_xywh: the dictionary key corresponding to the coordinates (i.e. x,y,w,h) of the patches.
         iom_threshold: Threshold value for Intersection Over Minimum (IoM).
-            If two patches have IoM > threshold only one will survive the filtering process.
-            Set :attr:'iom_threshold' = 0 to have a collection of non-overlapping patches.
+            If two patches have :math:`\\text{IoM} > \\text{threshold}` only one will survive
+            the filtering process.
+            Set :attr:'iom_threshold' = 0 to have a collection of strictly non-overlapping patches.
 
     Returns:
-         A dictionary containing only patches overlapping < threshold. The original dictionary is not overwritten.
+        output_dict: Dictionary containing only patches with overlap less than threshold.
+
+    Note:
+        The original dictionary will NOT be overwritten.
     """
 
     assert key_tissue in input_dict.keys(), \
@@ -190,16 +213,37 @@ def subset_dict_non_overlapping_patches(
     return subset_dict(input_dict=input_dict, mask=nms_mask_n)
 
 
-def flatten_dict(dd, separator='_', prefix=''):
-    """ Flatten a (nested) dictionary """
+def flatten_dict(input_dict: dict, separator: str = '_', prefix: str = ''):
+    """ Flatten a (possibly nested) dictionary
+
+    Args:
+        input_dict: the input dictionary to flatten
+        separator: string used to merge nested keys. It defaults to "_"
+        prefix: used in the recursive calls. Do not set manually
+    """
     return {prefix + separator + k if prefix else k: v
-            for kk, vv in dd.items()
+            for kk, vv in input_dict.items()
             for k, v in flatten_dict(vv, separator, kk).items()
-            } if isinstance(dd, dict) else {prefix: dd}
+            } if isinstance(input_dict, dict) else {prefix: input_dict}
 
 
 def sort_dict_according_to_indices(input_dict: dict, list_of_indices: List[int]) -> dict:
-    """ Sort dictionaries w.r.t. a list of indices """
+    """
+    Sort dictionaries w.r.t. a list of indices.
+
+    Args:
+        input_dict: the dictionary to sort
+        list_of_indices: the indices to use in the sorting.
+
+    Returns:
+        output_dict: the sorted dictionary.
+
+    Example:
+         >>> input_dict = {'key': ['b', 'c', 'a']}
+         >>> list_of_indices = [3, 1, 2]
+         >>> output_dict = sort_dict_according_to_indices(input_dict, list_of_indices)
+         >>> print(output_dict) # will be a,b,c
+    """
     sorted_dict = {}
     for k, v in input_dict.items():
         if isinstance(v, torch.Tensor):
@@ -219,8 +263,16 @@ def sort_dict_according_to_indices(input_dict: dict, list_of_indices: List[int])
     return sorted_dict
 
 
-def concatenate_list_of_dict(list_of_dict):
-    """ Concatenate dictionary with the same set of keys """
+def concatenate_list_of_dict(list_of_dict) -> dict:
+    """
+    Concatenate dictionary with the same set of keys
+
+    Args:
+        list_of_dict: list of dictionary to concatenate
+
+    Returns:
+        output_dict: the concatenated dictionary
+    """
     # check that all dictionaries have the same set of keys
     for i in range(len(list_of_dict)-1):
         keys1 = set(list_of_dict[i].keys())

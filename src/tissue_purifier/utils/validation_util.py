@@ -49,30 +49,31 @@ def get_percentile(data: Union[torch.Tensor, numpy.ndarray], dim: int) -> Union[
         return percentile
 
 
-def inverse_one_hot(_image, bg_label: int = -1, dim: int = -3, threshold: float = 0.1):
+def inverse_one_hot(image_in, bg_label: int = -1, dim: int = -3, threshold: float = 0.1):
     """
     Takes float tensor and compute the argmax and max_value along the specified dimension.
-    Returns a integer tensor of the same shape as the input_tensor but with the dim removed.
+    Returns a integer tensor of the same shape as the input_tensor but with the :attr:`dim` removed.
     If the max_value is less than the threshold the bg_label is assigned.
 
-    For example. It can take an image of size (ch, w, h) and generate an integer mask of size (w, h).
-    This operation can be thought as the inverse of the one-hot operation which takes an integer tensor of size (*)
-    and returns a float tensor with an extra dimension, for example (*, num_classes).
+    Note:
+        It can take an image of size :math:`(C, W, H)` and generate an integer mask
+        of size :math:`(W, H)`.
+        This operation can be thought as the inverse of the one-hot operation which takes an integer tensor of size (*)
+        and returns a float tensor with an extra dimension, for example (*, num_classes).
 
     Args:
-        _image: any float tensor
+        image_in: any float tensor
         bg_label: integer, the value assigned to the entries of which are smaller than the threshold
         dim: int, the dimension along which to compute the max.
             For images this is usually the channel dimension, i.e. -3.
         threshold: float, the value of the threshold. Value smaller than this are set assigned to the background
 
     Returns:
-        An integer mask with the same size of the input tensor but with the dim removed.
-
+        out: An integer mask with the same size of the input tensor but with the dim removed.
     """
     assert isinstance(bg_label, int), "Error. bg_label must be an integer. Received {0}".format(bg_label)
 
-    _values, _indices = torch.max(_image, dim=dim)
+    _values, _indices = torch.max(image_in, dim=dim)
     _mask_bg = (_values < threshold)
     _indices[_mask_bg] = bg_label
     return _indices.long()
@@ -99,13 +100,14 @@ def compute_distance_embedding(ref_embeddings: torch.Tensor,
                                temperature: float = 0.5) -> torch.Tensor:
     """ Compute distance between embeddings
         Args:
-            ref_embeddings: torch.Tensor of shape (*, k) where k is the dimension of the embedding
-            other_embeddings: torch.Tensor of shape (n, k)
+            ref_embeddings: torch.Tensor of shape :math:`(*, k)` where `k`
+                is the dimension of the embedding
+            other_embeddings: torch.Tensor of shape :math:`(n, k)`
             temperature: float, the temperature used to compute contrastive distance
             metric: Can be either 'contrastive' or 'euclidean'
 
         Returns:
-            distance of shape (*, n)
+            dist: distance of shape :math:`(*, n)`
     """
     assert ref_embeddings.shape[-1] == other_embeddings.shape[-1]
     assert len(other_embeddings.shape) == 2
@@ -136,7 +138,7 @@ def compute_distance_embedding(ref_embeddings: torch.Tensor,
 
 
 class SmartUmap(UMAP):
-    """ Return the UMAP embeddings. """
+    """ Wrapper around standard UMAP with :meth:`get_graph` exposed. """
 
     def __init__(self,
                  preprocess_strategy: str,
@@ -194,6 +196,12 @@ class SmartUmap(UMAP):
         return std, mean
 
     def fit(self, data, y=None) -> "SmartUmap":
+        """
+        Fit the Umap given the data
+
+        Args:
+            data: array of shape :math:`(n, p)` where `n` are the points and `p` the features
+        """
         assert y is None
         if isinstance(data, numpy.ndarray):
             data_new = torch.tensor(data).clone().float()
@@ -210,6 +218,10 @@ class SmartUmap(UMAP):
     def transform(self, data) -> numpy.ndarray:
         """
         Use previously fitted model (including mean and std for centering and scaling the data).
+        to transform the embeddings.
+
+        Args:
+            data: array of shape :math:`(n, p)` to transfrom
 
         Returns:
             embeddings: numpy.tensor of shape (n_sample, n_components)
@@ -234,16 +246,22 @@ class SmartUmap(UMAP):
         return embeddings
 
     def fit_transform(self, data, y=None) -> numpy.ndarray:
+        """ Utility method which internally calls :meth:`fit` and :meth:`transform` """
         self.fit(data)
         return self.transform(data)
 
 
 class SmartLeiden:
+    """
+    Wrapper around standard Leiden algorithm.
+    It can be initialized using the output of the :class:`SmartUmap.get_graph()`
+    """
+
     def __init__(self, graph: "coo_matrix", directed: bool = True):
         """
         Args:
             graph: Usually a sparse matrix with the similarities among nodes describing the graph
-            directed: bool, if True it build a directed graph.
+            directed: if True (default) builds a directed graph.
 
         Note:
             The matrix obtained by the UMAP algorithm is symmetric, in that case directed should be set to True
@@ -263,6 +281,20 @@ class SmartLeiden:
                 random_state: int = 0,
                 n_iterations: int = -1,
                 partition_type: str = 'RBC') -> numpy.ndarray:
+        """
+        Find the clusters in the data
+
+        Args:
+            resolution: resolution parameter controlling (indirectly) the number of clusters
+            use_weights: if True (defaults) the graph is weighted, i.e. the edges have different strengths
+            random_state: control the random state. For reproducibility
+            n_iterations: how many iterations of the greedy algorithm to perform.
+                If -1 (defaults) it iterates till convergence.
+            partition_type: The metric to optimize to find clusters. Either 'CPM' or 'RBC'. :
+
+        Returns:
+            labels: the integer cluster labels
+        """
 
         partition_kwargs = {
             'resolution_parameter': resolution,
@@ -286,13 +318,14 @@ class SmartLeiden:
 
 
 class SmartPca:
-    """ Return the PCA embeddings. """
+    """ Return the PCA embeddings.  """
 
     def __init__(self,
                  preprocess_strategy: str):
         """
         Args:
-            preprocess_strategy: str, can be 'center', 'z_score', 'raw'. This is the operation to perform before PCA
+            preprocess_strategy: str, can be 'center', 'z_score', 'raw'.
+                This is the operation to perform before PCA
         """
 
         assert preprocess_strategy == 'z_score' or \
@@ -352,6 +385,13 @@ class SmartPca:
             Received {1}".format(p, n_components))
 
     def fit(self, data) -> "SmartPca":
+        """
+        Fit the PCA given the data.
+        It automatically select the algorithm based on the number of features.
+
+        Args:
+            data: array of shape :math:`(n, p)` where `n` are the points and `p` the features
+        """
         if isinstance(data, numpy.ndarray):
             data_new = torch.tensor(data).clone().float()
         else:
@@ -401,8 +441,10 @@ class SmartPca:
 
     def transform(self, data, n_components: Union[int, float] = None) -> numpy.ndarray:
         """
+        Use a previously fitted model to transform the data.
+
         Args:
-            data: tensor of shape (n, p)
+            data: tensor of shape :math:`(n, p)` where `n` is the number of points and `p` are the features
             n_components: If integer specifies the dimensionality of the data after PCA. If float in (0, 1)
                 it auto selects the dimensionality so that the explained variance is at least that value.
                 If none it uses the previously used value.
@@ -427,38 +469,42 @@ class SmartPca:
 
     def fit_transform(self, data, n_components: Union[int, float] = None) -> numpy.ndarray:
         """
+        Utility method which internally calls :meth:`fit` and :meth:`transform`.
+
         Args:
-            data: tensor of shape (n, p)
+            data: tensor of shape :math:`(n, p)`
             n_components: If integer specifies the dimensionality of the data after PCA. If float in (0, 1)
                 it auto selects the dimensionality so that the explained variance is at least that value.
                 If none (defaults) uses the value previously used.
 
         Returns:
-            data_transformed: array of shape (n, q)
+            data_transformed: array of shape :math:`(n, q)`
         """
         self.fit(data)
         return self.transform(data, n_components)
 
 
 class SmartScaler:
-    """ Scale the values using the median and quantiles (with are robust version of mean and variance).
-        If clamp=True, each feature is clamped to the quantile range before applying the transformation.
-        This is a simple way to deal with the outliers.
+    """
+    Scale the values using the median and quantiles (with are robust version of mean and variance).
+    :math:`data = (data - median) / scale`
 
-        It does not deal with the situation in which outliers are inside the acceptable range
-        but very off the reduced manifold as the situation shown below:
-                     x  x
-                x  x
-           x  x        x
-        x x
+    If clamp=True, each feature is clamped to the quantile range before applying the transformation.
+    This is a simple way to deal with the outliers.
+
+    It does not deal with the situation in which outliers are inside the "box" of acceptable range
+    but far from the reduced manifold. See situation shown below:
+                 x  x
+            x x
+       x x         o
+    x x
     """
 
     def __init__(self, quantiles: Tuple[float, float], clamp: bool):
         """
         Args:
-            quantiles: Tuple[float, float]. The lowest and largest quantile used to scale the data.
-                Must be in (0.0, 1.0)
-            clamp: bool. If True, the data is clamped into q_low, q_high before scaling.
+            quantiles: The lowest and largest quantile used to scale the data. Must be in (0.0, 1.0)
+            clamp: If True, the data is clamped into q_low, q_high before scaling.
         """
 
         # Inputs
@@ -479,6 +525,7 @@ class SmartScaler:
         return qs[0], qs[1], median
 
     def fit(self, data) -> "SmartScaler":
+        """ Fit the data (i.e. computes quantiles and median) """
         if isinstance(data, numpy.ndarray):
             data = torch.tensor(data).clone().float()
         else:
@@ -504,8 +551,13 @@ class SmartScaler:
 
     def transform(self, data) -> numpy.ndarray:
         """
+        Transform the data
+
         Args:
-            data: tensor of shape (n, p)
+            data: tensor of shape :math:`(n, p)`
+
+        Returns:
+            out: tensor of the same shape as :attr:`data` with the scaled values.
         """
         assert self._fitted, "Scaler is not fitted. Cal 'fit' or 'fit_transform' first."
 
@@ -520,9 +572,6 @@ class SmartScaler:
         return self._apply_scaling(data_new).cpu().numpy()
 
     def fit_transform(self, data) -> numpy.ndarray:
-        """
-        Args:
-            data: tensor of shape (n, p)
-        """
+        """ Utility method which internally calls :meth:`fit` and :meth:`transform` """
         self.fit(data)
         return self.transform(data)
