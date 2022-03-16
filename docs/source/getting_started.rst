@@ -4,7 +4,8 @@ Getting Started
 What is Tissue Purifier?
 ------------------------
 
-*Tissue Purifier* is a library for the analysis of biological tissues in Python.
+*Tissue Purifier* is Python library for the analysis of biological tissue and
+cellular micro-environments based on self supervised learning.
 It is built on `PyTorch <https://pytorch.org/>`_,
 `PytorchLightning <https://www.pytorchlightning.ai/>`_,
 `Pyro <https://pyro.ai/>`_ and
@@ -44,8 +45,8 @@ should be able to extract biological relevant features useful in solving downstr
 
 Negative results are also interesting because
 they suggest that the task at hand *can not* be solved based on
-tissue structure alone (cell-type label and spatial coordinates).
-In this cases more information (for example histopathology imaging) might be necessary to define
+cellular co-arrangement alone (i.e. cell-type labels and spatial coordinates).
+In the latter case, more information (for example histopathology imaging) might be necessary to define
 the tissue micro-environments.
 
 
@@ -60,9 +61,9 @@ A typical workflow consists of 3 steps:
    are converted to (sparse) images. These images are cropped into overlapping patches of a characteristic
    length and are fed into a ssl framework.
    Importantly, in this step the model has no access to the gene expression profile. 
-   It only uses the cell-type labels together with theies spatial coordinates to create a multi-channel image
+   It only uses the cell-type labels together with their spatial coordinates to create a multi-channel image
    (in which each channel encodes the density of a specific cell-type). Therefore, the model can only leverage the 
-   cells co-expression (sometimes referred to as a micro-environment) as a learning signal. 
+   cellular co-arrangement as a learning signal.
    See `notebook1 <https://github.com/broadinstitute/tissue_purifier/blob/main/notebooks/notebook1.ipynb>`_.
 
 2. Once a model is trained, any (new or old) anndata object can be processed.
@@ -188,7 +189,9 @@ Finally, evaluate the features based on their ability to predict the gene expres
 
 It might make sense to train your model remotely on google cloud (or another cloud provider)
 using `Terra <https://terra.bio>`_ or `cromwell <https://cromwell.readthedocs.io/en/stable/>`_.
-For example you can submit a run as follow:
+and `cromshell <https://github.com/broadinstitute/cromshell>`_.
+After installing cromshell and connecting to a cromwell server,
+you can submit a run as follow:
 
 .. code-block::
 
@@ -215,23 +218,25 @@ Features:
 
 Current limitations:
 
-1. *Tissue Purifier* works only with 2D tissue slices. No 3D support at the moment
+1. *Tissue Purifier* works only with 2D tissue slices. No 3D support at the moment.
+
 2. *Tissue Purifier* assumes a hard cell-type assignment.
 
 Future Improvements
 -------------------
-Support for:
+We hope to soon support:
+
 1. probabilistic cell-type assignment
+
 2. pairing with histopathology (i.e. dense-image)
-3. Extension to handle 3D images and
 
-
+3. Extension to handle 3D images
 
 Contributing
 ------------
-We aspire to make TissuePurifier an easy-to-use, robust, and accurate software package for the bioinformatics community.
-While we test and improve TissuePurifier together with our research collaborators, your feedback is invaluable to us
-and allow us to steer TissuePurifier in the direction that you find most useful in your research.
+We aspire to make *Tissue Purifier* an easy-to-use and useful software package for the bioinformatics community.
+While we test and improve *Tissue Purifier* together with our research collaborators, your feedback is invaluable to us
+and allow us to steer *Tissue Purifier* in the direction that you find most useful in your research.
 If you have an interesting idea or suggestion, please do not hesitate to reach out to us.
 
 If you encounter a bug, please file a detailed github `issue <https://github.com/broadinstitute/tissue_purifier/issues>`_
