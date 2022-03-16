@@ -1,6 +1,6 @@
 import os
 import sys
-# import sphinx_rtd_theme
+import sphinx_rtd_theme
 
 sys.path.insert(0, os.path.abspath('../../src'))
 os.environ["SPHINX_BUILD"] = "1"
@@ -9,7 +9,7 @@ os.environ["SPHINX_BUILD"] = "1"
 
 project = u"TissuePurifier"
 copyright = u""
-author = u"Luca Dalessio"
+author = u"Luca Dalessio and Fedor Grab"
 
 version = ""
 
@@ -108,7 +108,7 @@ exclude_patterns = [
 ]
 
 # The name of the Pygments (syntax highlighting) style to use.
-# pygments_style = "sphinx"
+pygments_style = "sphinx"
 
 # do not prepend module name to functions
 add_module_names = False
@@ -118,7 +118,7 @@ nbsphinx_prolog = ""
 
 # -- Options for HTML output -------------------------------------------------
 html_theme = "sphinx_rtd_theme"  # "alabaster" #"sphinx_rtd_theme"
-html_static_path = [ ]  # "_static"]
-#html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
-#html_style = "css/tissuepurifier.css"
-#htmlhelp_basename = "tissuepurifierdoc"
+html_static_path = ["_static"]
+html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
+html_style = "css/tissuepurifier.css"
+htmlhelp_basename = "tissuepurifierdoc"
