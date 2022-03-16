@@ -7,10 +7,10 @@ Tissue Purifier: A python library for the analysis of biological tissues
   :align: center
 
 .. image:: https://readthedocs.org/projects/tissue-purifier/badge/?version=latest
-   :width: 100
-   :alt: documentation_status
-   :align: center
-   :target: https://tissue-purifier.readthedocs.io/en/latest/?badge=latest
+  :width: 100
+  :alt: documentation_status
+  :align: center
+  :target: https://tissue-purifier.readthedocs.io/en/latest/?badge=latest
    
 Description
 -----------
