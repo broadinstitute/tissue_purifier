@@ -15,6 +15,9 @@ Tissue Purifier: A python library for the analysis of biological tissues
 Description
 -----------
 
+..
+   BELOW HERE YOU CAN COPY THE CONTENT OF getting_started.rst FROM THE DOCUMENTATION
+
 *Tissue Purifier* is Python library for the analysis of biological tissue and
 cellular micro-environments based on self supervised learning.
 It is built on `PyTorch <https://pytorch.org/>`_,
