@@ -337,7 +337,8 @@ class GeneRegression:
         self._loss_history = ckpt["loss_history"]
         self._train_kargs = ckpt["train_kargs"]
 
-    def remove_from_param_store(self, beta0: bool=False, beta: bool=False, eps: bool=False):
+    @staticmethod
+    def remove_params(beta0: bool = False, beta: bool = False, eps: bool = False):
         """
         Selectively remove parameters from param_store.
 
