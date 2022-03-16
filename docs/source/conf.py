@@ -136,12 +136,12 @@ add_module_names = False
 nbsphinx_prolog = ""
 
 # -- Options for HTML output -------------------------------------------------
-if on_rtd:
-    html_theme = 'default'
-else:
-    html_theme = "sphinx_rtd_theme"
-    html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
-    html_static_path = [] #["_static"]
-    html_style = "css/tissuepurifier.css"
+###if on_rtd:
+###    html_theme = 'default'
+###else:
+###    html_theme = "sphinx_rtd_theme"
+###    html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
+###    html_static_path = [] #["_static"]
+###    html_style = "css/tissuepurifier.css"
 
 htmlhelp_basename = "tissuepurifierdoc"
