@@ -188,7 +188,7 @@ class GeneRegression:
                total_umi_n: torch.Tensor,
                covariates_nl: torch.Tensor,
                cell_type_ids_n: torch.Tensor,
-               beta0_kg_init: torch.Tensor,
+               beta0_g_init: torch.Tensor,
                eps_range: Tuple[float, float],
                l1_regularization_strength: float,
                l2_regularization_strength: float,
@@ -214,7 +214,7 @@ class GeneRegression:
                                                              upper_bound=eps_range[1]))
 
         # Figure out a reasonable initialization for beta0_kg
-        beta0_k1g = pyro.param("beta0", beta0_kg_init.unsqueeze(dim=1).to(device))
+        beta0_k1g = pyro.param("beta0", beta0_g_init[None, None].expand_as(eps_k1g).to(device))
 
         with gene_plate:
             with cell_types_plate:
@@ -337,30 +337,43 @@ class GeneRegression:
         self._loss_history = ckpt["loss_history"]
         self._train_kargs = ckpt["train_kargs"]
 
-    def partial_load_ckpt(self, filename: str, map_location=None):
+    def remove_from_param_store(self, beta0: bool=False, beta: bool=False, eps: bool=False):
         """
-        Load the state of the model and optimizer from disk.
-        Except the parameter beta which will be generated from scratch as needed.
-        This is good if you want to start training from the checkpoint with no covariate (beta=0).
-        If you just use :math:`load_ckpt` beta will be set initially to zero and stochastic gradient updates will
-        never get it out of this "zero state".
+        Selectively remove parameters from param_store.
+
+        Args:
+            beta0: If True (defaults is False) remove :attr:`beta0` of shape :math:`(N, G)` from the param_store
+            beta: If True (defaults is False) remove :attr:`beta` of shape :math:`(N, L, G)` from the param_store
+            eps: If True (defaults is False) remove :attr:`eps` of shape :math:`(N, G)` from the param_store
+
+        Note:
+            This is useful in combination with :meth:`load_ckpt` and :meth:`train`.
+            For example you might have fitted a model with `l1` covariate and wanting to try a different
+            model with `l2` covariate. You can load the previous ckpt and remove :attr:`beta`
+            while keeping :attr:`beta0` and :attr:`eps` (which do not depend on the number of covariate)
+
+        Example:
+             >>> gr.load_ckpt("ckpt_with_l1_covariate.pt")
+             >>> gr.remove_from_param_store(beta=True)
+             >>> gr.train(dataset=dataset_with_l2_covariate, initialization_type="pretrained")
         """
-        with open(filename, "rb") as input_file:
-            ckpt = torch.load(input_file, map_location)
+        if ~beta0 and ~beta and ~eps:
+            raise ValueError("At least one attributes should be true otherwise there is nothing to do")
 
-        # strategy: remove all mentions to "beta" from ckpt["param_store"] before calling set_state
-        pyro.clear_param_store()
-        state = ckpt["param_store"]
-        _ = state["params"].pop("beta")
-        _ = state["constraints"].pop("beta")
-        pyro.get_param_store().set_state(state)
+        param_store = pyro.get_param_store()
+        assert set(param_store.keys()).issubset({"beta0", "beta", "eps"})
 
-        # normal loading
-        self._optimizer = ckpt["optimizer"]
-        self._optimizer.set_state(ckpt["optimizer_state"])
-        self._optimizer_initial_state = ckpt["optimizer_initial_state"]
-        self._loss_history = ckpt["loss_history"]
-        self._train_kargs = ckpt["train_kargs"]
+        if beta0:
+            _ = param_store["params"].pop("beta0")
+            _ = param_store["constraints"].pop("beta0")
+
+        if beta:
+            _ = param_store["params"].pop("beta")
+            _ = param_store["constraints"].pop("beta")
+
+        if eps:
+            _ = param_store["params"].pop("eps")
+            _ = param_store["constraints"].pop("eps")
 
     def get_params(self) -> (pd.DataFrame, pd.DataFrame, pd.DataFrame):
         """
@@ -532,27 +545,25 @@ class GeneRegression:
         # make a copy so that can edit train_kargs without changing _train_kargs
         self._train_kargs = train_kargs.copy()
 
-        # Unpack the dataset and run the SVI
+        # Unpack the dataset
         counts_ng = dataset.counts.long()
         cell_type_ids = dataset.cell_type_ids.long()
-        total_umi_n = counts_ng.sum(dim=-1).cpu()
+        total_umi_n = counts_ng.sum(dim=-1)
 
+        # Figure out a good initialization for beta0 based on: counts = total_umi * beta0.exp()
+        fraction_ng = counts_ng / total_umi_n.view(-1, 1)
+        beta0_g_init = fraction_ng.mean(dim=0).log()
+
+        # Prepare arguments for training
         train_kargs["n_cells"] = counts_ng.shape[0]
         train_kargs["g_genes"] = counts_ng.shape[1]
         train_kargs["l_cov"] = dataset.covariates.shape[-1]
         train_kargs["k_cell_types"] = dataset.k_cell_types
         train_kargs["counts_ng"] = counts_ng.cpu()
-        train_kargs["total_umi_n"] = total_umi_n
+        train_kargs["total_umi_n"] = total_umi_n.cpu()
         train_kargs["covariates_nl"] = dataset.covariates.float().cpu()
         train_kargs["cell_type_ids_n"] = cell_type_ids
-
-        # Figure out a good initialization for beta0 based on this relation (which is true on average)
-        # c_av_kg = n_av_kg * beta0_kg.exp()
-        beta0_ng_exp = counts_ng / total_umi_n.view(-1, 1)
-        beta0_kg_init = torch.zeros((dataset.k_cell_types, counts_ng.shape[-1]))
-        for k in range(dataset.k_cell_types):
-            beta0_kg_init[k] = beta0_ng_exp[cell_type_ids == k].mean(dim=0).log()
-        train_kargs["beta0_kg_init"] = beta0_kg_init
+        train_kargs["beta0_g_init"] = beta0_g_init.cpu()
 
         start_time = time.time()
         svi = SVI(self._model, self._guide, self.optimizer, loss=Trace_ELBO())
