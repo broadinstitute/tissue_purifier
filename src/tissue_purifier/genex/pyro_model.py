@@ -554,6 +554,7 @@ class GeneRegression:
         # Figure out a good initialization for beta0 based on: counts = total_umi * beta0.exp()
         fraction_ng = counts_ng / total_umi_n.view(-1, 1)
         beta0_g_init = fraction_ng.mean(dim=0).log()
+        print("DEBUG beta0_g_init", beta0_g_init.min(), beta0_g_init.median(), beta0_g_init.max())
 
         # Prepare arguments for training
         train_kargs["n_cells"] = counts_ng.shape[0]
