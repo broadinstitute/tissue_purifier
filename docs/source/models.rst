@@ -37,19 +37,15 @@ is responsible for the validation (which is common to all ssl models) and loggin
 .. autoclass:: tissue_purifier.models.ssl_models._ssl_base_model.SslModelBase
 
 .. autoclass:: tissue_purifier.models.ssl_models.barlow.BarlowModel
-   :show-inheritance:
    :members: add_specific_args, get_default_params
 
 .. autoclass:: tissue_purifier.models.ssl_models.dino.DinoModel
-   :show-inheritance:
    :members: add_specific_args, get_default_params
 
 .. autoclass:: tissue_purifier.models.ssl_models.simclr.SimclrModel
-   :show-inheritance:
    :members: add_specific_args, get_default_params
 
 .. autoclass:: tissue_purifier.models.ssl_models.vae.VaeModel
-   :show-inheritance:
    :members: add_specific_args, get_default_params
 
 
