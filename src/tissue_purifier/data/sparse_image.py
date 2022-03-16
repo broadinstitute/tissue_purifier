@@ -35,10 +35,9 @@ class SparseImage:
         padding: int = 10,
         patch_properties_dict: dict = None,
         image_properties_dict: dict = None,
-        anndata: AnnData = None,
-    ):
+        anndata: AnnData = None):
         """
-        The user can initialize a SparseImage using this constructor or the :method:'from_anndata'.
+        The user can initialize a SparseImage using this constructor or the :meth:`from_anndata`.
 
         Args:
             spot_properties_dict: the dictionary with the spot properties (at the minimum x,y,category)
@@ -309,7 +308,8 @@ class SparseImage:
             y_pixel: tensor of arbitrary shape with the x_index of the pixels
 
         Returns:
-            Tuple with the raw coordinates (x_raw and y_raw). They have the same shape as inputs.
+            x_raw: tensor with the x_coordinates in raw unit. It has the same shape as input.
+            y_raw: tensor with the y_coordinates in raw unit. It has the same shape as input.
         """
         x_raw = x_pixel * self._pixel_size + self.origin[0]
         y_raw = y_pixel * self._pixel_size + self.origin[1]
@@ -328,30 +328,32 @@ class SparseImage:
             y_raw: tensor of arbitrary shape with the y_raw coordinates
 
         Returns:
-            Tuple with the pixel coordinates (x_pixel and y_pixel). They have the same shape as inputs.
+            x_pixel: tensor with the x_coordinates in pixel unit. It has the same shape as input.
+            y_pixel: tensor with the y_coordinates in pixel unit. It has the same shape as input.
         """
         x_pixel = (x_raw - self.origin[0]) / self._pixel_size
         y_pixel = (y_raw - self.origin[1]) / self._pixel_size
         return x_pixel, y_pixel
 
     @property
-    def anndata(self):
-        """ Return the anndata object """
+    def anndata(self) -> AnnData:
+        """ The anndata object used to create th:w
+        e image. Might be None. """
         return self._anndata
 
     @property
     def x_raw(self) -> numpy.ndarray:
-        """ Extract the x_coordinates from the original data and return them as numpy tensor. """
+        """ The x_coordinates (in raw units) of the spots used to create the sparse image """
         return numpy.asarray(self._spot_properties_dict[self._x_key])
 
     @property
     def y_raw(self) -> numpy.ndarray:
-        """ Extract the y_coordinates from the original data and return them as numpy tensor. """
+        """ The y_coordinates (in raw units) of the spots used to create the sparse image """
         return numpy.asarray(self._spot_properties_dict[self._y_key])
 
     @property
     def cat_raw(self) -> numpy.ndarray:
-        """ Extract the category for the original data and return them as numpy tensor. """
+        """ The categorical labels (gene-identities or cell-identities) from the original data """
         return numpy.asarray(self._spot_properties_dict[self._cat_key])
 
     @property
@@ -427,9 +429,12 @@ class SparseImage:
 
     def to_dense(self) -> torch.Tensor:
         """
-        Create a dense torch tensor of shape (channel, width, height)
+        Create a dense torch tensor of shape :math:`(C, W, H)`
         where the number of channels is equal to the number of categories of
         the underlying spatial data.
+
+        Returns:
+            dense_img: A dense representation of the sparse image
 
         Note:
             This will convert the sparse array into a dense array and might
@@ -447,7 +452,7 @@ class SparseImage:
                show_colorbar: bool = True,
                contrast: float = 1.0) -> (torch.Tensor, plt.Figure):
         """
-        Make a 3 channel RGB image. Returns tensor and matplotlig figure.
+        Make a 3 channel RGB image.
 
         Args:
             spot_size: size of sigma of gaussian kernel for rendering the spots
@@ -458,8 +463,8 @@ class SparseImage:
                 It does not affect the returned tensor. It changes only the way to figure is displayed.
 
         Returns:
-            A torch.Tensor of size (3, width, height) with the rgb rendering of the image
-            and a matplotlib figure.
+            dense_img: A torch.Tensor of size :math:`(3, W, H)` with the rgb rendering of the image
+            fig: matplotlib figure.
         """
 
         def _make_kernel(_sigma: float):
@@ -542,7 +547,9 @@ class SparseImage:
         Wrapper around :class:`tissue_purifier.dataset.CropperSparseTensor`.
 
         Returns:
-            Three lists with crops, x_locations, y_locations of each crop.
+            sp_img: list of crops represented as sparse torch Tensor
+            x_list: list with the x coordinates of the bottom left corners of the crops
+            y_list: list with the y coordinates of the bottom left corners of the crops
         """
         return CropperSparseTensor(strategy=strategy,
                                    n_crops=n_crops,
@@ -560,8 +567,8 @@ class SparseImage:
         Wrapper around :class:`tissue_purifier.models.patch_analyzer.SpatialAutocorrelation`.
 
         Returns:
-            torch.tensor of shape C with the Moran's I score for each channels (i.e. how one channel is
-            mixed with all the others)
+            score: array of shape `C` with the Moran's I score for each channels (i.e. how one channel is
+                mixed with all the others)
         """
         return SpatialAutocorrelation(modality='moran',
                                       n_neighbours=n_neighbours,
@@ -577,8 +584,8 @@ class SparseImage:
         Wrapper around :class:`tissue_purifier.models.patch_analyzer.SpatialAutocorrelation`.
 
         Returns:
-            torch.tensor of shape C with the Gready score for each channels (i.e. how one channel is
-            mixed with all the others)
+            score: array of shape `C` with the Gready's score for each channels (i.e. how one channel is
+                mixed with all the others)
         """
         return SpatialAutocorrelation(modality='gready',
                                       n_neighbours=n_neighbours,
@@ -677,12 +684,14 @@ class SparseImage:
             n_patches_max: maximum number of patches generated to analyze the current picture (default = 100)
             overwrite: if the :attr:'feature_names' are already present in the patch_properties_dict,
                 this variable controls when to overwrite them.
-            return_crops: if True the model returns a (batched) torch.Tensor of shape (n_patches_max, ch, w, h)
-                with all the crops which were fed to the model. Default is False.
+            return_crops: if True the model returns a (batched) torch.Tensor of shape
+                :math:`(\\text{n_patches_max}, c, w, h)` with all the crops which were fed to the model.
+                Default is False.
 
         Returns:
-            if :attr:`return_crops` is False returns None.
-            else return a (batched) torch.Tensor of shape (n_patches_max, ch, w, h)
+            patches: If :attr:`return_crops` is True returns tensor of shape
+                :math:`(N, C, W, H)` with all the crops which were cropped and analyzed.
+                Else returns None.
         """
 
         if feature_name in self._patch_properties_dict.keys() and not overwrite:
@@ -967,13 +976,13 @@ class SparseImage:
 
     def get_state_dict(self, include_anndata: bool = True) -> dict:
         """
-        Return the dictionary with the state of the system
+        Get a dictionary with the state of the system
 
         Args:
-             include_anndata: If True (default) the anndata is included
+            include_anndata: If True (default) the anndata is included
 
         Returns:
-            A dictionary with the state
+            state_dict: A dictionary with the state
         """
         state_dict = {
             'padding': self._padding,
@@ -993,6 +1002,9 @@ class SparseImage:
     def from_state_dict(cls, state_dict: dict) -> SparseImage:
         """
         Create a sparse image from the state_dictionary which was obtained by the :meth:`get_state_dict`
+
+        Returns:
+            sp_img: A sparse_image instance
 
         Example:
             >>> state_dict_v1 = sparse_image_old.get_state_dict(include_anndata=True)
@@ -1037,7 +1049,7 @@ class SparseImage:
             padding: int, padding of the image so that the image has a bit of black around it
 
         Returns:
-            The sparse image object
+            sp_img: A sparse image instance
 
         Examples:
             >>> # create an AnnData object and a sparse image from it
@@ -1050,7 +1062,9 @@ class SparseImage:
             >>>     y_key="spatial",
             >>>     category_key="cell_type",
             >>>     categories_to_channels=categories_to_channels)
-            >>>
+
+         Examples:
+            >>> # create an AnnData object and a sparse image from it
             >>> anndata = AnnDatae(obs={"gene": gene, "x": gene_location_x, "y": gene_location_y})
             >>> sparse_image = SparseImage.from_anndata(
             >>>     anndata=anndata,

@@ -308,7 +308,7 @@ class SparseSslDM(SslDM):
         return self._n_local_crops
 
     @property
-    def cropper_test(self):
+    def cropper_test(self) -> CropperSparseTensor:
         """ Cropper to be used at test time. This specify the cropping strategy to use at test time. """
         return CropperSparseTensor(
             strategy='random',
@@ -319,7 +319,7 @@ class SparseSslDM(SslDM):
         )
 
     @property
-    def cropper_train(self):
+    def cropper_train(self) -> CropperSparseTensor:
         """ Cropper to be used at train time. This specify the cropping strategy to use at train time. """
         return CropperSparseTensor(
             strategy='random',
@@ -330,7 +330,7 @@ class SparseSslDM(SslDM):
         )
 
     @property
-    def trsfm_test(self) -> Callable:
+    def trsfm_test(self) -> TransformForList:
         """ Transformation to be applied at test time. This specify the data-augmentation at test time. """
         return TransformForList(
             transform_before_stack=torchvision.transforms.Compose([
@@ -345,7 +345,7 @@ class SparseSslDM(SslDM):
         )
 
     @property
-    def trsfm_train_global(self) -> Callable:
+    def trsfm_train_global(self) -> TransformForList:
         """
         Global Transformation to be applied at train time.
         This specify the data augmentation for the global crops.
@@ -377,7 +377,7 @@ class SparseSslDM(SslDM):
         )
 
     @property
-    def trsfm_train_local(self) -> Callable:
+    def trsfm_train_local(self) -> TransformForList:
         """
         Local Transformation to be applied at train time. This specify the data augmentation for the local crops.
         Used by Dino only.
@@ -600,7 +600,7 @@ class AnndataFolderDM(SparseSslDM):
         return numpy.max(list(self._categories_to_channels.values())) + 1
 
     def anndata_to_sparseimage(self, anndata: AnnData):
-        """ Method which converts a anndata object to :class:`SparseImage`. """
+        """ Converts a anndata object to :class:`SparseImage`. """
         return SparseImage.from_anndata(
             anndata=anndata,
             x_key=self._x_key,

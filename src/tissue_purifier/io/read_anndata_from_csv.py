@@ -15,11 +15,11 @@ def anndata_from_expression_csv(filename: str, key: str, transpose: bool, top_n_
     Read a csv file with the expression data (i.e. count matrix) and returns an anndata object.
     To be used when your collaborators give you a .csv file instead of a .h5ad file.
 
-    If transpose == False:
+    If :attr:`transpose == False`:
     The csv is expected to have a header: 'barcode', 'gene_name_1', ..., 'gene_name_N'.
     Each entry is expected to be something-like:  ACCDAT, 2, 0, ...., 1
 
-    If Transpose == True:
+    If :attr:`transpose == True`:
     The csv is expected to have a header: 'gene', 'barcode_name_1', ..., 'barcode_name_N'.
     Each entry is expected to be something-like: Arhgap18, 2, 0, ...., 1
 
@@ -34,10 +34,9 @@ def anndata_from_expression_csv(filename: str, key: str, transpose: bool, top_n_
         The output will always be cell_by_gene (i.e. cells=obs, genes=var) regardless the value of :attr:`transpose`
 
     Returns:
-        An anndata object with:
-        anndata.X the counts in a scipy Compressed Sparse Row format
-        anndata.obs the observation name (often the barcodes)
-        anndata.var the variable names (often the gene names)
+        adata: An anndata object with (i) anndata.X the counts in a scipy Compressed Sparse Row format
+            (ii) anndata.obs the observation name (often the cellular barcodes)
+            (iii) anndata.var the variable names (often the gene names)
     """
 
     def read_top_n_rows(_filename, _n_rows):
