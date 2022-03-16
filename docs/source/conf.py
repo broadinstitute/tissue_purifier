@@ -6,7 +6,11 @@ dir_, _ = os.path.split(__file__)  # current directory of this file
 root_dir = os.path.abspath(os.path.join(dir_, '../../src'))
 sys.path.insert(0, root_dir)
 print(root_dir)
-os.environ["SPHINX_BUILD"] = "1"
+
+on_rtd = os.environ.get('READTHEDOCS') == 'True'
+
+
+
 
 # -- Project information -----------------------------------------------------
 
@@ -30,7 +34,9 @@ release = version
 needs_sphinx = '4.0.3'
 
 extensions = [
+    'nbsphinx',
     'sphinx.ext.autodoc',
+    'sphinx.ext.doctest',
     'sphinx.ext.napoleon',
     'sphinx.ext.mathjax',
     'sphinx.ext.viewcode',
@@ -130,8 +136,12 @@ add_module_names = False
 nbsphinx_prolog = ""
 
 # -- Options for HTML output -------------------------------------------------
-html_theme = "sphinx_rtd_theme"
-html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
-html_static_path = [] #["_static"]
-html_style = "css/tissuepurifier.css"
+if on_rtd:
+    html_theme = 'default'
+else:
+    html_theme = "sphinx_rtd_theme"
+    html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
+    html_static_path = [] #["_static"]
+    html_style = "css/tissuepurifier.css"
+
 htmlhelp_basename = "tissuepurifierdoc"
