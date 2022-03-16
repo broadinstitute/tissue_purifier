@@ -1,8 +1,17 @@
-Getting Started
-===============
+Tissue Purifier: A python library for the analysis of biological tissues
+========================================================================
 
-What is Tissue Purifier?
-------------------------
+.. image:: https://github.com/broadinstitute/tissue_purifier/blob/master/docs/source/_static/kandisky_slideseq_strip.jpeg/filename.png
+  :width: 400
+  :alt: tissue_purifier_logo
+
+
+[[Documentation Status](https://readthedocs.org/projects/tissue_purifier/badge/?version=latest)](https://tissue-purifier.readthedocs.io/en/latest/?badge=latest)
+
+
+
+Description
+-----------
 
 *Tissue Purifier* is Python library for the analysis of biological tissue and
 cellular micro-environments based on self supervised learning.
