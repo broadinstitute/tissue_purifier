@@ -1,7 +1,7 @@
 Tissue Purifier: A python library for the analysis of biological tissues
 ========================================================================
 
-.. image:: https://github.com/broadinstitute/tissue_purifier/blob/master/docs/source/_static/kandisky_slideseq_strip.jpeg/filename.png
+.. image:: https://github.com/broadinstitute/tissue_purifier/blob/master/docs/source/_static/kandisky_slideseq_strip.jpeg
   :width: 400
   :alt: tissue_purifier_logo
 
