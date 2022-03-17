@@ -376,6 +376,9 @@ class GeneRegression:
             raise ValueError("At least one attributes should be true otherwise there is nothing to do")
 
         param_store = pyro.get_param_store()
+
+        print(param_store)
+
         assert set(param_store.keys()).issubset({"beta0", "beta", "eps"})
 
         if beta0:
