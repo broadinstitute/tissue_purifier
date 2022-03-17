@@ -372,7 +372,7 @@ class GeneRegression:
              >>> gr.remove_from_param_store(beta=True)
              >>> gr.train(dataset=dataset_with_l2_covariate, initialization_type="pretrained")
         """
-        if ~beta0 and ~beta and ~eps:
+        if (not beta0) and (not beta) and (not eps):
             raise ValueError("At least one attributes should be true otherwise there is nothing to do")
 
         param_store = pyro.get_param_store()
