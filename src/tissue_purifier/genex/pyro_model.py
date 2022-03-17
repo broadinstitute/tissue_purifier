@@ -375,23 +375,12 @@ class GeneRegression:
         if (not beta0) and (not beta) and (not eps):
             raise ValueError("At least one attributes should be true otherwise there is nothing to do")
 
-        param_store = pyro.get_param_store()
-
-        print(param_store)
-
-        assert set(param_store.keys()).issubset({"beta0", "beta", "eps"})
-
         if beta0:
-            _ = param_store["params"].pop("beta0")
-            _ = param_store["constraints"].pop("beta0")
-
+            pyro.get_param_store().__delitem__("beta0")
         if beta:
-            _ = param_store["params"].pop("beta")
-            _ = param_store["constraints"].pop("beta")
-
+            pyro.get_param_store().__delitem__("beta")
         if eps:
-            _ = param_store["params"].pop("eps")
-            _ = param_store["constraints"].pop("eps")
+            pyro.get_param_store().__delitem__("eps")
 
     def get_params(self) -> (pd.DataFrame, pd.DataFrame, pd.DataFrame):
         """
