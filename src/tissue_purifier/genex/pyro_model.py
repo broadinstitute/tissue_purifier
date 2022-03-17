@@ -199,12 +199,10 @@ class GeneRegression:
         # Define the right device:
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         one = torch.ones(1, device=device)
-        zero = torch.zeros(1, device=device)
 
         # Define the plates (i.e. conditional independence). It make sense to subsample only gene and cells.
         cell_plate = pyro.plate("cells", size=n_cells, dim=-3, device=device, subsample_size=subsample_size_cells)
         cell_types_plate = pyro.plate("cell_types", size=k_cell_types, dim=-3, device=device)
-        covariate_plate = pyro.plate("covariate", size=l_cov, dim=-2, device=device)
         gene_plate = pyro.plate("genes", size=g_genes, dim=-1, device=device, subsample_size=subsample_size_genes)
 
         eps_k1g = pyro.param("eps",
@@ -218,16 +216,19 @@ class GeneRegression:
 
         with gene_plate:
             with cell_types_plate:
-                with covariate_plate:
-                    if l1_regularization_strength is not None:
-                        # l1 prior
-                        beta_klg = pyro.sample("beta_cov", dist.Laplace(loc=0, scale=one / l1_regularization_strength))
-                    elif l2_regularization_strength is not None:
-                        # l2 prior
-                        beta_klg = pyro.sample("beta_cov", dist.Normal(loc=zero, scale=one / l2_regularization_strength))
-                    else:
-                        # no prior (note the mask statement. This will always give log_prob and kl_divergence =0)
-                        beta_klg = pyro.sample("beta_cov", dist.Normal(loc=0, scale=0.1).mask(False))
+                if l1_regularization_strength is not None:
+                    # l1 prior
+                    mydist = dist.Laplace(loc=0, scale=one / l1_regularization_strength)
+                elif l2_regularization_strength is not None:
+                    # l2 prior
+                    mydist = dist.Normal(loc=0, scale=one / l2_regularization_strength)
+                else:
+                    # no prior (note the mask statement. This will always give log_prob and kl_divergence =0)
+                    mydist = dist.Normal(loc=0, scale=0.1).mask(False)
+
+                beta_klg = pyro.sample("beta_cov", mydist.expand([k_cell_types, l_cov, g_genes]))
+                assert beta_klg.shape == torch.Size([k_cell_types, l_cov, g_genes]), \
+                    "Received {}".format(beta_klg.shape)
 
         with cell_plate as ind_n:
             cell_ids_sub_n = cell_type_ids_n[ind_n].to(device)
@@ -265,23 +266,18 @@ class GeneRegression:
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
         # Define the gene and cell plates. It make sense to subsample only gene and cells.
-        # cell_plate = pyro.plate("cells", size=n, dim=-3, device=device, subsample_size=subsample_size_cells)
         cell_types_plate = pyro.plate("cell_types", size=k_cell_types, dim=-3, device=device)
-        covariate_plate = pyro.plate("covariate", size=l_cov, dim=-2, device=device)
         gene_plate = pyro.plate("genes", size=g_genes, dim=-1, device=device, subsample_size=subsample_size_genes)
 
         beta_param_loc_klg = pyro.param("beta", 0.1 * torch.randn((k_cell_types, l_cov, g_genes), device=device))
 
         with gene_plate as ind_g:
             with cell_types_plate:
-                with covariate_plate:
-
-                    if use_covariates:
-                        beta_loc_tmp = beta_param_loc_klg[..., ind_g]
-                    else:
-                        beta_loc_tmp = torch.zeros_like(beta_param_loc_klg[..., ind_g])
-
-                    pyro.sample("beta_cov", dist.Delta(v=beta_loc_tmp))
+                if use_covariates:
+                    beta_loc_tmp = beta_param_loc_klg[..., ind_g]
+                else:
+                    beta_loc_tmp = torch.zeros_like(beta_param_loc_klg[..., ind_g])
+                pyro.sample("beta_cov", dist.Delta(v=beta_loc_tmp))
 
     @property
     def optimizer(self) -> pyro.optim.PyroOptim:
