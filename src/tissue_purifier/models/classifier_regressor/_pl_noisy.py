@@ -414,6 +414,7 @@ class BetaMixture1D(object):
         if reset:
             self.reset_param()
 
+        x = x.cpu().numpy()
         x = np.copy(x)
         self.empirical_loss = x  # store the value which have been used to fit the model
 
