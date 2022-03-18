@@ -336,9 +336,29 @@ class SparseImage:
         return x_pixel, y_pixel
 
     @property
+    def category_to_channels(self) -> dict:
+        """ The mapping between categories and channels in the image. """
+        return self._categories_to_codes
+
+    @property
+    def channels_to_category(self) -> numpy.ndarray:
+        """
+        The mapping between channels in the image and categories.
+        Note that a channel can represent more than one category.
+        For example CD+ and CD- cells can both be shown in channel 7.
+        In that case channels_to_category[7] -> "CD+_CD-".
+        """
+        list_tmp = [None]*self.shape[-3]
+        for cat, ch in self._categories_to_codes.items():
+            if list_tmp[ch] is None:
+                list_tmp[ch] = str(cat)
+            else:
+                list_tmp[ch] = "{}_{}".format(list_tmp[ch], str(cat))
+        return numpy.array(list_tmp)
+
+    @property
     def anndata(self) -> AnnData:
-        """ The anndata object used to create th:w
-        e image. Might be None. """
+        """ The anndata object used to create the image. Might be None. """
         return self._anndata
 
     @property
