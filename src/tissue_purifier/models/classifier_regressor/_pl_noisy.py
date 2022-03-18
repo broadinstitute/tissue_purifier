@@ -152,7 +152,7 @@ class PlMlpNoisy(LightningModule):
         batch_losses = (batch_losses - self.bmm_model_minLoss) / (self.bmm_model_maxLoss - self.bmm_model_minLoss)
         batch_losses.clamp_(min=1E-4, max=1.0-1E-4)
         assignment_prob = self.bmm_model.look_lookup(batch_losses)  # shape N with values in (0, 1)
-        return torch.Tensor(assignment_prob, device=log_prob.device).float()  # shape N
+        return torch.from_numpy(assignment_prob).to(device=log_prob.device).float()  # shape N
 
     @staticmethod
     def kl_between_class_distributions(empirical_hist):
