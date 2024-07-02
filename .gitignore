@@ -16,3 +16,7 @@ submit/main.py
 **/.DS_Store
 **/.egg
 **/__pycache__
+**/.sh
+**/.ckpt
+**/.neptune/*
+**/notebooks/*_temp.ipynb

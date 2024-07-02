@@ -2,8 +2,9 @@ from typing import Dict, Tuple
 from torch.nn import functional as F
 import torch
 from argparse import ArgumentParser
-from pytorch_lightning.utilities.distributed import sync_ddp_if_available  # wrapper around torch.distributed.all_reduce
-from neptune.new.types import File
+# from pytorch_lightning.utilities.distributed import sync_ddp_if_available  # wrapper around torch.distributed.all_reduce
+import torch.distributed as dist
+from neptune.types import File
 from ._ssl_base_model import SslModelBase
 from ._resnet_backbone import (
     make_vae_decoder_backbone_from_scratch,
@@ -194,6 +195,7 @@ class VaeModel(SslModelBase):
 
             # validation
             val_iomin_threshold: float = 0.0,
+            run_classify_regress: bool = False,
             **kwargs,
             ):
         """
@@ -224,7 +226,7 @@ class VaeModel(SslModelBase):
             val_iomin_threshold: during validation, only patches with Intersection Over MinArea < IoMin_threshold
                 are used. Should be in [0.0, 1.0). If 0 only strictly non-overlapping patches are allowed.
         """
-        super(VaeModel, self).__init__(val_iomin_threshold=val_iomin_threshold)
+        super(VaeModel, self).__init__(val_iomin_threshold=val_iomin_threshold, run_classify_regress=run_classify_regress)
 
         # Important: This property activates manual optimization.
         self.automatic_optimization = False
@@ -373,7 +375,13 @@ class VaeModel(SslModelBase):
         # compute both kl and derivative of kl w.r.t. mu and log_var
         assert len(mu.shape) == 2
         batch_size = mu.shape[0]
-        kl_loss = 0.5 * (mu ** 2 + log_var.exp() - log_var - 1.0).sum() / batch_size
+        # kl_loss = 0.5 * (mu ** 2 + log_var.exp() - log_var - 1.0).sum() / batch_size ## this should be equivalent to the next line, but grad_fn is different
+        kl_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
+
+        ## weight by M/N, where m is # of latent dims and n is # of pixels
+        kl_weight = mu.shape[-1] / (x_in.shape[-1] * x_in.shape[-2])
+        kl_loss = kl_weight * kl_loss
+
         mse_loss = F.mse_loss(x_in, x_rec, reduction='mean')
 
         return {
@@ -422,6 +430,13 @@ class VaeModel(SslModelBase):
             log_var=dict_vae['log_var']
         )
         assert torch.all(torch.isfinite(dict_vae['mu'])), "In training step. mu in NOT finite"
+        
+        ## debugging
+        if not torch.all(torch.isfinite(dict_vae['x_rec'])):
+            print("debugging x_rec not finite")
+            print(dict_vae['x_rec'])
+            
+            
         assert torch.all(torch.isfinite(dict_vae['x_rec'])), "In training step. x_rec is NOT finite"
 
         # Manual optimization
@@ -462,13 +477,13 @@ class VaeModel(SslModelBase):
             )
 
             self.log('train_loss', loss_kl + loss_mse,
-                     on_step=False, on_epoch=True, rank_zero_only=True, batch_size=batch_size)
+                     on_step=False, on_epoch=True, rank_zero_only=True, batch_size=batch_size, sync_dist=True)
             self.log('train_mse_loss', loss_dict['mse_loss'],
-                     on_step=False, on_epoch=True, rank_zero_only=True, batch_size=batch_size)
+                     on_step=False, on_epoch=True, rank_zero_only=True, batch_size=batch_size, sync_dist=True)
             self.log('train_kl_loss', loss_dict['kl_loss'],
-                     on_step=False, on_epoch=True, rank_zero_only=True, batch_size=batch_size)
+                     on_step=False, on_epoch=True, rank_zero_only=True, batch_size=batch_size, sync_dist=True)
             self.log('mse_for_constraint', mse_for_constraint,
-                     on_step=False, on_epoch=True, rank_zero_only=True, batch_size=batch_size)
+                     on_step=False, on_epoch=True, rank_zero_only=True, batch_size=batch_size, sync_dist=True)
 
             # batch_size
             self.log('batch_size_per_gpu_train', float(len(list_imgs)),
@@ -476,8 +491,16 @@ class VaeModel(SslModelBase):
 
             # update the beta_vae if necessary
             if grad_due_to_mse_tmp is not None and grad_due_to_kl_tmp is not None:
-                grad_due_to_mse = sync_ddp_if_available(grad_due_to_mse_tmp, group=None, reduce_op='mean')
-                grad_due_to_kl = sync_ddp_if_available(grad_due_to_kl_tmp, group=None, reduce_op='mean')
+                # grad_due_to_mse = sync_ddp_if_available(grad_due_to_mse_tmp, group=None, reduce_op='mean')
+                # grad_due_to_kl = sync_ddp_if_available(grad_due_to_kl_tmp, group=None, reduce_op='mean')
+
+                ## update to lightning 2.0; need to initialize the process group for this to work
+                # grad_due_to_mse = dist.all_reduce(grad_due_to_mse_tmp, op=dist.ReduceOp.AVG)
+                # grad_due_to_kl = dist.all_reduce(grad_due_to_kl_tmp, op=dist.ReduceOp.AVG)
+
+                # TODO: add support for multi-gpu training
+                grad_due_to_mse = grad_due_to_mse_tmp
+                grad_due_to_kl = grad_due_to_kl_tmp
 
                 c11 = torch.dot(grad_due_to_kl, grad_due_to_kl) / self.beta_vae**2
                 c22 = torch.dot(grad_due_to_mse, grad_due_to_mse) / (1.0 - self.beta_vae)**2
@@ -500,13 +523,13 @@ class VaeModel(SslModelBase):
                 # update beta using a slow Exponential Moving Average (EMA)
                 self.__update_beta_vae__(ideal_beta=ideal_beta_vae, beta_momentum=self.momentum_beta_vae)
 
-                self.log('beta/c11', c11, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
-                self.log('beta/c12', c12, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
-                self.log('beta/c22', c22, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
+                self.log('beta/c11', c11, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1, sync_dist=True)
+                self.log('beta/c12', c12, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1, sync_dist=True)
+                self.log('beta/c22', c22, on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1, sync_dist=True)
                 self.log('beta/beta_vae', self.beta_vae,
-                         on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
+                         on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1, sync_dist=True)
                 self.log('beta/ideal_beta_vae', ideal_beta_vae,
-                         on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1)
+                         on_step=False, on_epoch=True, rank_zero_only=True, batch_size=1, sync_dist=True)
 
     def __get_grad_from_last_layer_of_encoder__(self) -> torch.Tensor:
         grad = torch.cat((

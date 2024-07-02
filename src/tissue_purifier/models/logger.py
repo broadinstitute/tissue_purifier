@@ -4,7 +4,7 @@ import re
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import NeptuneLogger
 from pytorch_lightning.utilities.model_summary import ModelSummary
-from neptune.new.types import File
+from neptune.types import File
 
 
 def copy_to_location_if_dir_exists(src_path, destination_path):

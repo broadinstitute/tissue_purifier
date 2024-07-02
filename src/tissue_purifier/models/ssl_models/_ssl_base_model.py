@@ -2,11 +2,12 @@ import numpy
 import torch
 import pandas
 from typing import Dict, List, Sequence, Any
-from neptune.new.types import File
+from neptune.types import File
 from pytorch_lightning import LightningModule
 
 from sklearn.base import is_regressor, is_classifier
 from sklearn.model_selection import RepeatedStratifiedKFold, RepeatedKFold
+from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.linear_model import RidgeClassifierCV, RidgeCV
 
@@ -18,10 +19,11 @@ from tissue_purifier.utils.dict_util import (
     concatenate_list_of_dict,
     subset_dict)
 
+import numpy as np
+
 from tissue_purifier.utils.validation_util import (
     SmartPca,
     SmartUmap)
-
 
 def classify_and_regress(
         input_dict: dict,
@@ -32,6 +34,8 @@ def classify_and_regress(
         classifier: "sklearn_like_classifier" = None,
         n_splits: int = 5,
         n_repeats: int = 1,
+        return_regressor: bool = False,
+        return_classifier: bool = False,
         verbose: bool = False) -> [pandas.DataFrame, pandas.DataFrame]:
     """
     Train a Classifier and a Regressor to use some features to classify/predict other annotations.
@@ -129,6 +133,7 @@ def classify_and_regress(
         _X, _y = _manual_shuffle(_X, _y)
         _tmp_dict = {}
 
+        
         if n_splits > 1:
 
             rkf = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats)
@@ -138,7 +143,8 @@ def classify_and_regress(
 
                 _tmp_dict["x_key"] = _tmp_dict.get("x_key", []) + [x_key]
                 _tmp_dict["y_key"] = _tmp_dict.get("y_key", []) + [y_key]
-                _tmp_dict["accuracy_train"] = _tmp_dict.get("accuracy_test", []) + [classifier.score(_X_train, _y_train)]
+                
+                _tmp_dict["accuracy_train"] = _tmp_dict.get("accuracy_train", []) + [classifier.score(_X_train, _y_train)]
                 _tmp_dict["accuracy_test"] = _tmp_dict.get("accuracy_test", []) + [classifier.score(_X_test, _y_test)]
             _df_tmp = pandas.DataFrame(_tmp_dict, index=numpy.arange(rkf.get_n_splits()))
 
@@ -176,13 +182,115 @@ def classify_and_regress(
                 tmp_df = _do_regression(X_all, y_all, x_key=feature_key, y_key=kr)
                 df = tmp_df if df is None else df.merge(tmp_df, how='outer')
 
+    if return_regressor:
+        return df, regressor
+    if return_classifier:
+        return df, classifier
+    
     return df
+
+##TODO: finish this function
+def train_test_split_dict(world_dict: dict, 
+                          remove_overlap: bool, 
+                          val_iomin_threshold: float=False,
+                          stratify: bool=True,
+                          res: int=0.4, 
+                          train_size: float = 0.8,
+                          test_size: float = 0.2,
+                          random_state: int = 0):
+    """
+    Utility function to split dictionary into train and test dictionaries (that are optionally split spatially)
+    It takes a dictionary with patch-level features and annotations
+    
+    Args:
+        world_dict: a dictionary with path-level features and annotations.
+            The dict must contains the keys "patches_xywh" and "classify_tissue_label".
+            It may contain additional keys starting in "feature_", "classify_" or "regress_".
+        remove_overlap: whether to conduct train/test split spatially (for example if patch tiling strategy to generate patch features was 'random')
+        val_iomin_threshold: threshold for the Intersection over Minimum. It must be in [0.0, 1.0).
+        stratify: whether to stratify by patch NCV clusters. Stratifies by tissue label by default.
+        res: Leiden cluster resolution for determining patch NCV clusters
+        train_size: size of train set
+        test_size: set of test set
+    """
+    
+    # compute the patch_to_patch overlap just one at the beginning
+    assert {"patches_xywh", "classify_tissue_label"}.issubset(world_dict.keys())
+    patches = world_dict["patches_xywh"]
+    
+    print(world_dict['patches_xywh'].shape)
+    
+    if remove_overlap:
+        initial_score = torch.rand_like(patches[:, 0].float())
+        tissue_ids = world_dict["classify_tissue_label"]
+        nms_mask_n, overlap_nn = NonMaxSuppression.compute_nm_mask(
+            score=initial_score,
+            ids=tissue_ids,
+            patches_xywh=patches,
+            iom_threshold=val_iomin_threshold)
+        binarized_overlap_nn = (overlap_nn > val_iomin_threshold).float()
+
+        # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
+        nms_mask_n = NonMaxSuppression.perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
+                                                             score_n=torch.rand_like(initial_score),
+                                                             possible_n=torch.ones_like(initial_score).bool())
+        world_dict_subset = subset_dict(input_dict=world_dict, mask=nms_mask_n)
+        world_dict = world_dict_subset
+    
+    print(world_dict['patches_xywh'].shape)
+    
+    ## Cluster Patch NCVs
+    if stratify:
+        assert "ncv" in self._patch_properties_dict.keys(), \
+            "Compute Patch NCV first."
+
+        ## Cluster patch NCVs
+        patch_ncv = self._patch_properties_dict["ncv"]
+
+        assert np.array_equal(self._patch_properties_dict["ncv_patch_xywh"], self._patch_properties_dict[feature_xywh]), \
+            "NCV patch xywh does not match feature xywh"
+
+        smart_umap = SmartUmap(n_neighbors=25, preprocess_strategy='z_score', n_components=2, min_dist=0.5, metric='cosine')
+        embeddings_umap = smart_umap.fit_transform(patch_ncv)
+
+        umap_graph = smart_umap.get_graph()
+        smart_leiden = SmartLeiden(graph=umap_graph)
+
+        leiden_clusters = smart_leiden.cluster(resolution=res, partition_type='RBC')
+        
+    ## Split patches into train/test, stratifying by NCV clusters
+    ## write custom train_test_split function in utils
+    
+    all_indices = np.arange(world_dict['patches_xywh'].shape[0])
+
+    train_indices, test_indices = train_test_split(all_indices, stratify=world_dict['classify_tissue_label'], random_state=random_state)
+
+    train_mask = torch.tensor(np.isin(all_indices, train_indices))
+    test_mask = torch.tensor(np.isin(all_indices, test_indices))
+    
+    train_features_dict = subset_dict(world_dict, train_mask)
+    test_features_dict = subset_dict(world_dict, test_mask)
+    # ##TODO: see why this isn't working as expected
+    # if stratify:
+    #     try:
+    #         train_patch_xywh, test_patch_xywh = train_test_split(self._patch_properties_dict[feature_xywh], train_size=train_size, test_size=test_size, stratify=leiden_clusters,random_state=random_state)
+    #     except ValueError: #ValueError as ve: ##TODO: specify for the appropriate exception here
+    #         # raise Exception("ValueError: " + str(ve))
+    #         raise Exception("Not enough samples in each cluster to split the data. Try a smaller res")
+    # else:
+    #     train_patch_xywh, test_patch_xywh = train_test_split(self._patch_properties_dict[feature_xywh], train_size=train_size, test_size=test_size,
+    #                                                         random_state=random_state)
+        
+    return train_features_dict, test_features_dict
+        
+
+    
 
 
 def knn_classification_regression(world_dict: dict, val_iomin_threshold: float):
     """
     Utility function to perform knn-based classification and regression.
-    It takes a dictionaries with path-level features and annotations.
+    It takes a dictionary with patch-level features and annotations.
     A set of (weakly) overlapping patches (with Intersection over Minimum smaller than the assigned threshold)
     is selected. A knn classifier/regressor is trained to
     predict the various annotations starting from the features.
@@ -236,7 +344,8 @@ def knn_classification_regression(world_dict: dict, val_iomin_threshold: float):
 
     # loop over subset made of non-overlapping patches
     df_tot = None
-    for n in range(20):
+    for n in range(10): #range(20): #oom error
+        
         # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
         nms_mask_n = NonMaxSuppression.perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
                                                              score_n=torch.rand_like(initial_score),
@@ -311,7 +420,7 @@ def linear_classification_regression(world_dict: dict, val_iomin_threshold: floa
 
     # loop over subset made of non-overlapping patches
     df_tot = None
-    for n in range(20):
+    for n in range(10): #range(20): # oom error
         # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
         nms_mask_n = NonMaxSuppression.perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
                                                              score_n=torch.rand_like(initial_score),
@@ -334,7 +443,7 @@ def linear_classification_regression(world_dict: dict, val_iomin_threshold: floa
     df_tot["combined_key"] = df_tot["x_key"] + "_" + df_tot["y_key"]
     df_mean = df_tot.groupby("combined_key").mean()
     df_std = df_tot.groupby("combined_key").std()
-    return df_mean, df_std
+    return df_mean, df_std  
 
 
 class SslModelBase(LightningModule):
@@ -344,9 +453,10 @@ class SslModelBase(LightningModule):
     The child classes need to implement :meth:`head_and_backbone_embeddings_step`, :meth:`forward` and
     :meth:`training_step`.
     """
-    def __init__(self, val_iomin_threshold: float):
+    def __init__(self, val_iomin_threshold: float, run_classify_regress: bool):
         super(SslModelBase, self).__init__()
         self.val_iomin_threshold = val_iomin_threshold
+        self.run_classify_regress = run_classify_regress
         self.neptune_run_id = None
 
     def head_and_backbone_embeddings_step(self, x) -> (torch.Tensor, torch.Tensor):
@@ -462,10 +572,12 @@ class SslModelBase(LightningModule):
             "features_head": z,
             "patches_xywh": patches_xywh
         }
-
+        
+            
         # Add to this dictionary the things I want to classify and regress
         dict_classify = concatenate_list_of_dict([self.get_metadata_to_classify(metadata)
                                                   for metadata in list_metadata])
+        
         for k, v in dict_classify.items():
             val_dict["classify_"+k] = torch.tensor(v, device=self.device)
 
@@ -512,6 +624,10 @@ class SslModelBase(LightningModule):
                 annotation_keys = []
                 umap_keys = []
                 all_keys = list(world_dict.keys())
+                
+                print("all keys:")
+                print(all_keys)
+                
                 for k in all_keys:
                     if k.startswith("feature"):
                         embedding_keys.append(k)
@@ -528,6 +644,7 @@ class SslModelBase(LightningModule):
 
                 print("starting to make umaps")
                 all_files = []
+                
                 for umap_key in umap_keys:
                     fig_tmp = plot_embeddings(
                         input_dictionary=world_dict,
@@ -538,45 +655,51 @@ class SslModelBase(LightningModule):
                     )
                     all_files.append(File.as_image(fig_tmp))
                 print("done making umaps")
+                
+                print(embedding_keys)
+                print(annotation_keys)
+                print(umap_keys)
+                print(all_keys)
 
                 print("starting to log the umaps")
                 for file_tmp, key_tmp in zip(all_files, embedding_keys):
                     self.logger.run["maps/" + key_tmp].log(file_tmp)
                 print("printed the embeddings")
 
-                # knn classification/regression
-                print("starting knn classification/regression")
-                df_mean_knn, df_std_knn = knn_classification_regression(world_dict, self.val_iomin_threshold)
-                # print("df_mean_knn ->", df_mean_knn)
+                if self.run_classify_regress:
+                    # knn classification/regression
+                    print("starting knn classification/regression")
+                    df_mean_knn, df_std_knn = knn_classification_regression(world_dict, self.val_iomin_threshold)
+                    # print("df_mean_knn ->", df_mean_knn)
 
-                for row in df_mean_knn.itertuples():
-                    for k, v in row._asdict().items():
-                        if isinstance(v, float) and numpy.isfinite(v):
-                            name = "kn/" + row.Index + "/" + k + "/mean"
-                            self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
+                    for row in df_mean_knn.itertuples():
+                        for k, v in row._asdict().items():
+                            if isinstance(v, float) and numpy.isfinite(v):
+                                name = "kn/" + row.Index + "/" + k + "/mean"
+                                self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
 
-                for row in df_std_knn.itertuples():
-                    for k, v in row._asdict().items():
-                        if isinstance(v, float) and numpy.isfinite(v):
-                            name = "kn/" + row.Index + "/" + k + "/std"
-                            self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
+                    for row in df_std_knn.itertuples():
+                        for k, v in row._asdict().items():
+                            if isinstance(v, float) and numpy.isfinite(v):
+                                name = "kn/" + row.Index + "/" + k + "/std"
+                                self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
 
-                # linear classification/regression
-                print("starting linear classification/regression")
-                df_mean_linear, df_std_linear = linear_classification_regression(world_dict, self.val_iomin_threshold)
-                # print("df_mean_linear ->", df_mean_linear)
+                    # linear classification/regression
+                    print("starting linear classification/regression")
+                    df_mean_linear, df_std_linear = linear_classification_regression(world_dict, self.val_iomin_threshold)
+                    # print("df_mean_linear ->", df_mean_linear)
 
-                for row in df_mean_linear.itertuples():
-                    for k, v in row._asdict().items():
-                        if isinstance(v, float) and numpy.isfinite(v):
-                            name = "linear/" + row.Index + "/" + k + "/mean"
-                            self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
+                    for row in df_mean_linear.itertuples():
+                        for k, v in row._asdict().items():
+                            if isinstance(v, float) and numpy.isfinite(v):
+                                name = "linear/" + row.Index + "/" + k + "/mean"
+                                self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
 
-                for row in df_std_linear.itertuples():
-                    for k, v in row._asdict().items():
-                        if isinstance(v, float) and numpy.isfinite(v):
-                            name = "linear/" + row.Index + "/" + k + "/std"
-                            self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
+                    for row in df_std_linear.itertuples():
+                        for k, v in row._asdict().items():
+                            if isinstance(v, float) and numpy.isfinite(v):
+                                name = "linear/" + row.Index + "/" + k + "/std"
+                                self.log(name=name, value=v, batch_size=1, rank_zero_only=True)
 
     def optimizer_zero_grad(self, epoch, batch_idx, optimizer, optimizer_idx):
         optimizer.zero_grad(set_to_none=True)

@@ -1,10 +1,20 @@
 from __future__ import annotations
 from typing import List, Optional, Tuple, Union, TYPE_CHECKING
 import numpy
+import numpy as np
+import pandas
 import copy
+import tqdm
 import torch
 from tissue_purifier.models.patch_analyzer import SpatialAutocorrelation
 from tissue_purifier.data.dataset import CropperSparseTensor
+from tissue_purifier.utils.validation_util import SmartPca, SmartUmap, SmartLeiden
+from tissue_purifier.utils.nms_util import NonMaxSuppression
+from sklearn.model_selection import train_test_split
+from sklearn.model_selection import KFold
+from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import RepeatedKFold
+from sklearn.model_selection import RepeatedStratifiedKFold
 from scanpy import AnnData
 import matplotlib.cm
 import matplotlib.colors
@@ -33,6 +43,7 @@ class SparseImage:
         categories_to_codes: dict,
         pixel_size: float,
         padding: int = 10,
+        sample_status: int = 0,
         patch_properties_dict: dict = None,
         image_properties_dict: dict = None,
         anndata: AnnData = None):
@@ -43,7 +54,7 @@ class SparseImage:
             spot_properties_dict: the dictionary with the spot properties (at the minimum x,y,category)
             x_key: str, the key where the x_coordinates are stored in the spot_properties_dict
             y_key: str, the key where the y_coordinates are stored in the spot_properties_dict
-            category_key: str, the key where the category are stored in the spot_properties_dict
+            category_key: str, the key where the categories are stored in the spot_properties_dict
             categories_to_codes: dictionary with the mapping from categories (keys) to codes (values).
                 The codes must be integers starting from zero. For example {"macrophage" : 0, "t-cell": 1}.
             pixel_size: float, size of the pixel. It used in the conversion
@@ -66,51 +77,58 @@ class SparseImage:
         self._patch_properties_dict = {} if patch_properties_dict is None else patch_properties_dict
         self._image_properties_dict = {} if image_properties_dict is None else image_properties_dict
         self._anndata = anndata
+        self._sample_status = sample_status
 
         # These variables are built
         self.origin = None
         self.data = self._create_torch_sparse_image(padding=self._padding, pixel_size=self._pixel_size)
-
         print("The dense shape of the image is ->", self.data.size())
-        print("Occupacy (zero, single, double, ...) of voxels in 3D sparse array ->",
-              torch.bincount(self.data.values()).cpu().numpy())
-        tmp_sp = torch.sparse.sum(self.data, dim=-3)  # sum over categories
-        print("Occupacy (zero, single, double, ...) of voxels  in 2D sparse array (summed over category) ->",
-              torch.bincount(tmp_sp.values()).cpu().numpy())
+        # print("Occupacy (zero, single, double, ...) of voxels in 3D sparse array ->",
+        #       torch.bincount(self.data.values()).cpu().numpy())
+        # tmp_sp = torch.sparse.sum(self.data, dim=-3)  # sum over categories
+        # print("Occupacy (zero, single, double, ...) of voxels  in 2D sparse array (summed over category) ->",
+        #       torch.bincount(tmp_sp.values()).cpu().numpy())
 
     def _create_torch_sparse_image(self, padding: int, pixel_size: float) -> torch.sparse.Tensor:
 
         # Check all vectors are 1D and of the same length
         x_raw = torch.from_numpy(self.x_raw).float()
         y_raw = torch.from_numpy(self.y_raw).float()
-        cat_raw = self.cat_raw
-        assert x_raw.shape == y_raw.shape == cat_raw.shape and len(x_raw.shape) == 1, \
+        cat_raw = self.cat_raw ## cat raw represents original dataframe of cell type proportions
+
+
+        assert x_raw.shape[0] == y_raw.shape[0] == cat_raw.shape[0] and len(x_raw.shape) == 1, \
             "Error. x_raw, y_raw, cat_raw must be 1D array of the same length"
 
-        # Check all category are included in categories_to_code
-        assert set(cat_raw).issubset(set(self._categories_to_codes.keys())), \
+        # Check all category keys are included in categories_to_code
+        
+        assert set(cat_raw.columns).issubset(set(self._categories_to_codes.keys())), \
             "Error. Some categories are NOT present in the categories_to_codes dictionary"
 
-        codes = torch.tensor([self._categories_to_codes[cat] for cat in cat_raw]).long()
-
+        ## convert cell type proportions dataframe to tensor 'codes_vals'
+        codes = torch.tensor([cat_raw[cat] for cat in cat_raw]).long() 
+        codes_vals = torch.tensor(cat_raw.to_numpy()) 
+        
         # Use GPU if available
         if torch.cuda.is_available():
             x_raw = x_raw.cuda().float()
             y_raw = y_raw.cuda().float()
             codes = codes.cuda().long()
 
-        assert x_raw.shape == y_raw.shape == codes.shape
-        assert len(codes.shape) == 1
-        print("number of elements --->", codes.shape[0])
+        assert x_raw.shape[0] == y_raw.shape[0] == codes.shape[1]
+        assert len(codes.shape) == 2
+        print("number of elements --->", x_raw.shape[0]) 
         mean_spacing, median_spacing = self._check_mean_median_spacing(x_raw, y_raw)
         print("mean and median spacing {0}, {1}".format(mean_spacing, median_spacing))
 
-        # Check that all codes are used at least once
+        
         n_codes = numpy.max(list(self._categories_to_codes.values()))
-        code_usage = torch.bincount(codes, minlength=n_codes+1)
-        if not torch.prod(code_usage > 0):
-            print("WARNING: some codes are not used! \
-            This might be OK if some codes correspond to very rare genes or cell_types")
+
+        # Check that all codes are used at least once
+        # code_usage = torch.bincount(codes, minlength=n_codes+1)
+        # if not torch.prod(code_usage > 0):
+        #     print("WARNING: some codes are not used! \
+        #     This might be OK if some codes correspond to very rare genes or cell_types")
 
         # Define the raw coordinates of the origin
         x_raw_min = torch.min(x_raw).item()
@@ -122,20 +140,41 @@ class SparseImage:
         ix = torch.round(x_pixel).long()
         iy = torch.round(y_pixel).long()
 
-        # Create a sparse array with 1 in the correct channel and x,y location.
+        # Create a sparse array with cell type proportion in the correct channel and x,y location.
         # The coalesce make sure that if in case of a collision the values are summed.
         dense_shape = (
             n_codes + 1,
             torch.max(ix).item() + 1 + 2 * padding,
             torch.max(iy).item() + 1 + 2 * padding,
         )
+        
+        # Obtain cell types as indices
+        codes = torch.arange(start=0,end=n_codes+1).repeat(ix.shape[0])
+        codes_1d = torch.flatten(codes)
+
+        # Remove any nan (todo: check why nan exists in the first place)
+        codes_vals = torch.flatten(torch.nan_to_num(codes_vals)) 
+        
+        # Remove 0 values as don't need to store
+        keep_ind = torch.nonzero(codes_vals).squeeze()
+        codes_vals = codes_vals[keep_ind]
+        codes_1d = codes_1d[keep_ind]
+        
+        # Repeat ix and iy values based on number of cell_types at that spot
+        ix_rep = torch.repeat_interleave(ix, n_codes+1)
+        ix_rep = ix_rep[keep_ind]
+        
+        iy_rep = torch.repeat_interleave(iy, n_codes+1)
+        iy_rep = iy_rep[keep_ind]
+        
         return torch.sparse_coo_tensor(
-            indices=torch.stack((codes, ix, iy), dim=0),
-            values=torch.ones_like(codes).int(),
+            indices=torch.stack((codes_1d.cuda(), ix_rep, iy_rep), dim=0),
+            values=codes_vals,
             size=dense_shape,
             device=codes.device,
             requires_grad=False,
         ).coalesce()
+    
 
     def read_from_spot_dictionary(self, key: str) -> torch.Tensor:
         """
@@ -294,7 +333,38 @@ class SparseImage:
             keys = [keys]
         for key in keys:
             _ = self._image_properties_dict.pop(key, None)
+            
+    @property
+    def spot_properties_dict(self):
+        """
+        Return spot_properties_dictionary.
 
+        """
+        return self._spot_properties_dict
+    
+    @property
+    def patch_properties_dict(self):
+        """
+        Return patch_properties_dictionary.
+
+        """
+        return self._patch_properties_dict
+
+    @property
+    def image_properties_dict(self):
+        """
+        Return image_properties_dictionary.
+
+        """
+        return self._image_properties_dict
+    
+    @property
+    def pixel_size(self):
+        """
+        Return pixel size
+        """
+        return self._pixel_size
+        
     def pixel_to_raw(
             self,
             x_pixel: torch.Tensor,
@@ -372,9 +442,21 @@ class SparseImage:
         return numpy.asarray(self._spot_properties_dict[self._y_key])
 
     @property
-    def cat_raw(self) -> numpy.ndarray:
+    def cat_raw(self) -> pandas.DataFrame:
         """ The categorical labels (gene-identities or cell-identities) from the original data """
-        return numpy.asarray(self._spot_properties_dict[self._cat_key])
+
+        cat_raw_dict = {}
+        for key in self._spot_properties_dict.keys():
+            ## if key is a cell type we are mapping
+            if key in self._anndata.obsm[self._cat_key].columns:
+                try: 
+                    cat_raw_dict[key] = self._spot_properties_dict[key].tolist()
+                except:
+                    cat_raw_dict[key] = self._spot_properties_dict[key]
+            
+        cat_raw_df = pandas.DataFrame.from_dict(cat_raw_dict)  
+
+        return cat_raw_df
 
     @property
     def n_spots(self) -> int:
@@ -554,6 +636,66 @@ class SparseImage:
         plt.close()
 
         return rgb_img, fig
+    
+    ## TODO: deprecate this function
+    def to_rgb_image_property(self,
+               image_property_key: str = None,
+               spot_size: float = 1.0,
+               cmap: matplotlib.colors.ListedColormap = None,
+               figsize: Tuple = (8, 8),
+               show_colorbar: bool = True,
+               contrast: float = 1.0) -> (torch.Tensor, plt.Figure):
+        """
+        Make a 3 channel RGB image from a property from image properties dict.
+
+        Args:
+            image_property_key: which key in image properties dict to visualize 
+            spot_size: size of sigma of gaussian kernel for rendering the spots
+            cmap: the colormap to use
+            figsize: the size of the figure
+            show_colorbar: If True show the colorbar
+            contrast: change to increase/decrease the contrast in the figure.
+                It does not affect the returned tensor. It changes only the way to figure is displayed.
+
+        Returns:
+            dense_img: A torch.Tensor of size :math:`(3, W, H)` with the rgb rendering of the image
+            fig: matplotlib figure.
+        """
+
+        def _make_kernel(_sigma: float):
+            n = int(1 + 2 * numpy.ceil(4.0 * _sigma))
+            dx_over_sigma = torch.linspace(-4.0, 4.0, 2 * n + 1).view(-1, 1)
+            dy_over_sigma = dx_over_sigma.clone().permute(1, 0)
+            d2_over_sigma2 = (dx_over_sigma.pow(2) + dy_over_sigma.pow(2)).float()
+            kernel = torch.exp(-0.5 * d2_over_sigma2)
+            return kernel
+ 
+        dense_img = torch.tensor(self._image_properties_dict[image_property_key]).unsqueeze(dim=0).unsqueeze(dim=0) # shape: (1, ch=1, width, height)
+
+        ch = dense_img.shape[-3]
+        weight = _make_kernel(spot_size).expand(ch, 1, -1, -1)
+
+        if torch.cuda.is_available():
+            dense_img = dense_img.cuda()
+            weight = weight.cuda()
+
+        ## TODO: test, remove later
+        dense_img = dense_img.squeeze(0)
+        
+        dense_rasterized_img = F.conv2d(
+            input=dense_img,
+            weight=weight,
+            bias=None,
+            stride=1,
+            padding=(weight.shape[-1] - 1) // 2,
+            dilation=1,
+            groups=ch,
+        ).squeeze(dim=0)
+        
+        dense_rasterized_img = dense_rasterized_img.squeeze().cpu()
+        
+        return dense_img
+
 
     def crops(
             self,
@@ -634,12 +776,21 @@ class SparseImage:
         assert k is None or isinstance(k, int) and k > 0, "k is either None or a positive integer"
         assert r is None or r > 0, "r is either None or a positive value"
 
-        # preparation
-        cell_type_codes = torch.tensor([self._categories_to_codes[cat] for cat in self.cat_raw]).long()
+        
         metric_features = numpy.stack((self.x_raw, self.y_raw), axis=-1)
         chs = self.shape[-3]
-        cell_types_one_hot = torch.nn.functional.one_hot(cell_type_codes, num_classes=chs).cpu()  # shape (*, ch)
+        
+        # get raw data (cell type identities)
+        codes_vals = torch.tensor(self.cat_raw.to_numpy()).cpu()
 
+        # convert probabilistic assignment to one hot encoded assignment for computing ncv
+        cell_types_one_hot = numpy.zeros_like(codes_vals)
+        max_assignment = numpy.argmax(codes_vals, axis = 1)
+ 
+        cell_types_one_hot[numpy.arange(codes_vals.shape[0]), max_assignment] = 1
+        cell_types_one_hot = torch.Tensor(cell_types_one_hot)
+
+        # compute ncv
         if k is not None:
             # use a knn neighbours
             from sklearn.neighbors import KDTree
@@ -672,8 +823,11 @@ class SparseImage:
                 numpy.median(n_neighbours_np),
                 numpy.max(n_neighbours_np)))
 
+
         ncv = ncv.float() / ncv.sum(dim=-1, keepdim=True).clamp(min=1.0)  # transform to proportions
         self.write_to_spot_dictionary(key=feature_name, values=ncv, overwrite=overwrite)
+        return ncv
+
 
     @torch.no_grad()
     def compute_patch_features(
@@ -683,9 +837,15 @@ class SparseImage:
             model: torch.nn.Module,
             apply_transform: bool = True,
             batch_size: int = 64,
+            strategy: str='tiling',
+            remove_overlap: bool = True, ## only used if strategy is 'random'
+            val_io_min_threshold: float = 0.0,
             n_patches_max: int = 100,
+            fraction_patch_overlap: float = 0.0,
             overwrite: bool = False,
-            return_crops: bool = False) -> Union[torch.Tensor, None]:
+            return_crops: bool = False,
+            compute_ncv: bool = True,
+            ncv_prefix: str = None) -> Union[torch.Tensor, None]:
         """
         Split the sparse image into (possibly overlapping) patches.
         Each patch is analyzed by the (pretrained) model.
@@ -700,13 +860,18 @@ class SparseImage:
             apply_transform: if True (defaults) the datamodule.test_trasform will be applied to the crops before
                 feeding them into the model.
                 If False no transformation is applied and the sparse tensors are fed into the model.
-            batch_size: how many crops to process simultaneously (default = 64). Use to adjust the GPU memory footprint.
-            n_patches_max: maximum number of patches generated to analyze the current picture (default = 100)
+            batch_size: how many crops to process simultaneously (default = 64). Use to adjust the GPU memory footprint. Currently only supported for strategy 'random'
+            strategy: either 'tiling' or 'random', determines cropper strategy for generating patches
+            remove_overlap: if True, remove overlapping (random) patches
+            val_iomin_threshold: threshold for the Intersection over Minimum for NonMaxSuppression. It must be in [0.0, 1.0). Only used if strategy is 'random'.
+            n_patches_max: maximum number of patches generated to analyze the current picture (default = 100), only used if strategy is 'random'
             overwrite: if the :attr:'feature_names' are already present in the patch_properties_dict,
                 this variable controls when to overwrite them.
             return_crops: if True the model returns a (batched) torch.Tensor of shape
                 :math:`(\\text{n_patches_max}, c, w, h)` with all the crops which were fed to the model.
                 Default is False.
+            compute_ncv: if True, neighborhood composition of each patch is also computed and stored in the patch_properties_dict under the :attr:`ncv_prefix + _patch_ncv`.
+            ncv_prefix: if provided, prepended to key under which patch ncv is saved in patch_properties_dict
 
         Returns:
             patches: If :attr:`return_crops` is True returns tensor of shape
@@ -726,12 +891,46 @@ class SparseImage:
         was_original_in_training_mode = model.training
         model.eval()
 
-        all_patches, all_features = [], []
+        all_patches, all_features, all_crops = [], [], []
         n_patches = 0
         patches_x, patches_y, patches_w, patches_h = [], [], [], []
-        while n_patches < n_patches_max:
-            n_tmp = min(batch_size, n_patches_max - n_patches)
-            crops, x_locs, y_locs = datamodule.cropper_test(self.data, n_crops=n_tmp)
+        
+        if strategy == 'random':
+            
+            while n_patches < n_patches_max:
+                n_tmp = min(batch_size, n_patches_max - n_patches)
+                crops, x_locs, y_locs = datamodule.cropper_test(self.data, strategy=strategy, n_crops=n_tmp)
+                patches_x += x_locs
+                patches_y += y_locs
+                patches_w += [crop.shape[-2] for crop in crops]
+                patches_h += [crop.shape[-1] for crop in crops]
+                n_patches += len(x_locs)
+
+                ## TODO: requires apply_transform to be set to true to work
+                if apply_transform:
+                    patches = datamodule.trsfm_test(crops)
+                    all_patches.append(patches.detach().cpu())
+                else:
+                    patches = crops
+                    all_patches.append(patches)
+                
+
+                features_tmp = model(patches)
+                if isinstance(features_tmp, torch.Tensor):
+                    all_features.append(features_tmp)
+                elif isinstance(features_tmp, numpy.ndarray):
+                    all_features.append(torch.from_numpy(features_tmp))
+                elif isinstance(features_tmp, list):
+                    all_features += features_tmp
+                else:
+                    raise NotImplementedError
+                    
+                all_crops += crops
+                                
+        elif strategy == 'tiling':
+            ## TODO: allow batching with tiling strategy
+            crops, x_locs, y_locs = datamodule.cropper_test(self.data, strategy=strategy, fraction_patch_overlap = fraction_patch_overlap)
+
             patches_x += x_locs
             patches_y += y_locs
             patches_w += [crop.shape[-2] for crop in crops]
@@ -743,8 +942,7 @@ class SparseImage:
             else:
                 patches = crops
 
-            if return_crops:
-                all_patches.append(patches.detach().cpu())
+            all_patches.append(patches.detach().cpu())
 
             features_tmp = model(patches)
             if isinstance(features_tmp, torch.Tensor):
@@ -755,6 +953,9 @@ class SparseImage:
                 all_features += features_tmp
             else:
                 raise NotImplementedError
+                
+            all_crops += crops
+        
 
         # put back the model in the state it was original
         if was_original_in_training_mode:
@@ -767,22 +968,586 @@ class SparseImage:
         h_torch = torch.tensor(patches_h, dtype=torch.int).cpu()
         patches_xywh = torch.stack((x_torch, y_torch, w_torch, h_torch), dim=-1).long()
 
-        # make a single batched tensor of the features
-        if len(all_features) == n_patches_max:
-            features = torch.stack(all_features, dim=0).cpu()
-        else:
+        
+        ## concatenate patches and features from batches
+        
+        if strategy == 'random':
+            if len(all_features) == n_patches_max:
+                features = torch.stack(all_features, dim=0).cpu()
+            else:
+                features = torch.cat(all_features, dim=0).cpu()
+        elif strategy == 'tiling':
             features = torch.cat(all_features, dim=0).cpu()
-
-        self.write_to_patch_dictionary(
-            key=feature_name, values=features, patches_xywh=patches_xywh, overwrite=overwrite)
-
-        if return_crops:
+            
+            
+        if strategy == 'random':
             if len(all_patches) == n_patches_max:
                 patches = torch.stack(all_patches, dim=0).cpu()
             else:
                 patches = torch.cat(all_patches, dim=0).cpu()
-            return patches
+        elif strategy == 'tiling':
+            patches = torch.cat(all_patches, dim=0).cpu()
+            
+            
+        ## remove overlapping patches
+        if strategy == 'random' and remove_overlap:
+                
+                print("remove overlap")
 
+                initial_score = torch.rand_like(patches_xywh[:, 0].float())
+                tissue_ids = torch.ones(patches_xywh.shape[0]) ## all crops coming from same sparse image
+                nms_mask_n, overlap_nn = NonMaxSuppression.compute_nm_mask(
+                    score=initial_score,
+                    ids=tissue_ids,
+                    patches_xywh=patches_xywh,
+                    iom_threshold=val_io_min_threshold)
+                binarized_overlap_nn = (overlap_nn > val_io_min_threshold).float()
+                
+                # create a dictionary with only non-overlapping patches to test kn-regressor/classifier
+                nms_mask_n = NonMaxSuppression.perform_nms_selection(mask_overlap_nn=binarized_overlap_nn,
+                                                                     score_n=torch.rand_like(initial_score),
+                                                                     possible_n=torch.ones_like(initial_score).bool())
+                
+                patches = patches[nms_mask_n, :, :, :]
+                features = features[nms_mask_n, :]
+                
+                mask_indices = [i for i, x in enumerate(nms_mask_n) if x]
+                all_crops = [crop for crop, mask in zip(all_crops, nms_mask_n) if mask] 
+                
+                patches_xywh = patches_xywh[nms_mask_n, :]
+        
+        self.write_to_patch_dictionary(
+            key=feature_name, values=features, patches_xywh=patches_xywh, overwrite=overwrite)
+        
+        if compute_ncv:
+            codes = self._categories_to_codes.values()
+            ## assert statement that values are integers or floats from 0-1
+            
+            patch_ncvs = []
+            
+            for crop in all_crops:
+                
+                ## get cell types in the patch
+                cells = crop.indices().detach().clone()[[0]]
+                ct_counts = []
+
+                ## count number of each cell type
+                for code in codes:
+                    ct_counts.append(int(torch.count_nonzero(cells==code).detach().cpu()))
+
+                ## normalize to form ncv
+                ct_counts = np.array(ct_counts)
+                ncv = ct_counts/np.sum(ct_counts)
+                patch_ncvs.append(ncv)
+                
+            patch_ncvs = torch.tensor(np.array(patch_ncvs))
+            
+            if ncv_prefix is None:
+                self.write_to_patch_dictionary(
+                    key='patch_ncv', values=patch_ncvs, patches_xywh=patches_xywh, overwrite=overwrite)
+            else:
+                self.write_to_patch_dictionary(
+                    key=ncv_prefix + '_patch_ncv', values=patch_ncvs, patches_xywh=patches_xywh, overwrite=overwrite)
+
+        if return_crops:
+            return patches
+        
+        
+    @torch.no_grad()
+    def compute_spot_features(self, feature_name: str,
+            datamodule: AnndataFolderDM,
+            model: torch.nn.Module,
+            apply_transform: bool = True,
+            batch_size: int = 64):
+        """
+        Draw a patch around each spot.
+        Each (valid) patch is analyzed by the (pretrained) model.
+        The features are stored in the patch_properties_dict under the :attr:`feature_name`.
+        The validity of patches (boolean) is stored in the patch_properties_dict under the :attr:`feature_name_valid`.
+
+        Args:
+            feature_name: the key under which the results will be stored.
+            datamodule: Datamodule used for training the model.
+                Passing it here guarantees that the cropping strategy and
+                the data augmentations are identical to the one used during training.
+            model: the trained model will ingest the patch and produce the features.
+            apply_transform: if True (defaults) the datamodule.test_trasform will be applied to the crops before
+                feeding them into the model.
+                If False no transformation is applied and the sparse tensors are fed into the model.
+            batch_size: how many crops to process simultaneously (default = 64). Use to adjust the GPU memory footprint.
+        """
+        
+        # set the model into eval mode
+        was_original_in_training_mode = model.training
+        model.eval()
+        
+        ## iterate over spots
+        
+        num_spots = self._spot_properties_dict["x_key"].shape[0]
+        
+        list_of_patch_xywh = []
+        for spot_ind in range(num_spots):
+            
+            ## convert spot coordinate to image coordinate
+            
+            x_raw = torch.tensor(self.x_raw[spot_ind]).float()
+            y_raw = torch.tensor(self.y_raw[spot_ind]).float()
+            x_pixel, y_pixel = self.raw_to_pixel(x_raw=x_raw, y_raw=y_raw)
+            
+            # Convert the coordinates and round to the closest integer
+            ix = torch.round(x_pixel).long()
+            iy = torch.round(y_pixel).long()
+        
+            # get patch width and height from datamodule
+            width = datamodule.global_size
+            height = datamodule.global_size
+            
+            
+            ## for each spot, define patch centered at that spot
+            patch_xywh = torch.tensor([(ix - (width // 2)), (iy - (height // 2)), width, height]).unsqueeze(0)
+            
+            list_of_patch_xywh.append(patch_xywh)
+            
+        patches_xywh = torch.cat(list_of_patch_xywh, dim=0)
+
+        ## copy sparse image to cpu before passing in if not already on cpu
+        if self.data.device != 'cpu':
+            data_cpu = self.data.clone().detach().cpu()
+        
+        crops, x_locs, y_locs = CropperSparseTensor.reapply_crops(data_cpu, patches_xywh)
+        
+        ## check if crops are valid
+        
+        list_of_n_elements = [len(crop.values()) for crop in crops]   
+
+        valid_crops = np.array([n_elements >= datamodule.n_element_min_for_crop for n_elements in list_of_n_elements]) 
+        
+        ## compute features for crops
+        
+        all_features, all_crops = [], []
+        n_patches = 0
+        patches_x, patches_y, patches_w, patches_h = [], [], [], []
+        n_patches_max = patches_xywh.shape[0]
+            
+        if torch.cuda.is_available():
+            model = model.cuda()
+            
+        total_batches = n_patches_max // batch_size
+        with tqdm.tqdm(total=total_batches) as pbar:
+            while n_patches < n_patches_max:
+                
+                pbar.update(1)
+                
+                n_tmp = min(batch_size, n_patches_max - n_patches)
+
+                crops_tmp = crops[n_patches:n_patches+n_tmp]
+                
+                patches_tmp = datamodule.trsfm_test(crops_tmp)
+                
+                if torch.cuda.is_available():
+                    patches_tmp = patches_tmp.cuda()
+                    
+                features_tmp = model(patches_tmp)
+                if isinstance(features_tmp, torch.Tensor):
+                    all_features.append(features_tmp)
+                elif isinstance(features_tmp, numpy.ndarray):
+                    all_features.append(torch.from_numpy(features_tmp))
+                elif isinstance(features_tmp, list):
+                    all_features += features_tmp
+                else:
+                    raise NotImplementedError
+
+                all_crops += crops
+                
+                n_patches = n_patches + n_tmp
+            
+        ## write to spot dictionary at the end 
+        all_features = torch.cat(all_features,dim=0)
+        self.write_to_spot_dictionary(key=feature_name, values=all_features)
+        self.write_to_spot_dictionary(key=feature_name + "_valid", values=valid_crops)
+        
+        # put back the model in the state it was original
+        if was_original_in_training_mode:
+            model.train()
+            
+        print("Finished computing spot features.")
+    
+    
+    def compute_patch_ncv_clusters(self, feature_xywh: str,
+                                        res: int=0.4):
+        """
+            Utility function to compute leiden clusters with particular resolution on patch NCV vectors
+            Args:
+                feature_xywh: key in patch_properties_dict for xywh of model features
+                res: resolution parameter for leiden clustering
+        """
+                    
+        assert "patch_ncv" in self._patch_properties_dict.keys(), \
+            "Compute Patch NCV first."
+
+        ## Cluster patch NCVs
+        patch_ncv = self._patch_properties_dict["patch_ncv"]
+
+        assert np.array_equal(self._patch_properties_dict["patch_ncv_patch_xywh"], self._patch_properties_dict[feature_xywh]), \
+            "NCV patch xywh does not match feature xywh"
+
+        smart_umap = SmartUmap(n_neighbors=25, preprocess_strategy='z_score', n_components=2, min_dist=0.5, metric='cosine')
+        embeddings_umap = smart_umap.fit_transform(patch_ncv)
+
+        umap_graph = smart_umap.get_graph()
+        smart_leiden = SmartLeiden(graph=umap_graph)
+
+        leiden_clusters = smart_leiden.cluster(resolution=res, partition_type='RBC')
+
+        return leiden_clusters
+        
+    
+    def spot_train_test_split(self, patch_size: int):
+        """
+            Divide the puck into 4 train/test splits (forming quadrants) such that the no spot within train split is within 'patch_size' of corresponding test split
+            The train/test ids (0/1) are stored in the spot dictionary under :attr:`train_test_fold_{num}`. Spots within the boundary are labelled -1. 
+            Args:
+                patch_size: determines the spatial boundary between train and test split
+        """
+        
+        # get x and y keys
+        spots_x_key = self._spot_properties_dict["x_key"]
+        spots_y_key = self._spot_properties_dict["y_key"]
+        
+        # get median x and y locs
+        x_median = np.median(spots_x_key)
+        y_median = np.median(spots_y_key)
+              
+
+        ## patch width is width used to compute spot features
+        ## patch height is height used to compute spot features
+        x_boundary = self._pixel_size * patch_size
+        y_boundary = self._pixel_size * patch_size
+        
+        
+        ## compute train/test ids for split 1
+        test_fold_1_inds = np.where((spots_x_key > x_median) & (spots_y_key > y_median))[0]
+
+        train_fold_1_inds_1 = np.where((spots_x_key < (x_median - x_boundary)))[0]
+        train_fold_1_inds_2 = np.where(spots_y_key < (y_median - y_boundary))[0]
+
+        train_fold_1_inds = np.concatenate((train_fold_1_inds_1, train_fold_1_inds_2))
+
+        train_test_fold_1 = -1*np.ones(spots_x_key.shape)
+
+        train_test_fold_1[train_fold_1_inds] = 0
+        train_test_fold_1[test_fold_1_inds] = 1
+
+        self.write_to_spot_dictionary(key = 'train_test_fold_1', values=train_test_fold_1, overwrite=True)
+
+        ## compute train/test ids for split 2
+        test_fold_2_inds = np.where(np.logical_and(spots_x_key > x_median,spots_y_key < y_median))[0]
+
+        train_fold_2_inds_1 = np.where((spots_x_key < (x_median - x_boundary)))[0]
+        train_fold_2_inds_2 = np.where((spots_y_key > (y_median + y_boundary)))[0]
+        train_fold_2_inds = np.concatenate((train_fold_2_inds_1, train_fold_2_inds_2))
+
+        train_test_fold_2 = -1*np.ones(spots_x_key.shape)
+
+        train_test_fold_2[train_fold_2_inds] = 0
+        train_test_fold_2[test_fold_2_inds] = 1
+
+        self.write_to_spot_dictionary(key = 'train_test_fold_2', values=train_test_fold_2, overwrite=True)
+
+
+        ## compute train/test ids for split 3
+        test_fold_3_inds = np.where(np.logical_and(spots_x_key < x_median,spots_y_key > y_median))[0]
+
+        train_fold_3_inds_1 = np.where((spots_x_key > (x_median + x_boundary)))[0]
+        train_fold_3_inds_2 = np.where((spots_y_key < (y_median - y_boundary)))[0]
+        train_fold_3_inds = np.concatenate((train_fold_3_inds_1, train_fold_3_inds_2))
+
+        train_test_fold_3 = -1*np.ones(spots_x_key.shape)
+
+        train_test_fold_3[train_fold_3_inds] = 0
+        train_test_fold_3[test_fold_3_inds] = 1
+
+        self.write_to_spot_dictionary(key = 'train_test_fold_3', values=train_test_fold_3, overwrite=True)
+
+
+        ## compute train/test ids for split 4
+        test_fold_4_inds = np.where(np.logical_and(spots_x_key < x_median,spots_y_key < y_median))[0]
+
+        train_fold_4_inds_1 = np.where((spots_x_key > (x_median + x_boundary)))[0]
+        train_fold_4_inds_2 = np.where((spots_y_key > (y_median + y_boundary)))[0]
+        train_fold_4_inds = np.concatenate((train_fold_4_inds_1, train_fold_4_inds_2))
+
+        train_test_fold_4 = -1*np.ones(spots_x_key.shape)
+
+        train_test_fold_4[train_fold_4_inds] = 0
+        train_test_fold_4[test_fold_4_inds] = 1
+
+        self.write_to_spot_dictionary(key = 'train_test_fold_4', values=train_test_fold_4, overwrite=True)
+
+    def patch_train_test_split(self, feature_xywh: str=None,
+                                res: int=0.4, 
+                                stratify: bool=True,
+                                write_to_spot_dictionary: bool=True, 
+                                return_patches: bool=True,
+                                train_size: float=0.8,
+                                test_size: float=0.2,
+                                random_state: int = 0) -> (dict, dict):
+        
+        """
+        Split patch locations under feature into train/test split. Can stratify by patch cell composition (run compute_patch_ncv first). Useful for splitting data  
+        without spatial overlap (if patches are computed with no overlap) for downstream regression tasks.
+
+        Args:
+            feature_xywh: Patch locations that would like to be split
+            res: Leiden cluster resolution for determining patch NCV clusters
+        """
+        
+        if train_size <= 0:
+            raise ValueError("Train_size must be > 0")
+        if test_size <= 0:
+            raise ValueError("Test_size must be > 0")
+        
+        ## Cluster Patch NCVs
+        if stratify:
+            leiden_clusters = self.compute_patch_ncv_clusters(feature_xywh, res)
+
+        ## Split patches into train/test, stratifying by NCV clusters
+        
+        if stratify:
+            try:
+                train_patch_xywh, test_patch_xywh, train_idx, test_idx = train_test_split(self._patch_properties_dict[feature_xywh], np.arange(self._patch_properties_dict[feature_xywh].shape[0]), train_size=train_size, test_size=test_size, stratify=leiden_clusters,
+                                                                     random_state=random_state)
+            except ValueError: 
+                raise Exception("Not enough samples in each cluster to split the data. Try a smaller res")
+        else:
+            train_patch_xywh, test_patch_xywh, train_idx, test_idx = train_test_split(self._patch_properties_dict[feature_xywh], np.arange(self._patch_properties_dict[feature_xywh].shape[0]), train_size=train_size, test_size=test_size,
+                                                                random_state=random_state)
+        
+        ## get idx of train/test/val split
+        train_test_id = np.concatenate((np.zeros(train_patch_xywh.shape[0]), np.zeros(test_patch_xywh.shape[0])))
+        train_test_id[test_idx] = 1
+    
+        sample_patch_xywh = np.concatenate((train_patch_xywh, test_patch_xywh))
+        
+        ## Write to patch dictionary
+        self.write_to_patch_dictionary(key='train_test_split_id', values=train_test_id,
+                patches_xywh=sample_patch_xywh, overwrite=True)
+        
+        ## Write to spot dictionary
+        if write_to_spot_dictionary:
+             self.transfer_patch_to_spot(
+                keys_to_transfer='train_test_split_id',
+                overwrite=True)
+                
+        if return_patches:
+            return self._patch_properties_dict['train_test_split_id'], self._patch_properties_dict['train_test_split_id_patch_xywh']
+        
+    def patch_train_test_val_split(self, feature_xywh: str=None,
+                                res: int=0.4, 
+                                stratify: bool=True,
+                                write_to_spot_dictionary: bool=True, 
+                                return_patches: bool=True,
+                                train_size: float = 0.8,
+                                test_size: float = 0.15,
+                                val_size: float = 0.05,
+                                random_state: int = 0) -> (dict, dict):
+        
+        """
+        Split patch locations under feature into train/test/val split. Can stratify by patch cell composition (run 
+        compute_patch_ncv first). Useful for splitting data  without spatial overlap (if patches are computed with no 
+        overlap) for downstream regression tasks.
+
+        Args:
+            feature_xywh: Patch locations that would like to be split
+            res: Leiden cluster resolution for determining patch NCV clusters
+            
+        Returns:
+            
+        """
+        
+        ## Cluster Patch NCVs
+        if stratify:
+            leiden_clusters = self.compute_patch_ncv_clusters(feature_xywh, res)
+
+        ## Split patches into train/test, stratifying by NCV clusters
+        ## write custom train_test_split function in utils
+        
+
+        # Normalize the train/test/val sizes
+        norm0 = train_size + test_size + val_size
+        train_size_norm0 = train_size / norm0
+        test_and_val_size_norm0 = (test_size + val_size) / norm0
+
+        norm1 = test_size + val_size
+        test_size_norm1 = test_size / norm1
+        val_size_norm1 = val_size / norm1
+        
+        if stratify:
+            try:
+                train_patch_xywh, test_and_val_patch_xywh, train_leiden_clusters, test_and_val_leiden_clusters, train_idx, test_and_val_idx = train_test_split(self._patch_properties_dict[feature_xywh],
+                                                                                       leiden_clusters, np.arange(self._patch_properties_dict[feature_xywh].shape[0]), train_size = train_size, test_size = test_and_val_size_norm0, 
+                                                                                       stratify=leiden_clusters)
+                val_patch_xywh, test_patch_xywh, val_idx, test_idx = train_test_split(test_and_val_patch_xywh, test_and_val_idx, train_size=val_size_norm1, test_size=test_size_norm1,  
+                                                                   stratify=test_and_val_leiden_clusters)
+            except ValueError: 
+                raise Exception("Not enough samples in each cluster to split the data. Try a smaller res or adjusting train/test/val size")
+        else:
+            train_patch_xywh, test_and_val_patch_xywh, train_idx, test_and_val_idx = train_test_split(self._patch_properties_dict[feature_xywh], np.arange(self._patch_properties_dict[feature_xywh].shape[0]), train_size = train_size, test_size = test_and_val_size_norm0)
+            val_patch_xywh, test_patch_xywh, val_idx, test_idx = train_test_split(test_and_val_patch_xywh, test_and_val_idx, train_size=val_size_norm1, test_size=test_size_norm1)
+        
+        ## get idx of train/test/val split
+        train_test_val_id = np.concatenate((np.zeros(train_patch_xywh.shape[0]), np.zeros(test_patch_xywh.shape[0]), np.zeros(val_patch_xywh.shape[0])))
+        train_test_val_id[test_idx] = 1
+        train_test_val_id[val_idx] = 2
+        sample_patch_xywh = np.concatenate((train_patch_xywh, test_patch_xywh, val_patch_xywh))
+        
+        ## Write to patch dictionary
+        self.write_to_patch_dictionary(key='train_test_val_split_id', values=train_test_val_id,
+                patches_xywh = sample_patch_xywh, overwrite=True)
+        
+        ## Write to spot dictionary
+        if write_to_spot_dictionary:
+             self.transfer_patch_to_spot(
+                keys_to_transfer='train_test_val_split_id',
+                overwrite=True)
+                
+        if return_patches:
+            return self._patch_properties_dict['train_test_val_split_id'], self._patch_properties_dict['train_test_val_split_id_patch_xywh']
+        
+    def kfold_patch_train_test_split(self, feature_xywh: str=None,
+                                res: int=0.4, 
+                                stratify: bool=True,
+                                n_splits: int=5,
+                                write_to_spot_dictionary: bool = True,
+                                random_state: int = 0):
+        
+        """
+        Split patch locations under feature into kfold train/test splits. Can stratify by patch cell composition (run compute_patch_ncv first). Useful for splitting data without spatial overlap (if patches are computed with no overlap) for downstream regression tasks.
+        Writes patch train/test split ids to patch dictionary (and optionally to spot dictionary)
+
+        Args:
+            feature_xywh: Patch locations that would like to be split
+            res: Leiden cluster resolution for determining patch NCV clusters
+            stratify: whether to stratify by patch ncv
+            n_splits: number of kfold splits to run
+            write_to_spot_dictionary: whether to transfer patch train/test ids to spot and write to spot dictionary
+            random_state: affects the ordering of the indices during shuffling; pass an int for reproducibility 
+        """
+        
+        ## Cluster Patch NCVs
+        if stratify:
+            leiden_clusters = self.compute_patch_ncv_clusters(feature_xywh, res)
+        
+        ## run StratifiedKFold 
+        if stratify:
+            skf = StratifiedKFold(n_splits = n_splits, shuffle=True, random_state=random_state)
+            n = skf.get_n_splits(self._patch_properties_dict[feature_xywh],leiden_clusters)
+            for i, (train_index, test_index) in enumerate(skf.split(self._patch_properties_dict[feature_xywh],leiden_clusters)):
+                train_test_id = -1 * np.ones(self._patch_properties_dict[feature_xywh].shape[0])
+                train_test_id[train_index] = 0
+                train_test_id[test_index] = 1
+                self.write_to_patch_dictionary(key=f"train_test_split_fold_{i}_id", values=train_test_id,
+                    patches_xywh = self._patch_properties_dict[feature_xywh], overwrite=True)
+                
+                ## Write to spot dictionary
+                if write_to_spot_dictionary:
+                     self.transfer_patch_to_spot(
+                        keys_to_transfer=f"train_test_split_fold_{i}_id",
+                        overwrite=True)
+        else:
+            kf = KFold(n_splits = n_splits, shuffle=True, random_state=random_state)
+            n = kf.get_n_splits(self._patch_properties_dict[feature_xywh])
+            train_index, test_index = kf.split(self._patch_properties_dict[feature_xywh])
+            for i, (train_index, test_index) in enumerate(skf.split(self._patch_properties_dict[feature_xywh])):
+                train_test_id = -1 * np.ones(self._patch_properties_dict[feature_xywh].shape[0])
+                train_test_id[train_index] = 0
+                train_test_id[test_index] = 1
+                self.write_to_patch_dictionary(key=f"train_test_split_fold_{i}_id", values=train_test_id,
+                    patches_xywh = self._patch_properties_dict[feature_xywh], overwrite=True)
+                
+            ## Write to spot dictionary
+            if write_to_spot_dictionary:
+                 self.transfer_patch_to_spot(
+                    keys_to_transfer=f"train_test_split_fold_{i}_id",
+                    overwrite=True)
+            
+        
+    def get_spot_dictionary_subset_patch(self,
+                                         patch_key: str,
+                                         spot_keys: List[str]) -> dict:
+        """
+        Utility function that returns elements from spot properties dictionary that are spatially within patch coordinates of :attr:`patch_key`
+        
+        Args:
+            patch_key: key in patch dictionary to obtain patch coordinates from
+            spot_keys: keys within spot dictionary to return subsetted spot dictionary elements for
+            
+        Returns:
+            Dictionary containg spot dictionary elements that are spatial subset of :attr:`patch_key` in patch dictionary
+        """
+        
+        assert patch_key in self._patch_properties_dict.keys(), \
+            f"Patch key {patch_key} is not in patch properties dict."
+        
+        ## assert spot keys is list or iterable; try converting to list first before passing error
+        
+        ## assert spot keys are in spot dictionary
+        for spot_key in spot_keys:
+            assert spot_key in self._spot_properties_dict.keys(), \
+                f"Spot key {spot_key} is not in spot properties dict."
+        
+        # initialize empty dict
+        dict_of_spot_subset_patch_dicts = {}
+        
+        # initialize to populate dictionary with patch key and patch xywh
+        dict_of_spot_subset_patch_dicts[patch_key] = []
+        dict_of_spot_subset_patch_dicts[patch_key+'_patch_xywh'] = []
+        
+        # initialize to populate spot subset patch dicts
+        dict_of_spot_subset_patch_dicts['spot_subset_patch_dict'] = []
+        
+        # iterate over patches
+        for patch_ind in range(len(self._patch_properties_dict[patch_key])):
+            
+            # add patch feature and xywh to ouptut dictionary
+            dict_of_spot_subset_patch_dicts[patch_key].append(self._patch_properties_dict[patch_key][patch_ind])
+            dict_of_spot_subset_patch_dicts[patch_key+'_patch_xywh'].append(self._patch_properties_dict[patch_key+'_patch_xywh'][patch_ind])
+            
+            x,y,w,h = self._patch_properties_dict[patch_key+'_patch_xywh'][patch_ind]
+            
+            # initialize spot subset patch dict
+            spot_subset_patch_dict = {}
+            spot_subset_patch_dict["x_key"] = []
+            spot_subset_patch_dict["y_key"] = []
+            for key in spot_keys:
+                spot_subset_patch_dict[key] = []
+            
+            # convert image to spot coordinates
+            patch_x_coord_lower, patch_y_coord_lower = self.pixel_to_raw(x, y)
+            patch_x_coord_upper, patch_y_coord_upper = self.pixel_to_raw(x+w, y+h)
+            
+            for spot_ind in range(len(self._spot_properties_dict[spot_keys[0]])):
+
+                spot_x_coord = self._spot_properties_dict["x_key"][spot_ind]
+                spot_y_coord = self._spot_properties_dict["y_key"][spot_ind]
+                
+                # if spot coordinate is within a patch, add the corresponding spot dictionary elements to spot_subset_patch_dict
+                if patch_x_coord_lower <= spot_x_coord <= patch_x_coord_upper:
+                    if patch_y_coord_lower <= spot_y_coord <= patch_y_coord_upper:
+                        spot_subset_patch_dict["x_key"].append(spot_x_coord)
+                        spot_subset_patch_dict["y_key"].append(spot_y_coord)
+                        for key in spot_keys:
+                            if isinstance(self._spot_properties_dict[key], pandas.DataFrame) or isinstance(self._spot_properties_dict[key], pandas.Series):
+                                spot_subset_patch_dict[key].append(self._spot_properties_dict[key].iloc[spot_ind])
+                            else:
+                                spot_subset_patch_dict[key].append(self._spot_properties_dict[key][spot_ind])
+                            
+            # add subset dict from this spot to list of dicts
+            dict_of_spot_subset_patch_dicts['spot_subset_patch_dict'].append(spot_subset_patch_dict)
+            
+        return dict_of_spot_subset_patch_dicts               
+                
+        
     def transfer_patch_to_spot(
             self,
             keys_to_transfer: List[str],
@@ -887,6 +1652,10 @@ class SparseImage:
                     dw_from_center = torch.linspace(start=-0.5 * (w - 1), end=0.5 * (w - 1), steps=w)
                     dh_from_center = torch.linspace(start=-0.5 * (h - 1), end=0.5 * (h - 1), steps=h)
                     d2_from_center: torch.Tensor = dw_from_center[:, None].pow(2) + dh_from_center[None, :].pow(2)
+                    
+                    ## explicitly do this all on CPU?
+                    d2_from_center = d2_from_center.to(patch_quantity.device)
+                    
                     mask = (d2_from_center < tmp_distance[x:x + w, y:y + h])  # shape (w, h)
 
                     # If the current patch has a smaller distance. Overwrite patch_quantity and tmp_distance
@@ -994,6 +1763,74 @@ class SparseImage:
 
             self.write_to_spot_dictionary(key=key, values=interpolated_values.permute(dims=(1, 0)), overwrite=overwrite)
 
+    def transfer_spot_to_image(
+            self,
+            keys_to_transfer: List[str],
+            overwrite: bool = False,
+            verbose: bool = False,
+            strategy: str = "bilinear"):
+        """
+        Evaluate the image_properties_dict at the spots location.
+        Store the results in the image_properties_dict under the same name.
+
+        Args:
+            keys_to_transfer: the keys of the quantity to transfer from spot_properties_dict to image_properties_dict.
+            overwrite: bool, in case of collision between the keys this variable controls
+                when the value will be overwritten.
+            verbose: bool, if true intermediate messages are displayed.
+            strategy: str, either 'closest' or 'bilinear' (default). This described the interpolation method.
+        """
+        # make sure keys_to_transfer is provided as a list
+        if isinstance(keys_to_transfer, str):
+            keys_to_transfer = [keys_to_transfer]
+        assert isinstance(keys_to_transfer, list), \
+            "Error. keys_to_transfer must be a list. Received {0}".format(type(keys_to_transfer))
+
+        assert set(keys_to_transfer).issubset(set(self._spot_properties_dict.keys())), \
+            "Some keys are not present in self.spot_properties_dict"
+
+        # actual calculation
+        
+        ## get width and height
+        for key in keys_to_transfer:
+            if verbose:
+                print("working on ->", key)
+            spot_quantity = self.read_from_spot_dictionary(key=key)
+
+            
+            assert isinstance(spot_quantity, torch.Tensor)
+            #assert len(spot_quantity.shape) == 3 and spot_quantity.shape[-2:] == self.shape[-2:]
+
+            x_raw = torch.from_numpy(self.x_raw).float()
+            y_raw = torch.from_numpy(self.y_raw).float()
+            x_pixel, y_pixel = self.raw_to_pixel(x_raw=x_raw, y_raw=y_raw)
+            
+            # Convert the coordinates and round to the closest integer
+
+            ix = torch.round(x_pixel).long()
+            iy = torch.round(y_pixel).long()
+
+            # Create a sparse array with 1 in the correct channel and x,y location.
+            # The coalesce make sure that if in case of a collision the values are summed.
+            padding = self._padding
+            dense_shape = (
+                torch.max(ix).item() + 1 + 2 * padding,
+                torch.max(iy).item() + 1 + 2 * padding
+            )
+            
+            assert len(spot_quantity.shape) == 1, \
+                "Key to transfer must be 1-D"
+            
+            result = torch.sparse_coo_tensor(
+                indices=torch.stack((x_pixel, y_pixel)),
+                values=spot_quantity,
+                size=dense_shape,
+                #device=,
+                requires_grad=False,
+                ).coalesce().to_dense()
+
+            self.write_to_image_dictionary(key=key, values=result, overwrite=overwrite)
+    
     def get_state_dict(self, include_anndata: bool = True) -> dict:
         """
         Get a dictionary with the state of the system
@@ -1045,6 +1882,7 @@ class SparseImage:
             pixel_size: float = None,
             categories_to_channels: dict = None,
             padding: int = 10,
+            status_key: str = "status"
     ):
         """
         Create a SparseImage object from an AnnData object.
@@ -1057,7 +1895,7 @@ class SparseImage:
             anndata: the AnnData object with the spatial data
             x_key: str, tha key associated with the x_coordinate in the AnnData object
             y_key: str, tha key associated with the y_coordinate in the AnnData object
-            category_key: str, tha key associated with the categorical values (cell_types or gene_identities)
+            category_key: str, the key associated with the probability values (cell_types or gene_identities)
             pixel_size: float, pixel_size used to convert from raw coordinates to pixel coordinates.
                 If it is not specified it will be chosen to be 1/3 of the median of the Nearest Neighbour distances
                 between spots. Explicitely setting this attribute ensures that the pixel_size will be consistent
@@ -1113,69 +1951,130 @@ class SparseImage:
             except Exception as e:
                 print(e)
                 y_raw = numpy.asarray(anndata.obsm[y_key])
-
-        cat_raw = numpy.asarray(anndata.obs[category_key])
+        
+        # try:
+        #     cat_raw = anndata.obs[category_key]
+        # except Exception as e:
+        #     print(e)
+        #     cat_raw = anndata.obsm[category_key]
+            
+        # category key must either be probabilistic assignment or one-hot encoded
+        cat_raw = anndata.obsm[category_key]
+        
         assert isinstance(x_raw, numpy.ndarray)
         assert isinstance(y_raw, numpy.ndarray)
-        assert isinstance(cat_raw, numpy.ndarray)
-        assert x_raw.shape == y_raw.shape == cat_raw.shape and len(x_raw.shape) == 1
+        assert isinstance(cat_raw, pandas.DataFrame)
+        assert x_raw.shape[0] == y_raw.shape[0] == cat_raw.shape[0] and len(x_raw.shape) == 1
+        
+        ## convert to float
+        x_raw = x_raw.astype(float)
+        y_raw = y_raw.astype(float)
 
         spot_dictionary = {
             "x_key": x_raw,
-            "y_key": y_raw,
-            "cat_key": cat_raw}
-
+            "y_key": y_raw}
+        
+        for key in cat_raw:
+            spot_dictionary[key] = cat_raw[key]
+        
         for k in anndata.obs.keys():
-            if k not in {x_key, y_key, category_key}:
+            if k not in {x_key, y_key} and k not in cat_raw and k != category_key:
                 spot_dictionary[k] = anndata.obs[k]
         for k in anndata.obsm.keys():
-            if k not in {x_key, y_key, category_key}:
+            if k not in {x_key, y_key} and k not in cat_raw and k != category_key:
                 spot_dictionary[k] = anndata.obsm[k]
-        # I have transferred all the observation I coukld on the spot_dict
-
+        # I have transferred all the observation I could on the spot_dict
+        
         # check if anndata.uns["sparse_image_state_dict"] is present
         try:
             state_dict = anndata.uns.pop("sparse_image_state_dict")
 
-            sparse_img_object = cls(
-                spot_properties_dict=spot_dictionary,
-                x_key="x_key",
-                y_key="y_key",
-                category_key="cat_key",
-                categories_to_codes=state_dict["categories_to_codes"],
-                pixel_size=state_dict["pixel_size"],
-                padding=state_dict["padding"],
-                patch_properties_dict=state_dict["patch_properties_dict"],
-                image_properties_dict=state_dict["image_properties_dict"],
-                anndata=anndata)
+            if status_key in anndata.uns.keys():
+                sparse_img_object = cls(
+                    spot_properties_dict=spot_dictionary,
+                    x_key="x_key",
+                    y_key="y_key",
+                    category_key=category_key,
+                    categories_to_codes=state_dict["categories_to_codes"],
+                    pixel_size=state_dict["pixel_size"],
+                    padding=state_dict["padding"],
+                    patch_properties_dict=state_dict["patch_properties_dict"],
+                    image_properties_dict=state_dict["image_properties_dict"],
+                    anndata=anndata,
+                    sample_status = anndata.uns[status_key]) 
+            else:
+                sparse_img_object = cls(
+                    spot_properties_dict=spot_dictionary,
+                    x_key="x_key",
+                    y_key="y_key",
+                    category_key=category_key,
+                    categories_to_codes=state_dict["categories_to_codes"],
+                    pixel_size=state_dict["pixel_size"],
+                    padding=state_dict["padding"],
+                    patch_properties_dict=state_dict["patch_properties_dict"],
+                    image_properties_dict=state_dict["image_properties_dict"],
+                    anndata=anndata) 
+                
             return sparse_img_object
 
         except KeyError:
 
             if categories_to_channels is None:
-                category_values = list(numpy.unique(cat_raw))
+                category_values = list(numpy.unique(cat_raw.columns))
                 categories_to_channels = dict(zip(category_values, range(len(category_values))))
 
-            assert set(numpy.unique(cat_raw)).issubset(set(categories_to_channels.keys())), \
+            assert set(cat_raw.columns).issubset(set(categories_to_channels.keys())), \
                 " Error. The adata object contains values which are not present in category_values."
 
             # Get the pixel_size
             if pixel_size is None:
                 mean_dnn, median_dnn = cls._check_mean_median_spacing(torch.tensor(x_raw), torch.tensor(y_raw))
                 pixel_size = 0.25 * median_dnn
+            
+            if status_key in anndata.uns.keys():
+                try: 
+                    sparse_img_obj = cls(
+                        spot_properties_dict=spot_dictionary,
+                        x_key="x_key",
+                        y_key="y_key",
+                        category_key=category_key,
+                        categories_to_codes=categories_to_channels,
+                        pixel_size=pixel_size,
+                        padding=padding,
+                        patch_properties_dict=None,
+                        image_properties_dict=None,
+                        anndata=anndata,
+                        sample_status = anndata.uns[status_key] 
+                    )
 
-            sparse_img_obj = cls(
-                spot_properties_dict=spot_dictionary,
-                x_key="x_key",
-                y_key="y_key",
-                category_key="cat_key",
-                categories_to_codes=categories_to_channels,
-                pixel_size=pixel_size,
-                padding=padding,
-                patch_properties_dict=None,
-                image_properties_dict=None,
-                anndata=anndata,
-            )
+                except KeyError:
+                    sparse_img_obj = cls(
+                        spot_properties_dict=spot_dictionary,
+                        x_key="x_key",
+                        y_key="y_key",
+                        category_key=category_key,
+                        categories_to_codes=categories_to_channels,
+                        pixel_size=pixel_size,
+                        padding=padding,
+                        patch_properties_dict=None,
+                        image_properties_dict=None,
+                        anndata=anndata,
+                        sample_status = anndata.obs[status_key][0] ## assumes anndata.obs[status_key] is all the same
+                    )
+            else:
+                sparse_img_obj = cls(
+                        spot_properties_dict=spot_dictionary,
+                        x_key="x_key",
+                        y_key="y_key",
+                        category_key=category_key,
+                        categories_to_codes=categories_to_channels,
+                        pixel_size=pixel_size,
+                        padding=padding,
+                        patch_properties_dict=None,
+                        image_properties_dict=None,
+                        anndata=anndata
+                    )
+                
 
         return sparse_img_obj
 
@@ -1210,8 +2109,9 @@ class SparseImage:
         # add the OTHER (missing) spot properties to either adata.obs or adata.obsm
         set_obs_keys = set(adata.obs_keys())
         set_obsm_keys = set(adata.obsm_keys())
+
         for k, v in self._spot_properties_dict.items():
-            if k not in {self._x_key, self._y_key, self._cat_key} and \
+            if k not in {self._x_key, self._y_key} and k not in self.anndata.obsm[self._cat_key].columns and\
                     k not in set_obs_keys and \
                     k not in set_obsm_keys:
 

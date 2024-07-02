@@ -9,8 +9,9 @@ from typing import List
 from datetime import timedelta
 
 import pytorch_lightning as pl
-from pytorch_lightning.plugins import DDPPlugin
-from pytorch_lightning.profiler import SimpleProfiler, PassThroughProfiler, AdvancedProfiler
+# from pytorch_lightning.plugins import DDPPlugin
+from pytorch_lightning.strategies import DDPStrategy
+from pytorch_lightning.profilers import SimpleProfiler, PassThroughProfiler, AdvancedProfiler
 from pytorch_lightning.trainer import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
@@ -68,7 +69,7 @@ def initialization(
     else:
         ckpt_file_for_trainer = None
 
-    # Ridefine the model
+    # Redefine the model
     if config_dict["ssl_model"] == "barlow":
         Model = Barlow
     elif config_dict["ssl_model"] == "dino":
@@ -122,7 +123,7 @@ def initialization(
         mode="async" if config_dict.get("remote_logging", False) else "offline",
         tags=[str(config_dict.get("ssl_model", "unknown_model"))],
         source_files=["*.py", "*.yaml"],
-        fail_on_exception=True,  # it does not good if you are not logging anything but simulation keeps going
+        fail_on_exception=True  # it does not good if you are not logging anything but simulation keeps going,
     )
 
     if new_dict["profiler"] == 'advanced':
@@ -132,6 +133,7 @@ def initialization(
     else:
         profiler = PassThroughProfiler()
 
+    
     if torch.cuda.device_count() == 0:
         # TODO:
         #   This is supposed to mimic a multi-gpu training on CPU for debugging purposes
@@ -151,17 +153,20 @@ def initialization(
         sync_batchnorm = False
         precision = new_dict["precision"]
     else:
-        # more that 1 gpu
+        # TODO:
+        # Validation hangs with multi-gpu training. Investigate solution
+        # more thaN 1 gpu
         accelerator = None
         num_processes = 1
         sync_batchnorm = True
         precision = new_dict["precision"]
         if config_dict["ssl_model"] == "vae":
             # vae uses manual optimization. I need to set this flag to true
-            strategy = DDPPlugin(find_unused_parameters=True)
+            strategy = DDPStrategy(find_unused_parameters=True) 
         else:
             # everything else works with automatic differentiation. Set this to false for speed
-            strategy = DDPPlugin(find_unused_parameters=False)
+            # strategy = DDPStrategy(find_unused_parameters=False)
+            strategy = "ddp" # defaults to false in lightning 2.0
 
     # monitor the learning rate. This will work both when manual or scheduler is used to change the learning rate.
     lr_monitor = LearningRateMonitor(logging_interval='epoch', log_momentum=True)
@@ -185,8 +190,10 @@ def initialization(
         save_on_train_epoch_end=True,
         save_last=False,
         # the following 2 are mutually exclusive. Determine how frequently to save
-        train_time_interval=timedelta(minutes=new_dict["checkpoint_interval_minutes"]),
-        # every_n_epochs=3,
+        # train_time_interval=timedelta(minutes=new_dict["checkpoint_interval_minutes"]),
+        every_n_epochs=new_dict["checkpoint_interval_epochs"],
+        
+        save_top_k=-1 ## save all periodic checkpoints
     )
 
     # save ckpt at the end of training
@@ -197,16 +204,18 @@ def initialization(
         every_n_epochs=0,
     )
     ckpt_train_end.CHECKPOINT_NAME_LAST = 'my_checkpoint_last'  # the extension .ckpt will be added automatically
-
+    
+    ## TODO: debug validation with multi-gpu training
     pl_trainer = Trainer(
-        weights_save_path="saved_ckpt",
+        default_root_dir="saved_ckpt",
         profiler=profiler,
-        num_nodes=num_processes,  # number of different machines, FOr us this is 1
-        accelerator=accelerator,
+        # num_nodes=num_processes,  # number of different machines, FOr us this is 1
+        num_nodes=1, ##TODO: set this automatically to machine specs
+        accelerator='gpu',#accelerator,
         gpus=new_dict["gpus"],
         check_val_every_n_epoch=new_dict["check_val_every_n_epoch"],
         callbacks=[ckpt_train_end, ckpt_train_interval, ckpt_save_best, lr_monitor],
-        strategy=strategy,
+        strategy = strategy,
         num_sanity_val_steps=0,
         # debugging
         # fast_dev_run=True,
@@ -217,7 +226,7 @@ def initialization(
         # other stuff
         logger=pl_neptune_logger,
         log_every_n_steps=100,
-        num_processes=num_processes,
+        num_processes=new_dict["gpus"], ## needs to be same as number of gpus otherwise client socket time out error
         sync_batchnorm=sync_batchnorm,
         precision=precision,  # if using P100 GPU reduce to 16 (half-precision) to have massive speedup
         # If model uses automatic_optimization -> you can use gradient clipping in the trainer.
@@ -333,7 +342,7 @@ def parse_args(argv: List[str]) -> dict:
 
     # parameters for Neptune and random seed
     parser.add_argument("--random_seed", type=int, default=1, help="Integer specifying the global random seed")
-    parser.add_argument("--neptune_project", type=str, default="cellarium/tissue-purifier",
+    parser.add_argument("--neptune_project", type=str, default="skambham/tp-test",#"cellarium/tissue-purifier",
                         help="neptune project name. This is where the data will be logged")
 
     # parameters for the trainer

@@ -6,13 +6,13 @@ import torch
 from scanpy import AnnData
 from scipy import stats
 from scipy.sparse import random as random_sparse
-from tissue_purifier.data_utils.sparse_image import SparseImage
-from tissue_purifier.data_utils.datamodule import DummyDM
-from tissue_purifier.model_utils.logger import NeptuneLoggerCkpt
+from tissue_purifier.data.sparse_image import SparseImage
+#from tissue_purifier.data.datamodule import DummyDM
+from tissue_purifier.models.logger import NeptuneLoggerCkpt
 from pytorch_lightning.trainer import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.plugins import DDPPlugin
-from tissue_purifier.data_utils.dataset import MetadataCropperDataset
+from tissue_purifier.data.dataset import MetadataCropperDataset
 
 
 def _random_string_generator(str_size, allowed_chars=None):
@@ -21,19 +21,19 @@ def _random_string_generator(str_size, allowed_chars=None):
     return ''.join(random.choice(allowed_chars) for x in range(str_size))
 
 
-@pytest.fixture
-def dummy_dino_dm():
-    config = {
-        'batch_size_per_gpu': 10,
-        'n_crops_for_tissue_test': 10,
-        'n_crops_for_tissue_train': 10,
-        'n_element_min_for_crop': 1,
-        'global_size': 64,
-        'global_scale': (0.75, 1.0),
-        'local_size': 32,
-        'local_scale': (0.5, 0.75),
-    }
-    return DummyDM(**config)
+# @pytest.fixture
+# def dummy_dino_dm():
+#     config = {
+#         'batch_size_per_gpu': 10,
+#         'n_crops_for_tissue_test': 10,
+#         'n_crops_for_tissue_train': 10,
+#         'n_element_min_for_crop': 1,
+#         'global_size': 64,
+#         'global_scale': (0.75, 1.0),
+#         'local_size': 32,
+#         'local_scale': (0.5, 0.75),
+#     }
+#     return DummyDM(**config)
 
 
 @pytest.fixture

@@ -14,7 +14,9 @@ def plot_embeddings(
         annotation_keys: List[str],
         sup_title: str = None,
         n_col: int = 3,
-        cmap: Colormap = 'inferno') -> plt.Figure:
+        cmap: Colormap = 'inferno',
+        num_categorical: int = 10,
+        **kwargs) -> plt.Figure:
     """
     Takes a dictionary with embeddings and multiple annotations and make a multi-panel figure with each panel showing
     one annotation.
@@ -42,7 +44,7 @@ def plot_embeddings(
                 isinstance(_x[0], numpy.float32) or
                 isinstance(_x[0], numpy.float64)
         )
-        is_many = (_x.shape[0] > 30)
+        is_many = (_x.shape[0] > num_categorical) ## change this to a parameter
         is_continuous = (is_many and is_float)
         is_categorical = not is_continuous
         return is_categorical
@@ -66,6 +68,7 @@ def plot_embeddings(
 
     # create anndata with annotations and embeddings
     adata = AnnData(obs=df)
+    
     adata.obsm[embedding_key] = cloned_dict[embedding_key]
 
     # leverage anndata embedding capabilities
@@ -75,7 +78,8 @@ def plot_embeddings(
                     return_fig=True,
                     show=False,
                     ncols=n_col,
-                    cmap=cmap)
+                    cmap=cmap,
+                    **kwargs)
     if sup_title:
         _ = fig.suptitle(sup_title)
 

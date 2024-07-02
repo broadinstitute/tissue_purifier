@@ -11,7 +11,8 @@ import torchvision
 from os import cpu_count
 from scanpy import AnnData
 
-from tissue_purifier.models.patch_analyzer import SpatialAutocorrelation
+from tissue_purifier.models.patch_analyzer import SpatialAutocorrelation, Composition
+
 from .sparse_image import SparseImage
 from .transforms import (
     DropoutSparseTensor,
@@ -178,8 +179,10 @@ class SparseSslDM(SslDM):
                  occlusion_fraction: Tuple[float, float] = (0.1, 0.3),
                  drop_channel_prob: float = 0.0,
                  drop_channel_relative_freq: Iterable[float] = None,
-                 n_crops_for_tissue_test: int = 50,
                  n_crops_for_tissue_train: int = 50,
+                 n_crops_for_tissue_test: int = 50,
+                 n_cuts_for_tissue_train: int = 1,
+                 fraction_patch_overlap_for_tissue_test: float = 0.0,
                  batch_size_per_gpu: int = 64,
                  **kargs):
         """
@@ -222,8 +225,10 @@ class SparseSslDM(SslDM):
         self._drop_channel_prob = drop_channel_prob
         self._drop_channel_relative_freq = drop_channel_relative_freq
         self._n_element_min_for_crop = n_element_min_for_crop
-        self._n_crops_for_tissue_test = n_crops_for_tissue_test
         self._n_crops_for_tissue_train = n_crops_for_tissue_train
+        self._n_crops_for_tissue_test = n_crops_for_tissue_test
+        self._n_cuts_for_tissue_train = n_cuts_for_tissue_train
+        self._fraction_patch_overlap_for_tissue_test = fraction_patch_overlap_for_tissue_test
 
         # batch_size
         self._batch_size_per_gpu = batch_size_per_gpu
@@ -273,9 +278,12 @@ class SparseSslDM(SslDM):
         parser.add_argument("--n_crops_for_tissue_train", type=int, default=50,
                             help="The number of crops in each training epoch will be: n_tissue * n_crops. \
                                Set small for rapid prototyping")
-        parser.add_argument("--n_crops_for_tissue_test", type=int, default=50,
-                            help="The number of crops in each test epoch will be: n_tissue * n_crops. \
+        parser.add_argument("--n_cuts_for_tissue_train", type=int, default=1,
+                            help="The number of Random Straight Cuts to apply during training transform. \
                                Set small for rapid prototyping")
+        parser.add_argument("--fraction_patch_overlap_for_tissue_test", type=float, default=0.0,
+                            help="The stride size for generating tissue crops will be: global_size - global_size * fraction_patch_overlap_for_tissue_test. \
+                               Set large for more accurate patch features. Set small for more disjoint patches.")
         parser.add_argument("--batch_size_per_gpu", type=int, default=64,
                             help="Batch size for EACH GPUs. Set small for rapid prototyping. \
                             The total batch_size will increase linearly with the number of GPUs.")
@@ -306,7 +314,14 @@ class SparseSslDM(SslDM):
     def n_local_crops(self) -> int:
         """ Number of local crops for each image to use for training (used only for Dino). """
         return self._n_local_crops
-
+    
+    @property
+    def n_element_min_for_crop(self) -> int:
+        """
+        Minimum number of beads/cells in a crop
+        """
+        return self._n_element_min_for_crop
+    
     @property
     def cropper_test(self) -> CropperSparseTensor:
         """ Cropper to be used at test time. This specify the cropping strategy to use at test time. """
@@ -314,6 +329,7 @@ class SparseSslDM(SslDM):
             strategy='random',
             crop_size=self._global_size,
             n_element_min=self._n_element_min_for_crop,
+            frac_overlap = self._fraction_patch_overlap_for_tissue_test,
             n_crops=self._n_crops_for_tissue_test,
             random_order=True,
         )
@@ -334,30 +350,35 @@ class SparseSslDM(SslDM):
         """ Transformation to be applied at test time. This specify the data-augmentation at test time. """
         return TransformForList(
             transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropout_rate=self._drop_spot_probs),
                 SparseToDense(),
-                Rasterize(sigmas=self._rasterize_sigmas, normalize=False),
-                RandomVFlip(p=0.5),
-                RandomHFlip(p=0.5),
-                RandomGlobalIntensity(f_min=self._global_intensity[0], f_max=self._global_intensity[1])
+                Rasterize(sigmas=self._rasterize_sigmas, normalize=False)
             ]),
             transform_after_stack=torchvision.transforms.CenterCrop(size=self.global_size),
         )
-
+    
     @property
     def trsfm_train_global(self) -> TransformForList:
         """
         Global Transformation to be applied at train time.
         This specify the data augmentation for the global crops.
         """
+        
+        ## assumes same occlusion fraction for each straight cut
+        if self._n_cuts_for_tissue_train == 1:
+            n_RandomStraightCuts = RandomStraightCut(p=0.5, occlusion_fraction=self._occlusion_fraction)
+        elif self._n_cuts_for_tissue_train == 2:
+            n_RandomStraightCuts = torchvision.transforms.Compose([RandomStraightCut(p=0.5, occlusion_fraction=self._occlusion_fraction), RandomStraightCut(p=0.25, 
+                                                                    occlusion_fraction=self._occlusion_fraction)])
+        else:
+            raise Exception("Only 1 or 2 cuts for tissue train are allowed.")
+            
         return TransformForList(
             transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropout_rate=self._drop_spot_probs),
+                DropoutSparseTensor(p=1.0, dropout_rate=self._drop_spot_probs),
                 SparseToDense(),
                 RandomGlobalIntensity(f_min=self._global_intensity[0], f_max=self._global_intensity[1])
             ]),
             transform_after_stack=torchvision.transforms.Compose([
-                Rasterize(sigmas=self._rasterize_sigmas, normalize=False),
                 torchvision.transforms.RandomRotation(
                     degrees=(-180.0, 180.0),
                     interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
@@ -371,8 +392,9 @@ class SparseSslDM(SslDM):
                     scale=self._global_scale,
                     ratio=(0.95, 1.05),
                     interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
-                RandomStraightCut(p=0.5, occlusion_fraction=self._occlusion_fraction),
+                n_RandomStraightCuts,
                 DropChannel(p=self._drop_channel_prob, relative_frequency=self._drop_channel_relative_freq),
+                Rasterize(sigmas=self._rasterize_sigmas, normalize=False),
             ])
         )
 
@@ -384,12 +406,11 @@ class SparseSslDM(SslDM):
         """
         return TransformForList(
             transform_before_stack=torchvision.transforms.Compose([
-                DropoutSparseTensor(p=0.5, dropout_rate=self._drop_spot_probs),
+                DropoutSparseTensor(p=1.0, dropout_rate=self._drop_spot_probs),
                 SparseToDense(),
                 RandomGlobalIntensity(f_min=self._global_intensity[0], f_max=self._global_intensity[1])
             ]),
             transform_after_stack=torchvision.transforms.Compose([
-                Rasterize(sigmas=self._rasterize_sigmas, normalize=False),
                 torchvision.transforms.RandomRotation(
                     degrees=(-180.0, 180.0),
                     interpolation=torchvision.transforms.InterpolationMode.BILINEAR,
@@ -405,8 +426,10 @@ class SparseSslDM(SslDM):
                     interpolation=torchvision.transforms.InterpolationMode.BILINEAR),
                 RandomStraightCut(p=0.5, occlusion_fraction=self._occlusion_fraction),
                 DropChannel(p=self._drop_channel_prob, relative_frequency=self._drop_channel_relative_freq),
+                Rasterize(sigmas=self._rasterize_sigmas, normalize=False),
             ])
         )
+    
 
     def train_dataloader(self) -> DataLoaderWithLoad:
         try:
@@ -414,13 +437,13 @@ class SparseSslDM(SslDM):
         except AttributeError:
             device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         # print("Inside train_dataloader", device)
-
+        
         assert isinstance(self._dataset_train, CropperDataset)
         if self._dataset_train.n_crops_per_tissue is None:
             batch_size_dataloader = self._batch_size_per_gpu
         else:
             batch_size_dataloader = max(1, int(self._batch_size_per_gpu // self._dataset_train.n_crops_per_tissue))
-
+        
         dataloader_train = DataLoaderWithLoad(
             # move the dataset to GPU so that the cropping happens there
             dataset=self._dataset_train.to(device),
@@ -482,7 +505,6 @@ class SparseSslDM(SslDM):
         self._dataset_test = None
         raise NotImplementedError
 
-
 class AnndataFolderDM(SparseSslDM):
     """
     Create a Datamodule ready for Self-supervised learning starting
@@ -495,6 +517,7 @@ class AnndataFolderDM(SparseSslDM):
                  y_key: str,
                  category_key: str,
                  categories_to_channels: Dict[Any, int],
+                 status_key: str,
                  metadata_to_classify: Callable,
                  metadata_to_regress: Callable,
                  num_workers: int,
@@ -507,7 +530,7 @@ class AnndataFolderDM(SparseSslDM):
             pixel_size: size of the pixel (used to convert raw_coordinates to pixel_coordinates)
             x_key: key associated with the x_coordinate in the AnnData object
             y_key: key associated with the y_coordinate in the AnnData object
-            category_key: key associated with the the categorical values (cell_types or gene_identities)
+            category_key: key associated with the assignment probabilities (cell_types or gene_identities; can be one-hot encoded for categorical assignments)
                 in the AnnData object
             categories_to_channels: dictionary with the mapping from categorical values to channels in the image.
                 The values must be non-negative integers
@@ -518,8 +541,8 @@ class AnndataFolderDM(SparseSslDM):
             gpus: number of gpus to use for training.
             n_neighbours_moran: number of neighbours used to compute Moran's I score
             kargs: all these parameters will be passed to :class:`SparseSslDM`
-        """
-
+        """ 
+            
         assert isinstance(categories_to_channels, dict) and len(categories_to_channels.keys()) >= 1, \
             "Error. Specify a valid categories_to_channels mapping. Received {}".format(categories_to_channels)
 
@@ -536,6 +559,7 @@ class AnndataFolderDM(SparseSslDM):
         self._categories_to_channels = categories_to_channels
         self._metadata_to_regress = metadata_to_regress
         self._metadata_to_classify = metadata_to_classify
+        self._status_key = status_key
 
         self._num_workers = cpu_count() if num_workers is None else num_workers
         self._gpus = torch.cuda.device_count() if gpus is None else gpus
@@ -576,8 +600,12 @@ class AnndataFolderDM(SparseSslDM):
         parser.add_argument("--y_key", type=str, default="y",
                             help="key associated with the y_coordinate in the AnnData object")
         parser.add_argument("--category_key", type=str, default="cell_type",
-                            help="key associated with the the categorical values (cell_types or gene_identities) \
+                            help="key associated with the the probability values (cell_types or gene_identities; can be one-hot encoded) \
                             in the AnnData object")
+        parser.add_argument("--status_key", type=str, default="status",
+                            help="keys associated with sample status, located in anndata.uns")
+        parser.add_argument("--weights_key", type=str, default="cell_type_proportions",
+                    help="obsm key for weights in each channel")
         parser.add_argument("--categories_to_channels", nargs='*', action=ParseDict,
                             help="dictionary in the form 'foo'=1 'bar'=2 to define \
                             how the categorical values are mapped to the different channels in the image")
@@ -608,6 +636,7 @@ class AnndataFolderDM(SparseSslDM):
             category_key=self._category_key,
             pixel_size=self._pixel_size,
             categories_to_channels=self._categories_to_channels,
+            status_key = self._status_key,
             padding=10)
 
     def prepare_data(self):
@@ -621,15 +650,21 @@ class AnndataFolderDM(SparseSslDM):
             # checking if it is a file
             if os.path.isfile(f) and filename.endswith('h5ad'):
                 print("reading file {}".format(f))
+                
+                # import psutil
+                # print(psutil.virtual_memory())
+                
                 anndata = read_h5ad(filename=f)
+                
                 anndata.X = None  # set the count matrix to None
                 sp_img = self.anndata_to_sparseimage(anndata=anndata).cpu()
                 all_sparse_images.append(sp_img)
-
-                metadata = MetadataCropperDataset(f_name=filename, loc_x=0.0, loc_y=0.0, moran=-99)
+                metadata = MetadataCropperDataset(f_name=filename, loc_x=0.0, loc_y=0.0, moran=-99, sample_status = 0, composition=None) ## dummy metadata
                 all_metadatas.append(metadata)
 
                 all_labels.append(filename)
+                
+                del anndata ## delete anndata after converting to sparse image
 
         self._all_filenames: list = all_labels
 
@@ -640,18 +675,26 @@ class AnndataFolderDM(SparseSslDM):
         # create test_dataset_random and write to file
         all_names = [metadata.f_name for metadata in all_metadatas]
 
+        ## TODO: allow cropper strategy to be random or tiling
+        ## TODO: don't move sparse images to cuda by default
         if torch.cuda.is_available():
             all_sparse_images = [sp_img.cuda() for sp_img in all_sparse_images]
 
         test_imgs, test_labels, test_metadatas = [], [], []
         for sp_img, label, fname in zip(all_sparse_images, all_labels, all_names):
-            sps_tmp, loc_x_tmp, loc_y_tmp = self.cropper_test(sp_img, n_crops=self._n_crops_for_tissue_test)
+            
+            sps_tmp, loc_x_tmp, loc_y_tmp = self.cropper_test(sp_img, fraction_patch_overlap = self._fraction_patch_overlap_for_tissue_test) #n_crops=self._n_crops_for_tissue_test)
             labels = [label] * len(sps_tmp)
 
+            ### add majority cell type label 
             morans = [self.compute_moran(sparse_tensor).max().item() for sparse_tensor in sps_tmp]
-            metadatas = [MetadataCropperDataset(f_name=fname, loc_x=loc_x, loc_y=loc_y, moran=moran) for
-                         loc_x, loc_y, moran in zip(loc_x_tmp, loc_y_tmp, morans)]
-
+            statuses = [sp_img._sample_status for sparse_tensor in sps_tmp] ## same status for all patches in this sp img
+            list_composition = Composition(return_fraction=True)(sps_tmp)
+            metadatas = [MetadataCropperDataset(f_name=fname, loc_x=loc_x, loc_y=loc_y, moran=moran, sample_status=status, composition=composition) for
+                     loc_x, loc_y, moran, status, composition in zip(loc_x_tmp, loc_y_tmp, morans, statuses,list_composition)] 
+            
+            # metadatas = MetadataCropperDataset(f_name=filename, loc_x=0.0, loc_y=0.0, moran=-99, sample_status = 0, composition=None)
+            
             test_imgs += [sp_img.cpu() for sp_img in sps_tmp]
             test_labels += labels
             test_metadatas += metadatas
@@ -662,24 +705,38 @@ class AnndataFolderDM(SparseSslDM):
     def get_metadata_to_classify(self, metadata) -> Dict[str, int]:
         """ Extract one or more quantities to classify from the metadata """
         if self._metadata_to_classify is None:
-            return {"tissue_label": self._all_filenames.index(metadata.f_name)}
+            return {"tissue_label": self._all_filenames.index(metadata.f_name), "sample_status": int(metadata.sample_status)}
         else:
             return self._metadata_to_classify(metadata)
 
     def get_metadata_to_regress(self, metadata) -> Dict[str, float]:
         """ Extract one or more quantities to regress from the metadata """
         if self._metadata_to_regress is None:
-            return {
-                "moran": float(metadata.moran),
-                "loc_x": float(metadata.loc_x),
-            }
+            
+            regress_dict = {
+                    "loc_x": float(metadata.loc_x),
+                    "loc_y": float(metadata.loc_y)
+                }
+            
+            if isinstance(metadata.moran,list) or isinstance(metadata.moran,torch.Tensor):
+                for ch in range(len(metadata.moran)):
+                    regress_dict["moran_ch_" + str(ch)] = metadata.moran[ch].item()
+
+                regress_dict["moran"] = float(metadata.moran.max().item())
+                
+            else:
+                regress_dict["moran"] = float(metadata.moran)
+
+            for ch in range(len(metadata.composition)):
+                regress_dict["ch_" + str(ch)] = metadata.composition[ch].item()
+                
+            return regress_dict
         else:
             return self._metadata_to_regress(metadata)
 
     def setup(self, stage: Optional[str] = None) -> None:
         list_imgs, list_labels, list_metadata = torch.load(os.path.join(self._data_folder, "train_dataset.pt"))
         print("read the file {}".format(os.path.join(self._data_folder, "train_dataset.pt")))
-
         list_imgs = [img.coalesce().cpu() for img in list_imgs]
         self._dataset_train = CropperDataset(
             imgs=list_imgs,

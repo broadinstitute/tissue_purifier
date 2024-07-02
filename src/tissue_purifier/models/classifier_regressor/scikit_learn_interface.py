@@ -99,7 +99,7 @@ class BaseEstimator(ABC):
             num_sanity_val_steps=0,
             max_epochs=self.max_epochs,
             num_processes=1,
-            accelerator=None)
+            accelerator='gpu')
 
     @property
     def pl_net(self) -> LightningModule:
@@ -545,3 +545,4 @@ class MlpClassifier(BaseEstimator):
         raw_logit_all = self.get_all_logits(X)
         prob = torch.nn.functional.log_softmax(raw_logit_all, dim=-1)
         return prob.cpu().numpy()
+    

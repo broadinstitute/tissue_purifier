@@ -10,6 +10,7 @@ from torchvision.transforms.functional import to_pil_image
 from torchvision.utils import make_grid
 from torchvision.transforms import CenterCrop as trsfm_center_crop
 from torchvision.transforms import Compose as trsfm_compose
+from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 
 
 def _get_color_tensor(_cmap, _ch):
@@ -166,7 +167,8 @@ def show_raw_one_channel(
         figsize: Tuple[float, float] = None,
         titles: List[str] = None,
         sup_title: str = None,
-        show_axis: bool = True) -> plt.Figure:
+        show_axis: bool = True,
+        seed: int=None) -> plt.Figure:
     """
     Visualize a torch tensor of shape :math:`(*, \\text{width}, \\text{height})`.
     or a list of tensor of shape :math:`(\\text{width}, \\text{height})`.
@@ -252,7 +254,7 @@ def show_raw_one_channel(
     return fig
 
 
-def show_raw_all_channels(
+def show_raw_all_channels( 
         data: Union[torch.Tensor, List[torch.Tensor]],
         n_col: int = 4,
         cmap: str = None,
@@ -261,7 +263,15 @@ def show_raw_all_channels(
         sup_title: str = None,
         show_colorbar: Optional[bool] = None,
         legend_colorbar: List[str] = None,
-        show_axis: bool = True) -> plt.Figure:
+        show_axis: bool = True,
+        show_ticks: bool = True,
+        col_titles: List[str] = None,
+        row_titles: List[str] = None,
+        fontsize: int = 20,
+        labelpad: int = 10,
+        scalebar_size: int = None,
+        scale_factor: float = 0.65,
+        pixel_size: float = 4.0) -> plt.Figure:
     """
     Visualize a torch tensor of shape: :math:`(*, \\text{ch}, \\text{width}, \\text{height})`
     or a list of tensors of shape :math:`(\\text{ch}, \\text{width}, \\text{height})`.
@@ -348,6 +358,10 @@ def show_raw_all_channels(
                     ax_curr.set_axis_on()
                 else:
                     ax_curr.set_axis_off()
+                if not show_ticks:
+                    ax_curr.set_xticks([])
+                    ax_curr.set_yticks([])
+                    # ax_curr.tick_params(left = False, bottom = False)
             else:
                 ax_curr.set_axis_off()
 
@@ -368,6 +382,27 @@ def show_raw_all_channels(
         if legend_colorbar is None:
             legend_colorbar = numpy.arange(ch).tolist()
         cbar.ax.set_yticklabels(legend_colorbar)
+
+    if col_titles is not None:
+        assert ncols == len(col_titles) 
+        for c in range(ncols):
+            axes[0, c].set_title(col_titles[c], fontsize=fontsize, pad=labelpad)
+
+    if row_titles is not None:
+        assert nrows == len(row_titles) 
+        for r in range(ncols):
+            axes[r, 0].set_ylabel(row_titles[r], fontsize=fontsize, labelpad=labelpad)
+
+    if scalebar_size is not None:
+        for c in range(ncols):
+            scalebar_len = 1/scale_factor * scalebar_size / pixel_size
+            scalebar = AnchoredSizeBar(axes[0, c].transData,
+                            scalebar_len, '', 'lower left', 
+                            pad=0.1,
+                            color='white',
+                            frameon=False,
+                            size_vertical=2)
+            axes[0, c].add_artist(scalebar)    
 
     plt.close(fig)
     return fig

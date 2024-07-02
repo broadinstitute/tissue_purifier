@@ -201,18 +201,22 @@ class GeneRegression:
         one = torch.ones(1, device=device)
 
         # Define the plates (i.e. conditional independence). It make sense to subsample only gene and cells.
-        cell_plate = pyro.plate("cells", size=n_cells, dim=-3, device=device, subsample_size=subsample_size_cells)
-        cell_types_plate = pyro.plate("cell_types", size=k_cell_types, dim=-3, device=device)
+        #cell_plate = pyro.plate("cells", size=n_cells, dim=-3, device=device, subsample_size=subsample_size_cells)
+        #cell_types_plate = pyro.plate("cell_types", size=k_cell_types, dim=-3, device=device)
         gene_plate = pyro.plate("genes", size=g_genes, dim=-1, device=device, subsample_size=subsample_size_genes)
+        
+        ## put cell types as dim = -2
+        cell_plate = pyro.plate("cells", size=n_cells, dim=-2, device=device, subsample_size=subsample_size_cells)
+        cell_types_plate = pyro.plate("cell_types", size=k_cell_types, dim=-2, device=device)
 
-        eps_k1g = pyro.param("eps",
-                             0.5 * (eps_range[0] + eps_range[1]) * torch.ones((k_cell_types, 1, g_genes),
+        eps_kg1 = pyro.param("eps",
+                             0.5 * (eps_range[0] + eps_range[1]) * torch.ones((k_cell_types, g_genes, 1),
                                                                               device=device),
                              constraint=constraints.interval(lower_bound=eps_range[0],
                                                              upper_bound=eps_range[1]))
 
         # Figure out a reasonable initialization for beta0_kg
-        beta0_k1g = pyro.param("beta0", beta0_g_init[None, None].expand_as(eps_k1g).to(device))
+        beta0_kg1 = pyro.param("beta0", beta0_g_init[None, None].expand_as(eps_kg1).to(device))
 
         with gene_plate:
             with cell_types_plate:
@@ -226,33 +230,36 @@ class GeneRegression:
                     # no prior (note the mask statement. This will always give log_prob and kl_divergence =0)
                     mydist = dist.Normal(loc=0, scale=0.1).mask(False)
 
-                beta_klg = pyro.sample("beta_cov", mydist.expand([k_cell_types, l_cov, g_genes]))
-                assert beta_klg.shape == torch.Size([k_cell_types, l_cov, g_genes]), \
+                #beta_klg = pyro.sample("beta_cov", mydist.expand([k_cell_types, l_cov, g_genes]))
+                beta_kgl = pyro.sample("beta_cov", mydist.expand([l_cov]).to_event(1)) ## will expand in context of plates automatically
+                assert beta_kgl.shape == torch.Size([k_cell_types, g_genes, l_cov]), \
                     "Received {}".format(beta_klg.shape)
 
         with cell_plate as ind_n:
             cell_ids_sub_n = cell_type_ids_n[ind_n].to(device)
-            beta0_n1g = beta0_k1g[cell_ids_sub_n]
-            eps_n1g = eps_k1g[cell_ids_sub_n]
-            beta_nlg = beta_klg[cell_ids_sub_n]
+            beta0_ng1 = beta0_kg1[cell_ids_sub_n]
+            eps_ng1 = eps_kg1[cell_ids_sub_n]
+            beta_ngl = beta_kgl[cell_ids_sub_n]
             total_umi_n11 = total_umi_n[ind_n, None, None].to(device)
             if use_covariates:
-                covariate_sub_nl1 = covariates_nl[cell_ids_sub_n].unsqueeze(dim=-1).to(device)
+                covariate_sub_n1l = covariates_nl[cell_ids_sub_n].unsqueeze(dim=-2).to(device)
 
             with gene_plate as ind_g:
-                eps_sub_n1g = eps_n1g[..., ind_g]
+                eps_sub_ng1 = eps_ng1[None, ind_g, None] ## FIX THIS 
                 if use_covariates:
-                    log_mu_n1g = beta0_n1g[..., ind_g] + \
-                                 torch.sum(covariate_sub_nl1 * beta_nlg[..., ind_g], dim=-2, keepdim=True)
+                    log_mu_ng1 = beta0_ng1[None, ind_g, None] + \
+                                 torch.sum(covariate_sub_n1l * beta_ngl[None, ind_g, None], dim=-1, keepdim=True)
                 else:
-                    log_mu_n1g = beta0_n1g[..., ind_g]
+                    log_mu_ng1 = beta0_n1g[None, ind_g, None]
 
                 pyro.sample("counts",
                             LogNormalPoisson(n_trials=total_umi_n11,
                                              log_rate=log_mu_n1g,
                                              noise_scale=eps_sub_n1g,
                                              num_quad_points=8),
-                            obs=counts_ng[ind_n.cpu(), None].index_select(dim=-1, index=ind_g.cpu()).to(device))
+                            obs=counts_ng[ind_n.cpu(), None].index_select(dim=-2, index=ind_g.cpu()).to(device))
+                ## make sure dimensions are corresponding to the cell plate and gene plate dimensions
+                ## go over LogNormalPoisson distribution, make sure handling dimensions correctly 
 
     def _guide(self,
                g_genes: int,
@@ -266,17 +273,17 @@ class GeneRegression:
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
         # Define the gene and cell plates. It make sense to subsample only gene and cells.
-        cell_types_plate = pyro.plate("cell_types", size=k_cell_types, dim=-3, device=device)
+        cell_types_plate = pyro.plate("cell_types", size=k_cell_types, dim=-2, device=device) 
         gene_plate = pyro.plate("genes", size=g_genes, dim=-1, device=device, subsample_size=subsample_size_genes)
 
-        beta_param_loc_klg = pyro.param("beta", 0.1 * torch.randn((k_cell_types, l_cov, g_genes), device=device))
+        beta_param_loc_kgl = pyro.param("beta", 0.1 * torch.randn((k_cell_types, g_genes, l_cov), device=device))
 
         with gene_plate as ind_g:
             with cell_types_plate:
                 if use_covariates:
-                    beta_loc_tmp = beta_param_loc_klg[..., ind_g]
+                    beta_loc_tmp = beta_param_loc_kgl[None, ind_g, None]
                 else:
-                    beta_loc_tmp = torch.zeros_like(beta_param_loc_klg[..., ind_g])
+                    beta_loc_tmp = torch.zeros_like(beta_param_loc_kgl[None, ind_g, None])
                 pyro.sample("beta_cov", dist.Delta(v=beta_loc_tmp))
 
     @property
@@ -407,17 +414,17 @@ class GeneRegression:
             "Error. Unexpected parameter names {}".format(mydict.keys())
 
         k_cell_types = mydict["beta0"].shape[0]
-        len_genes = mydict["eps"].shape[-1]
+        len_genes = mydict["eps"].shape[-2]
         cell_types_names_kg = self._get_cell_type_names_kg(g=len_genes)
         gene_names_kg = self._get_gene_names_kg(k=k_cell_types)
 
         # check shapes
         # eps.shape = (cell_type, 1, genes)
-        assert mydict["eps"].shape == torch.Size([k_cell_types, 1, len_genes]), \
+        assert mydict["eps"].shape == torch.Size([k_cell_types, len_genes, 1]), \
             "Unexpected shape for eps {}".format(mydict["eps"].shape)
 
         # beta0.shape = (cell_types, 1, genes)
-        assert mydict["beta0"].shape == torch.Size([k_cell_types, 1, len_genes]), \
+        assert mydict["beta0"].shape == torch.Size([k_cell_types, len_genes, 1]), \
             "Unexpected shape for beta0 {}".format(mydict["beta0"].shape)
 
         # Create dataframe with beta_0 and beta (if present).
@@ -614,25 +621,26 @@ class GeneRegression:
         k = dataset.k_cell_types
 
         # params
-        eps_k1g = pyro.get_param_store().get_param("eps").float().cpu()
-        beta0_k1g = pyro.get_param_store().get_param("beta0").float().cpu()
-        beta_klg = pyro.get_param_store().get_param("beta").float().cpu()
+        eps_kg1 = pyro.get_param_store().get_param("eps").float().cpu()
+        beta0_kg1 = pyro.get_param_store().get_param("beta0").float().cpu()
+        beta_kgl = pyro.get_param_store().get_param("beta").float().cpu()
 
         # dataset
         counts_ng = dataset.counts.long().cpu()
         cell_type_ids = dataset.cell_type_ids.long().cpu()
-        covariates_nl1 = dataset.covariates.unsqueeze(dim=-1).float().cpu()
+        covariates_n1l = dataset.covariates.unsqueeze(dim=-2).float().cpu()
 
-        assert eps_k1g.shape == torch.Size([k, 1, g]), \
+        assert eps_kg1.shape == torch.Size([k, g, 1]), \
             "Got {0}. Are you predicting on the right dataset?".format(eps_k1g.shape)
-        assert beta0_k1g.shape == torch.Size([k, 1, g]), \
+        assert beta0_kg1.shape == torch.Size([k, g, 1]), \
             "Got {0}. Are you predicting on the right dataset?".format(beta0_k1g.shape)
-        assert beta_klg.shape == torch.Size([k, l, g]), \
+        assert beta_kgl.shape == torch.Size([k, g, l]), \
             "Got {0}. Are you predicting on the right dataset?".format(beta_klg.shape)
 
         # prepare storage
         device_calculation = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         q_ng = torch.zeros((n, g), dtype=torch.float, device=torch.device("cpu"))
+        mad_ng = torch.zeros((n, g), dtype=torch.float, device=torch.device("cpu"))
         pred_counts_ng = torch.zeros((n, g), dtype=torch.long, device=torch.device("cpu"))
         log_score_ng = torch.zeros((n, g), dtype=torch.float, device=torch.device("cpu"))
 
@@ -645,27 +653,27 @@ class GeneRegression:
 
             subn_cell_ids = cell_type_ids[n_left:n_right]
             subn_counts_ng = counts_ng[n_left:n_right]
-            subn_covariates_nl1 = covariates_nl1[n_left:n_right]
+            subn_covariates_n1l = covariates_n1l[n_left:n_right]
             subn_total_umi_n1 = subn_counts_ng.sum(dim=-1, keepdim=True)
 
             for g_left in range(0, g, subsample_size_genes):
                 g_right = min(g_left + subsample_size_genes, g)
 
-                eps_n1g = eps_k1g[..., g_left:g_right][subn_cell_ids]
-                beta0_n1g = beta0_k1g[..., g_left:g_right][subn_cell_ids]
-                log_rate_n1g = beta0_n1g + torch.sum(subn_covariates_nl1 *
-                                                     beta_klg[..., g_left:g_right][subn_cell_ids],
-                                                     dim=-2, keepdim=True)
+                eps_ng1 = eps_kg1[None,g_left:g_right,None][subn_cell_ids]
+                beta0_ng1 = beta0_kg1[None,g_left:g_right,None][subn_cell_ids]
+                log_rate_ng1 = beta0_ng1 + torch.sum(subn_covariates_n1l *
+                                                     beta_kgl[None, g_left:g_right,None][subn_cell_ids],
+                                                     dim=-1, keepdim=True)
 
                 assert subn_total_umi_n1.shape == torch.Size([n_right-n_left, 1])
-                assert log_rate_n1g.shape == torch.Size([n_right-n_left, 1, g_right-g_left])
-                assert beta0_n1g.shape == torch.Size([n_right-n_left, 1, g_right-g_left])
-                assert eps_n1g.shape == torch.Size([n_right-n_left, 1, g_right-g_left])
+                assert log_rate_ng1.shape == torch.Size([n_right-n_left, g_right-g_left, 1])
+                assert beta0_ng1.shape == torch.Size([n_right-n_left, g_right-g_left, 1])
+                assert eps_ng1.shape == torch.Size([n_right-n_left, g_right-g_left, 1])
 
                 mydist = LogNormalPoisson(
                     n_trials=subn_total_umi_n1.to(device_calculation),
-                    log_rate=log_rate_n1g.squeeze(dim=-2).to(device_calculation),
-                    noise_scale=eps_n1g.squeeze(dim=-2).to(device_calculation),
+                    log_rate=log_rate_ng1.squeeze(dim=-2).to(device_calculation),
+                    noise_scale=eps_ng1.squeeze(dim=-2).to(device_calculation),
                     num_quad_points=8)
 
                 subn_subg_counts_ng = subn_counts_ng[..., g_left:g_right].to(device_calculation)
@@ -676,6 +684,22 @@ class GeneRegression:
                 q_ng_tmp = (pred_counts_tmp_bng - subn_subg_counts_ng).abs().float().mean(dim=-3)
                 q_ng[n_left:n_right, g_left:g_right] = q_ng_tmp.cpu()
                 pred_counts_ng[n_left:n_right, g_left:g_right] = pred_counts_tmp_bng[0].long().cpu()
+                
+                # compute the MAD metric i.e. E_pred[|x_obs - x_pred|]
+                lambda_ng = mydist.n_trials * mydist.log_rate
+                mad_ng_tmp = (lambda_ng - subn_subg_counts_ng).abs().float().mean(dim=-3)
+                mad_ng[n_left:n_right, g_left:g_right] = mad_ng_tmp.cpu()
+                
+                sample_1 = np.random.choice(subn_subg_counts_ng, size=100)
+                sample_2 = np.random.choice(subn_subg_counts_ng, size=100)
+
+                mad_ng_sample = np.abs(sample_1 - sample_2)
+                mad_ng_mu = np.mean(mad_sample)
+                mad_ng_std = np.std(mad_sample)
+
+                mad_z = (mad_gn - mad_mu)/mad_std
+                
+                
 
         # average by cell_type to obtain q_prediction
         unique_cell_types = torch.unique(cell_type_ids)
@@ -719,6 +743,7 @@ class GeneRegression:
 
         # return
         return df_metric_kg, df_counts_ng
+        
 
     def extend_train(
             self,

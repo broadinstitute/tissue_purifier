@@ -235,6 +235,7 @@ class DinoModel(SslModelBase):
             max_weight_decay: float,
             # validation
             val_iomin_threshold: float = 0.0,
+            run_classify_regress: bool=False,
             # temperatures
             set_temperature_using_ipr_init: bool = False,
             ipr_teacher_init: float = 40.0,
@@ -271,7 +272,7 @@ class DinoModel(SslModelBase):
             max_weight_decay: maximum weight decay (reached at the end of training)
             val_iomin_threshold: during validation, only patches with Intersection Over MinArea < IoMin_threshold
                 are used. Should be in [0.0, 1.0). If 0 only strictly non-overlapping patches are allowed.
-
+            run_classify_regress: If True, runs classification/regression validation
             set_temperature_using_ipr_init: if True the user specifies the initial InverseParticipationRatio (IPR) for
                 the teacher and student network and the temperature of the softmax is computed to match the desired
                 initial IPR.
@@ -288,7 +289,7 @@ class DinoModel(SslModelBase):
             param_momentum_final: This parameter controls the final momentum of the EMA
             param_momentum_epochs_end: The teacher parameters are not updated after this many epochs
         """
-        super(DinoModel, self).__init__(val_iomin_threshold=val_iomin_threshold)
+        super(DinoModel, self).__init__(val_iomin_threshold=val_iomin_threshold, run_classify_regress=run_classify_regress)
 
         # Next two lines will make checkpointing much simpler. Always keep them as-is
         self.save_hyperparameters()  # all hyperparameters are saved to the checkpoint
@@ -372,6 +373,8 @@ class DinoModel(SslModelBase):
         parser.add_argument("--val_iomin_threshold", type=float, default=0.0,
                             help="during validation, only patches with IoMinArea < IoMin_threshold are used "
                                  "in the kn-classifier and kn-regressor.")
+        parser.add_argument("--run_classify_regress", type=bool, default=False,
+                            help="during validation, whether to run kn-classification and kn-regression")
 
         # architecture
         parser.add_argument("--image_in_ch", type=int, default=3, help="number of channels in the input images")

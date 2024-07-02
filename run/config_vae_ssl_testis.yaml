@@ -1,15 +1,17 @@
 # general 
 random_seed: 1
-neptune_project: cellarium/tissue-purifier
-batch_size_per_gpu: 128
+neptune_project: skambham/tp-test
+batch_size_per_gpu: 512
 check_val_every_n_epoch: 25
-checkpoint_interval_minutes: 25
+# checkpoint_interval_minutes: 25
+checkpoint_interval_epochs: 25
 max_time_minutes: 1440
 gradient_clip_algorithm: value
 gradient_clip_val: 0.5
 initialization_type: scratch
 remote_logging: true
 # gpus: 2 update with the number of GPUs available on your system
+gpus: 1
 precision: 16
 num_workers: 4
 # debugging options
@@ -20,6 +22,7 @@ deterministic: false
 
 # validation
 val_iomin_threshold: 0.0
+run_classify_regress: false
 
 # architecture
 ssl_model: vae
@@ -34,13 +37,13 @@ latent_dim: 512
 decoder_output_activation: identity
 
 # loss
-beta_vae_init: 0.1
+beta_vae_init: 0.01
 momentum_beta_vae: 0.999
 
 # optimizers
 optimizer_type: adam
-min_learning_rate: 1.0E-5
-max_learning_rate: 5.0E-4
+min_learning_rate: 1.0E-6
+max_learning_rate: 5.0E-5
 min_weight_decay: 0.0
 max_weight_decay: 0.0
 warm_up_epochs: 100
@@ -51,13 +54,13 @@ max_epochs: 1000
 # data_folder: update with the path to the folder with the anndata.h5ad files
 n_crops_for_tissue_test: 1000
 n_crops_for_tissue_train: 1000
-n_element_min_for_crop: 200
+n_element_min_for_crop: 200 
 n_neighbours_moran: 6
 metadata_to_classify: null
 metadata_to_regress: null
 x_key: x
 y_key: y
-category_key: cell_type
+category_key: cell_type_proportions
 categories_to_channels: {
         'ES': 0, 
         'Endothelial': 1, 

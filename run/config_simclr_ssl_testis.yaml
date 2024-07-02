@@ -1,18 +1,20 @@
 # general 
 random_seed: 1
-neptune_project: cellarium/tissue-purifier
-batch_size_per_gpu: 400
+neptune_project: skambham/tp-test
+batch_size_per_gpu: 128
 check_val_every_n_epoch: 25
-checkpoint_interval_minutes: 25
-max_time_minutes: 1440
+checkpoint_interval_epochs: 25
+# checkpoint_interval_minutes: 25
+max_time_minutes: 14400
 gradient_clip_algorithm: value
 gradient_clip_val: 0.5
 initialization_type: scratch
 remote_logging: true
 # gpus: 2 update with the number of GPUs available on your system
+gpus: 1
 precision: 16
 num_workers: 4
-# debugging options
+#---- debugging options
 profiler: passthrough
 overfit_batches: 0
 detect_anomaly: false
@@ -20,18 +22,16 @@ deterministic: false
 
 # validation
 val_iomin_threshold: 0.0
+run_classify_regress: True
 
 # architecture
-ssl_model: barlow
+ssl_model: simclr
 backbone_type: resnet34
 image_in_ch: 9
 head_hidden_chs:
-- 512
+- 256
 - 512
 head_out_ch: 512
-
-# loss
-lambda_off_diagonal: 0.001
 
 # optimizers
 optimizer_type: adam
@@ -47,13 +47,15 @@ max_epochs: 2000
 # data_folder: update with the path to the folder with the anndata.h5ad files
 n_crops_for_tissue_test: 1000
 n_crops_for_tissue_train: 1000
+overlap_for_tissue_test: 0.0
 n_element_min_for_crop: 200
+n_cuts_for_tissue_train: 1
 n_neighbours_moran: 6
 metadata_to_classify: null
 metadata_to_regress: null
 x_key: x
 y_key: y
-category_key: cell_type
+category_key: cell_type_proportions
 categories_to_channels: {
         'ES': 0, 
         'Endothelial': 1, 
@@ -65,6 +67,9 @@ categories_to_channels: {
         'SPG': 7, 
         'Sertoli': 8
 }
+status_key: "status"
+
+block_neg: False
 
 # transform
 pixel_size: 4.0

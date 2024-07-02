@@ -2,9 +2,11 @@ import matplotlib
 from matplotlib import pyplot as plt
 from typing import Tuple, Any, List, Union
 import numpy
+import numpy as np
 import torch
 import pandas
 import seaborn
+from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 
 
 def plot_cdf_pdf(
@@ -337,3 +339,131 @@ def show_corr_matrix(data: torch.Tensor, show_colorbar: bool = True, sup_title: 
         _ = fig.suptitle(sup_title)
     plt.close(fig)
     return fig
+
+
+def hex_to_rgb(value):
+    value = value.lstrip('#')
+    lv = len(value)
+    return tuple(int(value[i:i + lv // 3], 16) for i in range(0, lv, lv // 3))
+
+def rgb_to_hex(rgb):
+    return '#%02x%02x%02x' % rgb
+
+def scatter(
+        adata,
+        color,
+        alpha_key=None,
+        x_key="y_pixel",
+        y_key="x_pixel",
+        mode='continuous',
+        cmap=plt.cm.RdBu_r,
+        s=16,
+        cdict=None,
+        figsize=None,
+        fig=None,
+        ax=None,
+        show_legend=True,
+        legend_fontsize=20,
+        legend_markersize=20,
+        show_colorbar=True,
+        colorbar_fontsize=20,
+        colorbar_label=None,
+        colorbar_labelpad=20,
+        cbar_ticks=None,
+        blacklist={},
+        ticks_off=True,
+        border_off=True,
+        x_lim=None,
+        y_lim=None,
+        **kwargs):
+    """
+    Plot anndata feature spatially e.g. cell-type
+
+    Args:
+        adata: anndata to plot
+        color: key in obs containing feature to plot
+        x_key: key in obs with x coordinates
+        y_key: key in obs with y coordinates
+        mode: either continuous or categorical
+        cmap: colormap to plot
+        s: marker size
+        cdict: color for each category if mode is categorical
+        figsize: figsize
+        fig: figure to plot to
+        ax: axis to plot to
+        show_legend: If True, display legend
+        show_colorbar: If True, display colorbar
+        blacklist: categories to skip
+        ticks_off: If True, do not display ticks on axis
+        border_off: If True, do not display border
+
+    Returns:
+        fig, ax: figure and axes for scatterplot
+    """
+    
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+
+    x_vals = adata.obs[x_key].values
+    y_vals = adata.obs[y_key].values
+    c_vals = adata.obs[color].values
+    if alpha_key is not None:
+        a_vals = adata.obs[alpha_key].values
+        
+    if mode == 'continuous':
+        sc = ax.scatter(x_vals, y_vals, c=c_vals, cmap=cmap, marker='h', edgecolors='none', s=s, **kwargs)
+
+        if show_colorbar:
+            ax_divider = make_axes_locatable(ax)
+            cax = ax_divider.append_axes("right", size="7%", pad="2%")
+            cb = fig.colorbar(sc, cax=cax)
+            cb.ax.tick_params(labelsize=colorbar_fontsize)
+            if cbar_ticks is not None:
+                cb.ax.set_yticks(cbar_ticks)
+            cb.set_label(colorbar_label, rotation=270, fontsize=colorbar_fontsize, labelpad=colorbar_labelpad)
+
+    elif mode == 'categorical':
+        categories = np.unique(c_vals)
+        assert cdict is not None
+        for category in categories:
+            if category in blacklist:
+                continue
+            assert category in cdict
+            mask = c_vals == category
+            if alpha_key is not None:
+                c = np.repeat(np.asarray(hex_to_rgb(cdict[category]) + (255,))[None, :] / 255, repeats=(np.sum(mask),), axis=0)
+                c[:, -1] = a_vals[mask]
+            else:
+                c = cdict[category]
+            ax.scatter(x_vals[mask], y_vals[mask], c=c, marker='h', edgecolors='none', s=s, label=category, **kwargs)
+        
+        if show_legend:
+            ax.legend(bbox_to_anchor=(1.04, 1), loc="upper left", fontsize=legend_fontsize, frameon=False, markerscale=legend_markersize)
+
+        
+    else:
+        raise ValueError
+        
+    ax.set_aspect('equal', 'box')
+    if x_lim == None:
+        ax.set_xlim((np.min(adata.obs[x_key].values), np.max(adata.obs[x_key].values)))
+    else:
+        ax.set_xlim(x_lim[0], x_lim[1])
+    if y_lim == None:
+        ax.set_ylim((np.min(adata.obs[y_key].values), np.max(adata.obs[y_key].values)))
+    else:
+        ax.set_ylim(y_lim[0], y_lim[1])
+    ax.axes.invert_yaxis()
+    
+    if ticks_off:
+        ax.set_xticks([])
+        ax.set_yticks([])
+        
+        
+    if border_off:
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+    
+    return fig, ax

@@ -64,12 +64,27 @@ class SpatialAutocorrelation:
 
             n_category = sparse_tensor.shape[0]
 
+            # print("sparse tensor shape:")
+            # print(sparse_tensor.shape)
+            
+#             if sparse_tensor.values().shape[0] > self.n_neighbours:
+#                 category, coords = self._extract_category_and_coords(sparse_tensor=sparse_tensor)
+#                 adj = self._build_connectivity(coords=coords, remove_diagonal=True)
+
+#                 score = self._compute_autocorrelation(category=category, adj=adj, n_category=n_category)
+            
+#             else:
+#                 #print(sparse_tensor.values().shape)
+#                 score = torch.zeros(n_category)#.device('cuda:0') ## dummy score
+#                 print("reached")
+            
+            ## why is category shape 1 in some cases
+            #if category.shape[0] >= self.n_neighbours:
+                
+            ## assert that n_element_min > n_neighbours?
             category, coords = self._extract_category_and_coords(sparse_tensor=sparse_tensor)
-
             adj = self._build_connectivity(coords=coords, remove_diagonal=True)
-
             score = self._compute_autocorrelation(category=category, adj=adj, n_category=n_category)
-
             result.append(score)
 
         return result if len(result) > 1 else result[0]
@@ -82,14 +97,38 @@ class SpatialAutocorrelation:
         if torch.cuda.is_available():
             sparse_tensor = sparse_tensor.cuda()
 
+        #print(sparse_tensor.indices())
         category_tmp, x_pixel, y_pixel = sparse_tensor.indices()
+        #print(category_tmp) ## take cell type with highest proportion as cell-type label for computing moran's
         values = sparse_tensor.values()
 
-        if values.max().item() == 1:
+        values = values.type(torch.int64) ## delete this?
+        
+#         print("dim:")
+#         print(category_tmp.shape)
+#         print(x_pixel.shape)
+#         print(y_pixel.shape)
+        
+#         print("values:")
+#         print(values.shape)
+#         #print(values.max())
+        #print(sparse_tensor)
+        #print(values.max().item())
+        
+        # if values.max().item() > 1.0:
+        #     import pdb; pdb.set_trace()
+        #print(values)
+        
+        # print("values shape:")
+        # print(values.shape)
+        
+        
+        ## fig out how to deal for pcm where values are < 1?
+        if values.max().item() <= 1:
             coords = torch.stack((x_pixel, y_pixel), dim=-1)
             category = category_tmp
         else:
-            #  If I have more that one object at the same x,y location I add a little bit of noise to its coordinates
+            #  If I have more that one object at the same x,y location I add a little bit of noise to its coordinates <--?
             x_list, y_list, category_list = [], [], []
             for i in range(1, values.max().item() + 1):
                 mask = (values == i)
@@ -149,7 +188,7 @@ class SpatialAutocorrelation:
             # Here I deal with this edge case
             if denominator == 0.0:
                 scores[i] = 0.0
-
+        
         return scores.to(device=original_device)
 
     def _build_connectivity(self, coords: torch.Tensor, remove_diagonal: bool):

@@ -206,7 +206,7 @@ def subset_dict_non_overlapping_patches(
         "key_patch_xywh = {0} in not present in the input_dictionary.".format(key_patch_xywh)
 
     nms_mask_n, overlap_nn = NonMaxSuppression.compute_nm_mask(
-        score=torch.rand_like(input_dict[key_patch_xywh][:, 0].float()),
+        score=torch.rand_like(torch.Tensor(input_dict[key_patch_xywh][:, 0]).float()),
         ids=input_dict[key_tissue],
         patches_xywh=input_dict[key_patch_xywh],
         iom_threshold=iom_threshold)
@@ -292,6 +292,12 @@ def concatenate_list_of_dict(list_of_dict) -> dict:
             elif isinstance(v, torch.Tensor):
                 if k in total_dict.keys():
                     total_dict[k] = torch.cat((total_dict[k], v), dim=0)
+                else:
+                    total_dict[k] = v
+                    
+            elif isinstance(v, numpy.ndarray):
+                if k in total_dict.keys():
+                    total_dict[k] = numpy.concatenate((total_dict[k], v), axis=0)
                 else:
                     total_dict[k] = v
 

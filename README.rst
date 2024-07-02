@@ -1,4 +1,4 @@
-Tissue Purifier: A python library for the analysis of biological tissues
+TissueMosaic: A python library for the analysis of biological tissues
 ========================================================================
 
 .. image:: https://github.com/broadinstitute/tissue_purifier/blob/master/docs/source/_static/kandisky_slideseq_strip.jpeg
@@ -18,11 +18,10 @@ Description
 ..
    BELOW HERE YOU CAN COPY THE CONTENT OF getting_started.rst FROM THE DOCUMENTATION
 
-*Tissue Purifier* is Python library for the analysis of biological tissue and
+*TissueMosaic* is Python library for the analysis of biological tissue and
 cellular micro-environments based on self supervised learning.
 It is built on `PyTorch <https://pytorch.org/>`_,
-`PytorchLightning <https://www.pytorchlightning.ai/>`_,
-`Pyro <https://pyro.ai/>`_ and
+`PytorchLightning <https://www.pytorchlightning.ai/>`_ and,
 `Anndata <https://anndata.readthedocs.io/en/latest/>`_.
 
 Spatially resolved transcriptomic technologies (such as 
@@ -34,7 +33,7 @@ Spatially resolved transcriptomic technologies (such as
 `STARMap <https://pubmed.ncbi.nlm.nih.gov/29930089/>`_
 and others) allow measuring gene expression with spatial resolution. 
 Deconvolution methods and/or analysis of marker-genes, can be used to assign
-a discrete cell-type (such as Macrophage, B-Cells, ...) to each cell. 
+a discrete cell-type (such as Macrophage, B-Cells, ...) or cell-type proportions to each spot. 
 
 This type of data can be nicely organized into anndata objects, which are data-structure 
 specifically designed for transcriptomic data. 
@@ -111,23 +110,16 @@ However, image-based approaches offer three remarkable advantages:
 
 Installation
 ------------
-First, you need Python 3.9 and Pytorch (with CUDA support).
+First, you need Python >= 3.11.0 and Pytorch (with CUDA support).
 If you run the following command from your terminal it should report True:
 
 .. code-block::
 
     python -c 'import torch; print(torch.cuda.is_available())'
 
-Next install the most recent version of Pyro (not yet available using pip):
+If not, install Pytorch: https://pytorch.org/get-started/locally/
 
-.. code-block::
-
-    git clone https://github.com/pyro-ppl/pyro.git
-    cd pyro
-    pip install .
-
-
-Finally install *Tissue Purifier* and its dependencies:
+Finally install *Tissue Mosaic* and its dependencies:
 
 .. code-block::
 
@@ -136,6 +128,15 @@ Finally install *Tissue Purifier* and its dependencies:
     pip install -r requirements.txt
     pip install .
 
+Installation should complete in <10 minutes. 
+
+Versions the software has been tested on
+------------
+Environment 1:
+
+* System: Linux Ubuntu 22.04.4 lTS
+* Python = 3.11.0, CUDA = 12.1
+* Dependencies: anndata=0.10.6, leidenalg=0.9.1, lightly-1.5.1, lightning_bolts=0.7.0, matplotlib=3.8.3, neptune=1.9.1, numpy=1.26.4, pandas=1.5.3, python_igraph=0.10.4, pytorch-lightning=1.7.7, scanpy=1.9.8, scikit_learn=1.4.1, scipy=1.12.0, seaborn=0.13.2, torch=2.2.1, torchvision=0.17.1, umap_learn=0.5.5
 
 Docker Image
 ------------
@@ -150,6 +151,9 @@ Older versions are available at the same location, for example as
 
 How to run
 ----------
+
+Please refer to the documentation (https://tissue-purifier.readthedocs.io/) for a quick start tutorial. Running this tutorial with a trained model takes approximately 1.5 hours with a 4 core system. 
+
 There are 3 ways to run the code:
 
 You can run the notebooks sequentially.
@@ -171,35 +175,55 @@ by Chen et al. <https://pubmed.ncbi.nlm.nih.gov/34731600/>`_) and untar it in th
     mkdir -p ./testis_anndata
     tar -xzf slideseq_testis_anndata_h5ad.tar.gz -C /testis_anndata.
 
-Next, navigate to the "tissue_purifier/run" directory and train the model (this will take about 6 hrs on a Nvidia p100):
+Next, navigate to the "tissue_purifier/run" directory and train the model (this will take about 3 hours for 500 epochs with a single Nvidia RTX 4090 GPU):
 
 .. code-block::
 
     cd tissue_purifier/run
-    python main_1_train_ssl.py --config config_barlow_ssl.yaml --data_folder testis_anndata
+    python main_1_train_ssl.py --config config_dino_ssl.yaml --data_folder testis_anndata --ckpt_out dino_testis.pt
 
     # or alternatively
-    # python main_1_train_ssl.py --config config_dino_ssl.yaml --data_folder testis_anndata --gpus 2
-    # python main_1_train_ssl.py --config config_simclr_ssl.yaml --data_folder testis_anndata --gpus 2
-    # python main_1_train_ssl.py --config config_vae_ssl.yaml --data_folder testis_anndata --gpus 2
+    # python main_1_train_ssl.py --config config_barlow_ssl.yaml --data_folder testis_anndata --ckpt_out barlow_testis.pt
+    # python main_1_train_ssl.py --config config_simclr_ssl.yaml --data_folder testis_anndata --ckpt_out simclr_testis.pt
+    # python main_1_train_ssl.py --config config_vae_ssl.yaml --data_folder testis_anndata --ckpt_out vae_testis.pt
 
-Next extract the features (this will take only few minutes to run):
+Next extract the features (this will take 5-10 minutes to run):
 
 .. code-block::
 
+    mkdir testis_anndata_featurized
     python main_2_featurize.py
-        --anndata_in adata_0_raw.h5ad
-        --anndata_out adata_0_annotated.h5ad
-        --ckpt_in ckpt_barlow.ckpt
-        --feature_key barlow
+        --anndata_in testis_anndata
+        --anndata_out testis_anndata_featurized
+        --ckpt_in dino_testis.pt
+        --feature_key dino
         --n_patches 500
         --ncv_k 10 25 100
+        --suffix featurized
 
-Finally, evaluate the features based on their ability to predict the gene expression profile.
+Finally, evaluate the features based on their ability to predict the gene expression profile (this will take ~45 minutes to run for 1500 genes).
 
 .. code-block::
 
-    python main_3_genex.py --anndata_in XXX --l1 0.1 --n_pca 9 --XXX # DOUBLE CHECK
+    #set environment threads
+    export OMP_NUM_THREADS=1
+    export MKL_NUM_THREADS=1
+    export OPENBLAS_NUM_THREADS=1
+    export NUMEXPR_NUM_THREADS=1
+
+    mkdir gr_results  
+    python main_3_gene_regression.py
+        --anndata_in testis_anndata_featurized
+        --out_dir gr_results
+        --out_prefix dino_ctype
+        --feature_key dino_spot_features
+        --alpha_regularization_strength 0.01
+        --filter_feature 2.0
+        --fc_bc_min_umi=500
+        --fg_bc_min_pct_cells_by_counts 10
+        --cell_types ES
+
+This will write the gene regression evaluation metrics to the specified out directory.
 
 It might make sense to train your model remotely on google cloud (or another cloud provider)
 using `Terra <https://terra.bio>`_ or `cromwell <https://cromwell.readthedocs.io/en/stable/>`_.
@@ -210,10 +234,10 @@ you can submit a run as follow:
 .. code-block::
 
     cd tissue_purifier/run
-    ./submit_neptune_ml.sh neptune_ml.wdl --py main_1_train_ssl.py --wdl WDL_parameters.json --ml config_barlow_ssl.yaml
+    ./submit_neptune_ml.sh neptune_ml.wdl --py main_1_train_ssl.py --wdl WDL_parameters.json --ml config_dino_ssl.yaml
 
     # or alternatively
-    # ./submit_neptune_ml.sh neptune_ml.wdl --py main_1_train_ssl.py --wdl WDL_parameters.json --ml config_dino_ssl.yaml
+    # ./submit_neptune_ml.sh neptune_ml.wdl --py main_1_train_ssl.py --wdl WDL_parameters.json --ml config_barlow_ssl.yaml
     # ./submit_neptune_ml.sh neptune_ml.wdl --py main_1_train_ssl.py --wdl WDL_parameters.json --ml config_simclr_ssl.yaml
     # ./submit_neptune_ml.sh neptune_ml.wdl --py main_1_train_ssl.py --wdl WDL_parameters.json --ml config_vae_ssl.yaml
 
@@ -227,30 +251,26 @@ Features:
 1. We have implemented multiple ssl strategies (such as convolutional Vae, Dino, BarlowTwin, SimClr)
    based on recent advances in image-based Machine Learning. 
 
-2. Tissue Purifier can be used to analyze any type of localized quantitative measurement for example spatial proteomics
+2. TissueMosaic can be used to analyze any type of localized quantitative measurement for example spatial proteomics
    (not only mRNA count data).
 
 Current limitations:
 
-1. *Tissue Purifier* works only with 2D tissue slices. No 3D support at the moment.
-
-2. *Tissue Purifier* assumes a hard cell-type assignment.
+1. *TissueMosaic* works only with 2D tissue slices. No 3D support at the moment.
 
 Future Improvements
 -------------------
 We hope to soon support:
 
-1. probabilistic cell-type assignment
+1. pairing with histopathology (i.e. dense-image)
 
-2. pairing with histopathology (i.e. dense-image)
-
-3. Extension to handle 3D images
+2. Extension to handle 3D images
 
 Contributing
 ------------
-We aspire to make *Tissue Purifier* an easy-to-use and useful software package for the bioinformatics community.
-While we test and improve *Tissue Purifier* together with our research collaborators, your feedback is invaluable to us
-and allow us to steer *Tissue Purifier* in the direction that you find most useful in your research.
+We aspire to make *TissueMosaic* an easy-to-use and useful software package for the bioinformatics community.
+While we test and improve *TissueMosaic* together with our research collaborators, your feedback is invaluable to us
+and allow us to steer *TissueMosaic* in the direction that you find most useful in your research.
 If you have an interesting idea or suggestion, please do not hesitate to reach out to us.
 
 If you encounter a bug, please file a detailed github `issue <https://github.com/broadinstitute/tissue_purifier/issues>`_
@@ -258,10 +278,10 @@ and we will get back to you as soon as possible.
 
 Citation
 --------
-This software package was developed by *Luca D'Alessio* and *Fedor Grab*.
+This software package was developed by *Luca D'Alessio*, *Sandeep Kambhampati*, and *Fedor Grab*.
 
 ..
-  If you use TissuePurifier please consider citing:
+  If you use TissueMosaic please consider citing:
 
   ::
     @article{YourName,

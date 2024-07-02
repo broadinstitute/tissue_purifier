@@ -3,7 +3,7 @@ from .gene_utils import (
     make_gene_dataset_from_anndata,
     GeneDataset)
 
-from .pyro_model import GeneRegression
+from .poisson_glm import GeneRegression
 from .gene_visualization import plot_gene_hist
 
 __all__ = [

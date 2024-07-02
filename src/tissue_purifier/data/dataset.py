@@ -8,7 +8,9 @@ class MetadataCropperDataset(NamedTuple):
     f_name: Union[str, int]
     loc_x: Union[int, float]
     loc_y: Union[int, float]
-    moran: Union[float, None]
+    moran: Union[float, list, torch.Tensor, None]
+    sample_status: Union[int, None]
+    composition: Union[list, None]
 
 
 class CropperTensor(torch.nn.Module):
@@ -22,6 +24,7 @@ class CropperTensor(torch.nn.Module):
         crop_size: int = 224,
         strategy: str = 'random',
         stride: int = 200,
+        fraction_patch_overlap: float=0.5,
         n_crops: int = 10,
         random_order: bool = True,
         criterium_fn: Callable = None,
@@ -30,18 +33,25 @@ class CropperTensor(torch.nn.Module):
         """
         Args:
             crop_size: int, the size in pixel of the sliding tiling windows
-            strategy: str, can be either 'random' or 'tiling' or 'identity'
+            strategy: str, can be either 'random' or 'tiling' or 'identity' or 'spot_level'
             stride: Used only when :attr:'strategy' is 'tiling'.
                 Displacement among consecutive sliding window. This allow to control the overlap between crops.
+            fraction_patch_overlap: Used only when :attr:'strategy' is 'tiling'.
+                Used to compute stride. Stride parameter supersedes fraction_patch_overlap parameter if both are passed.
             n_crops: int, the size of crops to generate from a single image.
             random_order: Used only when :attr:'strategy' is 'tiling'.
                 If true the crops are shuffled before being returned.
             criterium_fn: Callable which returns true if it is a valid crop, return False otherwise
         """
+        
+            
         super().__init__()
         self.crop_size_ = crop_size
         self.strategy_ = strategy
-        self.stride_ = stride
+        self.fraction_patch_overlap_ = fraction_patch_overlap
+        ## if neither fraction_patch_overlap or stride are passed, defaults to fraction_patch_overlap = 0.5. 
+        ## If both stride and fraction_patch_overlap are passed, defaults to stride
+        self.stride_ = stride 
         self.n_crops_ = n_crops
         self.random_order_ = random_order
         self.criterium_fn_ = criterium_fn
@@ -62,14 +72,16 @@ class CropperTensor(torch.nn.Module):
             crop_size: int = None,
             strategy: str = None,
             stride: int = None,
+            fraction_patch_overlap: float = None,
             n_crops: int = None,
             random_order: bool = None,
             criterium_fn: Callable = None) -> (List[torch.Tensor], List[int], List[int]):
-
-        # All parameters default to the one used during initialization if they are not specified
+        
+        # All parameters default to the one used during initialization if they are not specified except for stride which is computed
         crop_size = self.crop_size_ if crop_size is None else crop_size
         strategy = self.strategy_ if strategy is None else strategy
-        stride = self.stride_ if stride is None else stride
+        fraction_patch_overlap = self.fraction_patch_overlap_ if fraction_patch_overlap is None else fraction_patch_overlap
+        stride = crop_size - int(crop_size * fraction_patch_overlap) if stride is None else stride
         n_crops = self.n_crops_ if n_crops is None else n_crops
         random_order = self.random_order_ if random_order is None else random_order
         criterium_fn = self.criterium_fn_ if criterium_fn is None else criterium_fn
@@ -109,9 +121,9 @@ class CropperDenseTensor(CropperTensor):
                 empty and disregarded.
         """
         assert isinstance(min_threshold_value, float)
-        self.min_threshold_value = min_threshold_value
+        self.min_threshold_value = min_threshold_value 
         assert isinstance(min_threshold_fraction, float)
-        self.min_threshold_fraction = min_threshold_fraction
+        self.min_threshold_fraction = min_threshold_fraction 
 
         def criterium_fn(potential_crops):
             masks = potential_crops.sum(dim=-3, keepdim=False) > min_threshold_value
@@ -229,7 +241,7 @@ class CropperSparseTensor(CropperTensor):
 
         def criterium_fn(n_elements):
             return n_elements >= n_element_min
-
+            
         super().__init__(criterium_fn=criterium_fn,
                          **kargs)
 
@@ -250,11 +262,12 @@ class CropperSparseTensor(CropperTensor):
         x_pixel: torch.Tensor
         y_pixel: torch.Tensor
         codes, x_pixel, y_pixel = sparse_tensor.indices()  # each has shape (n_element)
+        
         values = sparse_tensor.values()
         ch, w_img, h_img = sparse_tensor.size()
 
         x_patch, y_patch, w_patch, h_patch = patches_xywh.chunk(chunks=4, dim=-1)  # each one has shape (batch, 1)
-
+        
         mask = (x_pixel >= x_patch) * \
                (x_pixel < x_patch + w_patch) * \
                (y_pixel >= y_patch) * \
@@ -270,11 +283,13 @@ class CropperSparseTensor(CropperTensor):
             y_pixel_n = y_pixel[mask_n] - y_patch[n, 0]
             values_n = values[mask_n]
 
+            ## assert these are ints and if not cast to ints
+
             crops.append(
                 torch.sparse_coo_tensor(
                     indices=torch.stack((codes_n, x_pixel_n, y_pixel_n), dim=0),
                     values=values_n,
-                    size=(ch, w_patch[n, 0], h_patch[n, 0]),
+                    size=(ch, int(w_patch[n, 0]), int(h_patch[n, 0])),
                     device=x_pixel.device,
                     requires_grad=False,
                 ).coalesce()
@@ -296,17 +311,17 @@ class CropperSparseTensor(CropperTensor):
         self._assert_params(crop_size, stride, n_crops, random_order, strategy, criterium_fn)
         assert sparse_tensor.is_sparse
 
+        #print(sparse_tensor.device)
         # this might break the code if num_worked>0 in dataloader
         # if torch.cuda.is_available():
         #    sparse_tensor = sparse_tensor.cuda()
 
         codes, x_pixel, y_pixel = sparse_tensor.indices()  # each has shape (n_elements)
         values = sparse_tensor.values()
-
+        
         ch, w_img, h_img = sparse_tensor.size()
 
         if strategy == 'tiling':
-            # generate a random starting point
             x_corner_list, y_corner_list = [], []
             i0 = torch.randint(low=-crop_size, high=0, size=[1]).item()
             j0 = torch.randint(low=-crop_size, high=0, size=[1]).item()
@@ -348,41 +363,77 @@ class CropperSparseTensor(CropperTensor):
                        (y_pixel >= y_corner) * \
                        (y_pixel < y_corner + crop_size)  # shape: (n_crops * SAFETY_FACTOR, n_elements)
 
-        n_elements = (values * element_mask).sum(dim=-1)  # shape (n_crops * SAFETY_FACTOR)
+        if torch.any(values < 1.0): ## if values are probabilistic, change to one hot for purpose of determining valid crop 
+            values_oh = values.clone()
+            values_oh[values_oh != 0] = 1
+            
+            n_elements = (values_oh * element_mask).sum(dim=-1)  # shape (n_crops * SAFETY_FACTOR)   
+        else:
+            n_elements = (values * element_mask).sum(dim=-1)
+        
         valid_patch = criterium_fn(n_elements)
         n_valid_patches = valid_patch.sum().item()
-        if n_valid_patches < n_crops:
+        
+        
+        if n_valid_patches < n_crops and strategy == 'random':
             # import warnings
             # warnings.warn("Warning. Not enough valid crops found. Change the parameters. ")
             print("Warning. Only {0} valid crops found when requested {1}. \
             Change the parameters.".format(n_valid_patches, n_crops))
-        n_max = min(n_crops, n_valid_patches)
-
-        ix = x_corner[valid_patch, 0][: n_max]  # shape: n_max
-        iy = y_corner[valid_patch, 0][: n_max]  # shape: n_max
-        mask = element_mask[valid_patch][: n_max]  # shape: n_max, element_in_sparse_array
+        
         dense_crop_shape = (ch, crop_size, crop_size)
 
-        crops = []
-        for n in range(n_max):
-            mask_n = mask[n]
-            codes_n = codes[mask_n]
-            x_pixel_n = x_pixel[mask_n] - ix[n]
-            y_pixel_n = y_pixel[mask_n] - iy[n]
-            values_n = values[mask_n]
+        ## TODO: allow n_crops with tiling -> calculate necessary fraction patch overlap
+        if strategy == 'tiling':
+            crops = []
+            ix = x_corner[valid_patch, 0]  # shape: n_valid_patches
+            iy = y_corner[valid_patch, 0]  # shape: n_valid_patches
+            mask = element_mask[valid_patch]  # shape: n_valid_patches, element_in_sparse_array
+            for n in range(n_valid_patches):
+                mask_n = mask[n]
+                codes_n = codes[mask_n]
+                x_pixel_n = x_pixel[mask_n] - ix[n]
+                y_pixel_n = y_pixel[mask_n] - iy[n]
+                values_n = values[mask_n]
 
-            crops.append(
-                torch.sparse_coo_tensor(
-                    indices=torch.stack((codes_n, x_pixel_n, y_pixel_n), dim=0),
-                    values=values_n,
-                    size=dense_crop_shape,
-                    device=x_pixel.device,
-                    requires_grad=False,
-                ).coalesce()
-            )
+                crops.append(
+                    torch.sparse_coo_tensor(
+                        indices=torch.stack((codes_n, x_pixel_n, y_pixel_n), dim=0),
+                        values=values_n,
+                        size=dense_crop_shape,
+                        device=x_pixel.device,
+                        requires_grad=False,
+                    ).coalesce()
+                )
 
-        x_locs = [ix[n].item() for n in range(n_max)]
-        y_locs = [iy[n].item() for n in range(n_max)]
+            x_locs = [ix[n].item() for n in range(n_valid_patches)]
+            y_locs = [iy[n].item() for n in range(n_valid_patches)]
+        else:
+            n_max = min(n_crops, n_valid_patches)
+
+            ix = x_corner[valid_patch, 0][: n_max]  # shape: n_max
+            iy = y_corner[valid_patch, 0][: n_max]  # shape: n_max
+            mask = element_mask[valid_patch][: n_max]  # shape: n_max, element_in_sparse_array
+            crops = []
+            for n in range(n_max):
+                mask_n = mask[n]
+                codes_n = codes[mask_n]
+                x_pixel_n = x_pixel[mask_n] - ix[n]
+                y_pixel_n = y_pixel[mask_n] - iy[n]
+                values_n = values[mask_n]
+
+                crops.append(
+                    torch.sparse_coo_tensor(
+                        indices=torch.stack((codes_n, x_pixel_n, y_pixel_n), dim=0),
+                        values=values_n,
+                        size=dense_crop_shape,
+                        device=x_pixel.device,
+                        requires_grad=False,
+                    ).coalesce()
+                )
+
+            x_locs = [ix[n].item() for n in range(n_max)]
+            y_locs = [iy[n].item() for n in range(n_max)]
         return crops, x_locs, y_locs
 
 
@@ -485,7 +536,10 @@ class CropperDataset(Dataset):
             return [(crop, code_base, MetadataCropperDataset(f_name=metadata_base.f_name,
                                                              loc_x=metadata_base.loc_x + x_loc,
                                                              loc_y=metadata_base.loc_y + y_loc,
-                                                             moran=None)) for
+                                                             moran=None,
+                                                             sample_status=None,
+                                                             composition=None
+                                                            )) for
                     crop, x_loc, y_loc in zip(crop_list, loc_x_list, loc_y_list)]
 
 

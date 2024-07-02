@@ -9,7 +9,7 @@ os.environ["SPHINX_BUILD"] = "1"
 
 project = u"TissuePurifier"
 copyright = u""
-author = u"Luca Dalessio and Fedor Grab"
+author = u"Sandeep Kambhampati, Luca Dalessio, and Fedor Grab"
 
 version = ""
 
@@ -34,9 +34,9 @@ extensions = [
     'sphinx.ext.intersphinx',
     'sphinx.ext.mathjax',
     'sphinx.ext.viewcode',
-    'sphinx_search.extension',
+    #'sphinx_search.extension',
     'sphinx.ext.napoleon',
-    'sphinx_autodoc_typehints',
+    #'sphinx_autodoc_typehints',
 ]
 
 
@@ -62,7 +62,6 @@ napoleon_attr_annotations = True
 napoleon_custom_sections = [('Returns', 'params_style')]
 
 PACKAGE_MAPPING = {
-    "pyro-ppl": "pyro",
     "PyYAML": "yaml",
     "neptune-client": "neptune",
     "google-cloud": "google",
@@ -77,7 +76,6 @@ MOCK_PACKAGES = [
     'scanpy',
     'leidenalg',
     'igraph',
-    'pyro-ppl',
     'google-cloud',
     'scikit-learn',
     'pytorch-lightning',
@@ -101,7 +99,7 @@ source_suffix = [".rst", ".ipynb"]
 nbsphinx_execute = "never"
 html_sourcelink_suffix = ""
 master_doc = "index"
-language = None
+language = "en"
 exclude_patterns = [
     ".ipynb_checkpoints",
     "notebooks/*ipynb",

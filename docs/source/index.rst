@@ -23,7 +23,7 @@ Welcome to TissuePurifier's documentation!
    :maxdepth: 1
    :caption: Tutorials
 
-   tutorial
+   tutorial.ipynb
 
 
 Indices and tables

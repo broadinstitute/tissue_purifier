@@ -58,8 +58,8 @@ def inverse_one_hot(image_in, bg_label: int = -1, dim: int = -3, threshold: floa
     Note:
         It can take an image of size :math:`(C, W, H)` and generate an integer mask
         of size :math:`(W, H)`.
-        This operation can be thought as the inverse of the one-hot operation which takes an integer tensor of size (*)
-        and returns a float tensor with an extra dimension, for example (*, num_classes).
+        This operation can be thought as the inverse of the one-hot operation which takes an integer tensor of size (n)
+        and returns a float tensor with an extra dimension, for example (n, num_classes).
 
     Args:
         image_in: any float tensor
@@ -99,6 +99,7 @@ def compute_distance_embedding(ref_embeddings: torch.Tensor,
                                metric: str,
                                temperature: float = 0.5) -> torch.Tensor:
     """ Compute distance between embeddings
+
         Args:
             ref_embeddings: torch.Tensor of shape :math:`(*, k)` where `k`
                 is the dimension of the embedding
@@ -493,11 +494,12 @@ class SmartScaler:
     This is a simple way to deal with the outliers.
 
     It does not deal with the situation in which outliers are inside the "box" of acceptable range
-    but far from the reduced manifold. See situation shown below:
-                 x  x
-            x x
-       x x         o
-    x x
+    but far from the reduced manifold. 
+    # See situation shown below:
+    #              x  x
+    #         x x
+    #    x x         o
+    # x x
     """
 
     def __init__(self, quantiles: Tuple[float, float], clamp: bool):
